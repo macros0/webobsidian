@@ -1,5 +1,11 @@
 # PRD — WebObsidian
 
+> Rendering dependency maintenance 2026-10-29: update KaTeX to the patched 0.18 line and Mermaid
+> to 12.2, including Mermaid's KaTeX copy. Preserve default untrusted math rendering, sanitizers
+> and both preview paths. Mermaid 12 requires an ES2024-capable browser (Safari 17.4+); layout
+> changes are accepted for this upgrade. Validate representative formulas and diagrams locally.
+> This supersedes the earlier rendering deferral; production deployment remains out of scope.
+
 > Moderate dependency maintenance 2026-10-29: refresh Hono/node adapter, fast-uri, ip-address and
 > qs within their parent ranges, and update the desktop compiler to esbuild0.28.2. Preserve all
 > application behavior and keep KaTeX/Mermaid declarations and locked package entries unchanged.

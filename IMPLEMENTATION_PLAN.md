@@ -1,5 +1,19 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Rendering dependency remediation — 2026-10-29
+
+- [x] Investigate inherited-trust boundary and both KaTeX copies independently; reproduce six failures.
+- [x] Upgrade KaTeX 0.18.10/Mermaid 12.2.0; audit low2 ->0, every severity now gated in CI.
+- [x] Verify all types, 186 server/178 web tests locally, all builds, HTTP and Windows packaging/runtime.
+- [x] Independent candidate review found no confirmed surviving bypass or compatibility regression.
+- [x] Hidden Electron fixture verifies inline/display math, math-labelled flowchart and sequence diagram
+  in live, reading and separate Preview; unsafe links/images blocked, no external requests.
+- [x] Linux/Docker/MCP CI passed at `6c21cdb`: 193 server +178 web tests, 31 smoke assertions,
+  zero-vulnerability audit, all builds and Linux desktop directory packaging.
+  Evidence: https://github.com/macros0/webobsidian/actions/runs/40849754338 (PR #5).
+
+Use disposable fixtures only; the production installation and real vault remain untouched.
+
 ## Moderate dependency remediation — 2026-10-29
 
 - [x] Confirm baseline6 moderate /0 high /0 critical and investigate boundaries independently.
