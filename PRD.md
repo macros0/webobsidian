@@ -1,5 +1,10 @@
 # PRD — WebObsidian
 
+> Moderate dependency maintenance 2026-10-29: refresh Hono/node adapter, fast-uri, ip-address and
+> qs within their parent ranges, and update the desktop compiler to esbuild0.28.2. Preserve all
+> application behavior and keep KaTeX/Mermaid declarations and locked package entries unchanged.
+> Validation uses disposable local fixtures; deployed server and real vaults remain out of scope.
+
 > High dependency maintenance 2026-10-29: remove remaining high entries through maintained
 > Electron 43 (preserve Windows ia32), Vite 6.4, MCP SDK, Multer and Zod 4 upgrades plus compatible
 > transitive patches. Preserve settings defaults, secrets, schema behavior, uploads, MCP tools and
