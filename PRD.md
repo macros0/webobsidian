@@ -1,5 +1,11 @@
 # PRD — WebObsidian
 
+> Fork integration 2026-10-29: combine the pinned `phamtruonghung` and `lakylekidd`
+> revisions from `docs/superpowers/plans/2026-10-29-community-forks.md`. Preserve
+> both feature sets and security boundaries. Automatic trash retention is opt-in
+> in `macros0/webobsidian`; its default is zero days (keep forever). Production
+> deployment is outside this integration task.
+
 > Product Requirements Document
 > Phiên bản: 1.23 · Cập nhật: 2026-09-30 · Trạng thái: Draft
 > Changelog 1.23 (FR-23 — chọn giá trị cho thuộc tính đóng: nút `▾` + danh sách giá trị, issue #61): trên
