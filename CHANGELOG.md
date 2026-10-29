@@ -1,5 +1,13 @@
 # Changelog
 
+## Rendering dependency maintenance — 2026-10-29
+
+- Upgrade KaTeX to patched 0.18.10 and Mermaid to 12.2.0, sharing the patched math renderer.
+  Pin KaTeX because 0.18.11 was deprecated by its publisher for accidental breaking changes.
+- Reject inherited trust in math options; add security regressions and ordinary rendering controls.
+- Gate all npm advisory severities in CI. Mermaid diagrams now need an ES2024-capable browser
+  (Safari 17.4+); diagram layout may differ from Mermaid 11.
+
 ## Moderate dependency maintenance — 2026-10-29
 
 - Refresh compatible Hono/node-server, fast-uri, ip-address and qs versions; update desktop
