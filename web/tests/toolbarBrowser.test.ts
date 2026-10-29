@@ -120,9 +120,21 @@ test('real browser: selection toolbar colors, reset, focus, Escape, undo, locks 
       app.whenReady().then(async()=>{
         const win=new BrowserWindow({show:false,width:1200,height:800,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
         await win.loadFile(${JSON.stringify(join(dir, 'index.html'))});
+        // Ozone headless may leave a hidden BrowserWindow at 1x1 CSS pixels.
+        // Emulate the requested viewport explicitly rather than relying on a
+        // native surface, which hidden/headless windows do not have.
+        win.webContents.debugger.attach('1.3');
+        const viewport=async(width,height)=>{
+          win.setSize(width,height);
+          await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',
+            {width,height,deviceScaleFactor:1,mobile:false});
+          const actual=await win.webContents.executeJavaScript('[innerWidth,innerHeight]');
+          if(actual[0]!==width || actual[1]!==height)throw Error('Viewport mismatch '+JSON.stringify(actual));
+        };
+        await viewport(1200,800);
         const results={};
         results.desktop=await win.webContents.executeJavaScript('window.runFixture(false)');
-        win.setSize(390,844);
+        await viewport(390,844);
         results.mobile=await win.webContents.executeJavaScript('window.runFixture(true)');
         console.log('TOOLBAR_RESULTS:'+JSON.stringify(results));win.destroy();app.quit();
       }).catch(e=>{console.error(e);app.exit(1)});

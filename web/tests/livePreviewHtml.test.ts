@@ -189,6 +189,15 @@ before(async () => {
         const win = new BrowserWindow({ show: false, width: 1200, height: 1000,
           webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
         await win.loadFile(${JSON.stringify(join(dir, 'index.html'))});
+        win.webContents.debugger.attach('1.3');
+        const viewport=async(width,height)=>{
+          win.setSize(width,height);
+          await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',
+            {width,height,deviceScaleFactor:1,mobile:false});
+          const actual=await win.webContents.executeJavaScript('[innerWidth,innerHeight]');
+          if(actual[0]!==width || actual[1]!==height)throw Error('Viewport mismatch '+JSON.stringify(actual));
+        };
+        await viewport(1200,1000);
         const fixtures = ${JSON.stringify(fixtures)};
         const results = {};
         for (const [name, source] of Object.entries(fixtures)) {
@@ -201,7 +210,7 @@ before(async () => {
         console.log('PUBLIC_RESULT:' + JSON.stringify(await win.webContents.executeJavaScript('window.runPublicFixture()')));
         const matrix = {};
         for (const width of [390, 1200]) {
-          win.setSize(width, 1000);
+          await viewport(width, 1000);
           for (const theme of ['theme-light', 'theme-dark']) {
             await win.webContents.executeJavaScript('document.body.className = ' + JSON.stringify(theme));
             for (const ending of ['lf', 'crlf']) {
