@@ -1,5 +1,15 @@
 # Changelog
 
+## High dependency maintenance — 2026-10-29
+
+- Update Electron to maintained 43.8.4 in install and packaging pins, retaining Windows ia32;
+  remove the vulnerable legacy extract-zip dependency through its supported replacement.
+- Upgrade Vite to maintained 6.4.5, MCP SDK to 1.32.2, Multer to 2.5.0 and Zod to 4.6.7;
+  refresh both body-parser lines and Browserslist within compatible parent ranges.
+- Preserve nested settings defaults with Zod prefaults; cover fresh/legacy values and secrets,
+  early collection-size rejection, compressed JSON, malformed/normal uploads and MCP constraints.
+- Extend CI dependency guards and audit threshold to reject both high and critical advisories.
+
 ## Security dependency maintenance — 2026-10-29
 
 - Upgrade simple-git/argv-parser, Vitest, concurrently/shell-quote and electron-builder/tar;

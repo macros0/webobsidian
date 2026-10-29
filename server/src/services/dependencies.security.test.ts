@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 const require = createRequire(import.meta.url);
 // Exercise the actual transitive dependencies selected by the application install.
@@ -7,6 +8,18 @@ const proxyaddr = require('proxy-addr');
 const { vulnerabilityCheck } = require('@simple-git/argv-parser');
 
 describe('dependency security boundaries', () => {
+  it('rejects an oversized bounded collection before validating its elements', () => {
+    let visited = 0;
+    const element = z.string().superRefine(() => { visited++; });
+    expect(z.array(element).max(1).safeParse(['one', 'two', 'three']).success).toBe(false);
+    expect(visited).toBe(0);
+  });
+  it('still validates elements of a collection within its size limit', () => {
+    let visited = 0;
+    const element = z.string().superRefine(() => { visited++; });
+    expect(z.array(element).max(1).parse(['one'])).toEqual(['one']);
+    expect(visited).toBe(1);
+  });
   for (const subnet of ['::ffff:10.0.0.0/8', '::/1']) {
     it(`does not trust an external IPv4 peer through ${subnet}`, () => {
       expect(proxyaddr.compile(subnet)('203.0.113.9')).toBe(false);

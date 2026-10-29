@@ -27,7 +27,7 @@ const SettingsSchema = z.object({
       passwordHash: z.string().default(''),
       jwtSecret: z.string().default(''),
     })
-    .default({}),
+    .prefault({}),
   vault: z
     .object({
       path: z.string().default(''),
@@ -41,7 +41,7 @@ const SettingsSchema = z.object({
       trashRetentionDays: z.number().int().min(0).max(3650).default(0),
       attachmentDir: z.string().default('attachments'),
     })
-    .default({}),
+    .prefault({}),
   git: z
     .object({
       enabled: z.boolean().default(false),
@@ -57,20 +57,20 @@ const SettingsSchema = z.object({
         .array(z.string())
         .default(['*.png', '*.jpg', '*.jpeg', '*.gif', '*.pdf', '*.mp4', '*.mov', '*.zip']),
     })
-    .default({}),
+    .prefault({}),
   search: z
     .object({
       fuzzy: z.number().default(0.2),
       prefix: z.boolean().default(true),
       indexFrontmatter: z.boolean().default(true),
     })
-    .default({}),
+    .prefault({}),
   api: z
     .object({
       keys: z.array(ApiKeySchema).default([]),
       rateLimitPerMin: z.number().default(120),
     })
-    .default({}),
+    .prefault({}),
   ui: z
     .object({
       theme: z
@@ -87,13 +87,13 @@ const SettingsSchema = z.object({
       // Obsidian's "Show inline title": the filename rendered above the note body.
       showInlineTitle: z.boolean().default(true),
     })
-    .default({}),
+    .prefault({}),
   plugins: z
     .object({
       enabled: z.array(z.string()).default([]),
       installed: z.array(z.string()).default([]),
     })
-    .default({}),
+    .prefault({}),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

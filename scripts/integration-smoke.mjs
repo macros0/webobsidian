@@ -4,6 +4,8 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { promises as fs } from 'node:fs';
 import net from 'node:net';
+import http from 'node:http';
+import { deflateSync, gzipSync } from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +26,8 @@ try {
   await fs.mkdir(path.join(vault, 'attachments'), { recursive: true });
   await fs.mkdir(path.join(vault, '_system'), { recursive: true });
   await fs.writeFile(path.join(vault, '_system', 'locks.json'), JSON.stringify({
-    locked: [{ glob: 'notes/locked.md', reason: 'integration fixture' }], unlock: 'confirm',
+    locked: [{ glob: 'notes/locked.md', reason: 'integration fixture' },
+      { glob: 'notes/protected/**', reason: 'upload fixture' }], unlock: 'confirm',
   }));
   await fs.writeFile(path.join(vault, 'notes', 'locked.md'), '# Locked');
   await fs.writeFile(path.join(vault, 'notes', 'editable.md'), '# Editable');
@@ -89,7 +92,53 @@ try {
   assert.equal(await fs.readFile(path.join(vault, 'notes', 'locked.md'), 'utf8'), '# Locked');
   assert.equal(await fs.readFile(path.join(vault, 'notes', 'editable.md'), 'utf8'), '# Updated');
   assert.equal((await request('/')).status, 200);
-  console.log('PASS: auth, safe retention, relative PDF/ranges/downloads, locked mutations, CAS and SPA');
+  const uploadFile = async (dir, name = 'upload.txt') => {
+    const body = new FormData();
+    body.append('dir', dir);
+    body.append('file', new Blob(['upload fixture']), name);
+    return fetch(`${base}/api/files/upload`, { method: 'POST', headers: { cookie }, body });
+  };
+  for (const expected of ['upload.txt', 'upload-1.txt']) {
+    const upload = await uploadFile('notes/attachments');
+    assert.equal(upload.status, 200);
+    assert.equal((await upload.json()).path, `notes/attachments/${expected}`);
+    assert.equal(await fs.readFile(path.join(vault, 'notes', 'attachments', expected), 'utf8'), 'upload fixture');
+  }
+  assert.equal((await uploadFile('notes/protected')).status, 423);
+  const malformed = await fetch(`${base}/api/files/upload`, { method: 'POST',
+    headers: { cookie, 'content-type': 'multipart/form-data; boundary=fixture' },
+    body: '--fixture\r\nContent-Disposition: form-data; name="file"; filename="broken.txt"\r\n\r\nunfinished',
+  });
+  assert.ok(malformed.status >= 400);
+  assert.equal((await fetch(`${base}/healthz`)).status, 200);
+  for (const [encoding, compress] of [['gzip', gzipSync], ['deflate', deflateSync]]) {
+    const compressed = await fetch(`${base}/auth/login`, { method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-encoding': encoding },
+      body: compress(JSON.stringify({ password: 'smoke-test-only-password' })),
+    });
+    assert.equal(compressed.status, 200, `${encoding} JSON remains supported`);
+  }
+  // Split the request so late bytes reach the decoder after it has produced a response.
+  // The former body-parser left a piped decoder without an error listener and crashed.
+  await new Promise((resolve, reject) => {
+    const first = Buffer.concat([deflateSync('{"password":"smoke-test-only-password"}'), Buffer.from([0])]);
+    const trailing = Buffer.alloc(1024);
+    const req = http.request(`${base}/auth/login`, { method: 'POST', agent: false,
+      headers: { 'content-type': 'application/json', 'content-encoding': 'deflate',
+        'content-length': first.length + trailing.length },
+    }, (res) => {
+      res.resume();
+      res.on('end', () => { req.end(trailing); resolve(); });
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(5000, () => req.destroy(new Error('Compressed-body probe timed out')));
+    req.write(first);
+  });
+  await delay(100);
+  assert.equal(server.exitCode, null, `late compressed bytes terminated the server: ${output}`);
+  assert.equal((await fetch(`${base}/healthz`)).status, 200);
+  console.log('PASS: auth, retention, PDF/downloads, locks/CAS, SPA, uploads, compressed JSON and late-byte survival');
 } finally {
   if (server && server.exitCode === null) {
     const exited = once(server, 'exit');

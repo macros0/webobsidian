@@ -1,5 +1,10 @@
 # PRD — WebObsidian
 
+> High dependency maintenance 2026-10-29: remove remaining high entries through maintained
+> Electron 43 (preserve Windows ia32), Vite 6.4, MCP SDK, Multer and Zod 4 upgrades plus compatible
+> transitive patches. Preserve settings defaults, secrets, schema behavior, uploads, MCP tools and
+> desktop isolation. Keep Node ≥22.12 and all deployment restrictions unchanged.
+
 > Security maintenance 2026-10-29: remove all currently reported critical dependency versions
 > through supported parent-package upgrades and compatible transitive patches. Preserve auth,
 > Markdown/media, Git sync and desktop packaging behavior. Development/CI now requires Node ≥22.12
