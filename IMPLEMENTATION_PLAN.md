@@ -7,7 +7,9 @@
 - [x] Upgrade parents and migrate settings defaults; audit reduced high8 ->0, critical remains0.
 - [x] Verify types, 177 server/168 web tests locally, all builds, HTTP/uploads and Windows packaging/runtime.
 - [x] Independent candidate review found no confirmed surviving bypass or compatibility regression.
-- [~] Validate MCP constraints and all Linux/Docker checks in CI before adopting.
+- [x] Linux/Docker CI passed at `08188bb`: 184 server +168 web tests, 31 smoke assertions,
+  MCP stdio/schema constraints, high/critical audit, HTTP controls and Linux desktop packaging.
+  Evidence: https://github.com/macros0/webobsidian/actions/runs/40840116331 (PR #3).
 
 Production and real vaults remain outside scope; lower-severity unrelated migrations are deferred.
 
