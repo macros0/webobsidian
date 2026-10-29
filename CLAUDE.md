@@ -1,4 +1,17 @@
-# CLAUDE.md — Hướng dẫn làm việc cho Claude Code trên dự án WebObsidian
+# CLAUDE.md — WebObsidian contributor guidance
+
+## Current fork — authoritative routing
+
+This is `macros0/webobsidian`, integrating `phamtruonghung` and `lakylekidd`.
+Read `docs/FORK_INTEGRATION.md` for source revisions and merge decisions.
+Use `--repo macros0/webobsidian` explicitly for GitHub operations. References below to the
+Pham issue tracker or LXC 107 describe the source fork and must not direct operations there.
+Do not deploy or access a real vault unless explicitly requested. Use temporary local vaults
+for tests. Automatic trash retention defaults to zero (keep forever).
+
+Validation: `npm ci`, `npm run typecheck`, `npm test`, `npm run build`,
+`node scripts/integration-smoke.mjs`; desktop typecheck/build via its workspace scripts.
+Linux CI also runs `scripts/smoke-test.sh` for auth, symlinks, Agent API and MCP.
 
 ## Bối cảnh
 WebObsidian là web app self-hosted clone toàn diện Obsidian. Thiết kế chính thức nằm ở

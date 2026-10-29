@@ -4,6 +4,9 @@ import { api, type TreeNode } from '../lib/api';
 import { findNode, pruneDescendants } from '../lib/tree';
 import { pathToUrl } from '../lib/urlsync';
 import Icon from './Icon';
+import { humanizeTitle } from '../lib/title';
+import { confirmDialog } from '../lib/confirm';
+import { displayChildren } from '../lib/attachments';
 
 /** Inline rename box shown in place of a tree row's name (Obsidian-style). */
 function RenameInput({ node, onDone }: { node: TreeNode; onDone: () => void }) {
@@ -27,17 +30,30 @@ function RenameInput({ node, onDone }: { node: TreeNode; onDone: () => void }) {
     done.current = true;
     const name = (ref.current?.value ?? '').trim();
     onDone();
-    if (!commit || !name || name === node.name) return;
+    const st = useStore.getState();
+    const isNew = st.newNotePath === node.path;
+    if (isNew) st.setNewNotePath(null);
+    let finalPath = node.path;
     const dir = parentDir(node.path);
     const to = dir ? `${dir}/${name}` : name;
-    if (to === node.path) return;
-    try {
-      await api.rename(node.path, to);
-      closeTab(node.path);
-    } catch (e: any) {
-      notify(e?.message ?? 'Rename failed');
+    if (commit && name && name !== node.name && to !== node.path) {
+      try {
+        await api.rename(node.path, to);
+        closeTab(node.path);
+        finalPath = to;
+      } catch (e: any) {
+        notify(e?.message ?? 'Rename failed');
+      }
     }
     await loadTree();
+    if (isNew) {
+      // Keep the freshly named note selected, open and scrolled into view after re-sorting.
+      const s2 = useStore.getState();
+      s2.setSelected([finalPath]);
+      s2.setSelectAnchor(finalPath);
+      await s2.openFile(finalPath);
+      s2.revealInTree(finalPath);
+    }
   };
 
   return (
@@ -57,6 +73,13 @@ function RenameInput({ node, onDone }: { node: TreeNode; onDone: () => void }) {
   );
 }
 
+/** Number of files and folders nested anywhere under a folder node. */
+function countDescendants(node: TreeNode): number {
+  let n = 0;
+  for (const c of node.children ?? []) n += 1 + countDescendants(c);
+  return n;
+}
+
 function fileIcon(node: TreeNode): string | null {
   const ext = node.ext ?? '';
   if (/\.(md|markdown)$/.test(ext)) return null; // markdown: text only, like Obsidian
@@ -71,6 +94,18 @@ function parentDir(path: string): string {
 }
 
 /** Parse the dragged path list from a drag event (multi-select aware). */
+/**
+ * Paths being dragged. Browsers hide dataTransfer contents during `dragover` (only `drop` can read
+ * them), but the drop-zone indicator has to know what is being dragged while hovering, so the
+ * drag source records it here too.
+ */
+let activeDrag: string[] = [];
+
+/** Where a drop will land relative to the row under the pointer. */
+type DropZone = 'before' | 'inside' | 'after';
+const dropClass = (z: DropZone | null) =>
+  z === 'inside' ? 'drop-target' : z === 'before' ? 'drop-before' : z === 'after' ? 'drop-after' : '';
+
 function readDragPaths(e: React.DragEvent): string[] {
   const multi = e.dataTransfer.getData('text/wo-paths');
   if (multi) {
@@ -133,7 +168,7 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
   const expanded = useStore((s) => s.expanded);
   const toggleFolder = useStore((s) => s.toggleFolder);
   const open = expanded.includes(node.path); // persisted across reloads
-  const [dropping, setDropping] = useState(false);
+  const [dropZone, setDropZone] = useState<DropZone | null>(null);
   const activePath = useStore((s) => s.activePath);
   const openFile = useStore((s) => s.openFile);
   const openToSide = useStore((s) => s.openToSide);
@@ -153,6 +188,10 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
   const notify = useStore((s) => s.notify);
   const setShareDialog = useStore((s) => s.setShareDialog);
   const shares = useStore((s) => s.shares);
+  const treeSort = useStore((s) => s.treeSort);
+  const manualOrder = useStore((s) => s.manualOrder);
+  const setManualOrderForParent = useStore((s) => s.setManualOrderForParent);
+  const tree = useStore((s) => s.tree);
   const isSelected = useStore((s) => s.selected.includes(node.path));
   const setSelected = useStore((s) => s.setSelected);
   const setSelectAnchor = useStore((s) => s.setSelectAnchor);
@@ -164,6 +203,7 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
   // Click selection: plain = single (+open/toggle), Cmd/Ctrl = toggle one,
   // Shift = range from the anchor across the visible rows (like Obsidian/Finder).
   const onRowClick = (e: React.MouseEvent) => {
+    if (e.detail > 1) return;
     if (e.metaKey || e.ctrlKey) {
       const cur = useStore.getState().selected;
       setSelected(cur.includes(node.path) ? cur.filter((p) => p !== node.path) : [...cur, node.path]);
@@ -192,7 +232,11 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
 
   const doDeleteMany = async () => {
     const paths = pruneDescendants(useStore.getState().selected);
-    if (!paths.length || !confirm(`Delete ${paths.length} item${paths.length > 1 ? 's' : ''}?`)) return;
+    if (!paths.length) return;
+    const rootNode = useStore.getState().tree;
+    const hasFolder = paths.some((p) => findNode(rootNode, p)?.type === 'folder');
+    const detail = hasFolder ? 'Folders and everything inside them will be removed.' : undefined;
+    if (!(await confirmDialog(`Delete ${paths.length} item${paths.length > 1 ? 's' : ''}?`, { confirmLabel: 'Delete', danger: true, detail }))) return;
     let n = 0;
     for (const p of paths) {
       const r = await api.remove(p).catch(() => null);
@@ -206,7 +250,15 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
 
   const doRename = () => setRenamingPath(node.path);
   const doDelete = async () => {
-    if (confirm(`Delete "${node.name}"?`)) {
+    let detail: string | undefined;
+    if (node.type === 'folder') {
+      // count from the raw tree: the rendered node omits hidden attachment folders
+      const n = countDescendants(findNode(useStore.getState().tree, node.path) ?? node);
+      detail = n
+        ? `The folder and its contents (${n} item${n === 1 ? '' : 's'}) will be removed.`
+        : 'The empty folder will be removed.';
+    }
+    if (await confirmDialog(`Delete "${node.name}"?`, { confirmLabel: 'Delete', danger: true, detail })) {
       const r = await api.remove(node.path);
       closeTab(node.path);
       await loadTree();
@@ -341,31 +393,76 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
     const sel = useStore.getState().selected;
     const paths = sel.includes(node.path) && sel.length > 1 ? sel : [node.path];
     if (!sel.includes(node.path)) { setSelected([node.path]); setSelectAnchor(node.path); }
+    activeDrag = paths;
     e.dataTransfer.setData('text/wo-paths', JSON.stringify(paths));
     e.dataTransfer.setData('text/wo-path', node.path); // legacy single-path readers
     e.dataTransfer.effectAllowed = 'move';
   };
+  /**
+   * Decide where a drop lands. Outside Manual mode (or when the dragged items are not siblings of
+   * this row) it is the classic behaviour: onto a folder = move inside it, onto a file = move into
+   * its folder. In Manual mode, for siblings: the top/bottom edge of a row reorders (insertion line
+   * before/after it) and the middle of a FOLDER row still moves the item into that folder, so both
+   * reordering and moving work, and the last position is reachable via a row's bottom edge.
+   */
+  const computeZone = (e: React.DragEvent): DropZone => {
+    if (treeSort !== 'manual') return 'inside';
+    const dragged = pruneDescendants(activeDrag.length ? activeDrag : readDragPaths(e));
+    const parent = parentDir(node.path);
+    const siblings = dragged.length > 0 && !dragged.includes(node.path) && dragged.every((p) => parentDir(p) === parent);
+    if (!siblings) return 'inside';
+    const r = e.currentTarget.getBoundingClientRect();
+    const y = r.height > 0 ? (e.clientY - r.top) / r.height : 0.5;
+    if (isFolder) {
+      if (y < 0.25) return 'before';
+      // an expanded folder's bottom edge sits right above its first child → treat as "inside"
+      if (y > 0.75 && !open) return 'after';
+      return 'inside';
+    }
+    return y < 0.5 ? 'before' : 'after';
+  };
+  const onDragOverRow = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDropZone(computeZone(e));
+  };
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setDropping(false);
+    const zone = computeZone(e);
+    setDropZone(null);
+    const dragged = pruneDescendants(readDragPaths(e));
+    activeDrag = [];
+    if (zone === 'before' || zone === 'after') {
+      const targetParent = parentDir(node.path);
+      const parentNode = targetParent ? findNode(tree, targetParent) : tree;
+      const fallback = (parentNode?.children ?? []).map((c) => c.path);
+      const current = manualOrder[targetParent] ?? fallback;
+      const movingSet = new Set(dragged);
+      const insert = current.filter((p) => movingSet.has(p));
+      const rest = current.filter((p) => !movingSet.has(p));
+      const at = rest.indexOf(node.path);
+      const idx = at < 0 ? rest.length : zone === 'before' ? at : at + 1;
+      setManualOrderForParent(targetParent, [...rest.slice(0, idx), ...insert, ...rest.slice(idx)]);
+      return;
+    }
     const targetDir = isFolder ? node.path : parentDir(node.path);
-    await moveItemsTo(readDragPaths(e), targetDir);
+    await moveItemsTo(dragged, targetDir);
   };
 
   if (isFolder) {
     return (
       <div className="tree-item">
         <div
-          className={`tree-row folder ${isSelected ? 'selected' : ''} ${dropping ? 'drop-target' : ''}`}
+          className={`tree-row folder ${isSelected ? 'selected' : ''} ${dropClass(dropZone)}`}
           style={isCut ? { opacity: 0.5 } : undefined}
           data-path={node.path}
           draggable
           onDragStart={onDragStart}
           onClick={onRowClick}
           onContextMenu={onContext}
-          onDragOver={(e) => { e.preventDefault(); setDropping(true); }}
-          onDragLeave={() => setDropping(false)}
+          onDragOver={onDragOverRow}
+          onDragLeave={() => setDropZone(null)}
+          onDragEnd={() => { activeDrag = []; setDropZone(null); }}
           onDrop={onDrop}
         >
           <span className="twisty">
@@ -374,7 +471,48 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
           {editing ? (
             <RenameInput node={node} onDone={() => setRenamingPath(null)} />
           ) : (
-            <span className="name">{node.name}</span>
+            <span className="name" onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); doRename(); }}>
+              {node.name}
+            </span>
+          )}
+          {!editing && (
+            <button
+              className="tree-del tree-add"
+              title="New note"
+              aria-label={`New note in ${node.name}`}
+              draggable={false}
+              onClick={(e) => { e.stopPropagation(); void newNote(node.path); }}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.stopPropagation()}
+            >
+              <Icon name="file-plus" size={13} />
+            </button>
+          )}
+          {!editing && (
+            <button
+              className="tree-del tree-add"
+              title="New canvas"
+              aria-label={`New canvas in ${node.name}`}
+              draggable={false}
+              onClick={(e) => { e.stopPropagation(); void newCanvas(node.path); }}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.stopPropagation()}
+            >
+              <Icon name="layout-dashboard" size={13} />
+            </button>
+          )}
+          {!editing && (
+            <button
+              className="tree-del"
+              title="Delete"
+              aria-label={`Delete ${node.name}`}
+              draggable={false}
+              onClick={(e) => { e.stopPropagation(); void doDelete(); }}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.stopPropagation()}
+            >
+              <Icon name="trash" size={13} />
+            </button>
           )}
         </div>
         {open && (
@@ -392,7 +530,7 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
   return (
     <div className="tree-item">
       <div
-        className={`tree-row ${activePath === node.path ? 'active' : ''} ${isSelected ? 'selected' : ''} ${dropping ? 'drop-target' : ''}`}
+        className={`tree-row ${activePath === node.path ? 'active' : ''} ${isSelected ? 'selected' : ''} ${dropClass(dropZone)}`}
         style={isCut ? { opacity: 0.5 } : undefined}
         data-path={node.path}
         draggable
@@ -403,8 +541,9 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
         // item into the file's parent folder (Obsidian behaviour). Without this,
         // drops on a file — or anywhere inside an expanded folder's contents —
         // bubble up to the root handler and either no-op or move to the vault root.
-        onDragOver={(e) => { e.preventDefault(); setDropping(true); }}
-        onDragLeave={() => setDropping(false)}
+        onDragOver={onDragOverRow}
+        onDragLeave={() => setDropZone(null)}
+        onDragEnd={() => { activeDrag = []; setDropZone(null); }}
         onDrop={onDrop}
         title={node.path}
       >
@@ -413,7 +552,9 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
         {editing ? (
           <RenameInput node={node} onDone={() => setRenamingPath(null)} />
         ) : (
-          <span className="name">{node.name.replace(/\.(md|markdown)$/, '')}</span>
+          <span className="name" onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); doRename(); }}>
+            {/\.(md|markdown)$/i.test(node.name) ? humanizeTitle(node.name) : node.name}
+          </span>
         )}
         {shares.some((s) => s.path === node.path && s.enabled) && (
           <Icon name="globe" size={12} className="share-globe" />
@@ -423,6 +564,19 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
           <span className="lock-badge" title={node.lockReason ?? 'Read-only — maintained by the agent'}>
             <Icon name="lock" size={11} />
           </span>
+        )}
+        {!editing && (
+          <button
+          className="tree-del"
+          title="Delete"
+          aria-label={`Delete ${node.name}`}
+          draggable={false}
+          onClick={(e) => { e.stopPropagation(); void doDelete(); }}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.stopPropagation()}
+          >
+          <Icon name="trash" size={13} />
+          </button>
         )}
       </div>
     </div>
@@ -448,9 +602,25 @@ export function collectFolderPaths(root: TreeNode | null): string[] {
  * applies to files. Only rendered (expanded) folders' children are shown, so
  * this naturally sorts just what's visible in the panel.
  */
-function sortTree(node: TreeNode, order: TreeSort): TreeNode {
+function sortTree(
+  node: TreeNode,
+  order: TreeSort,
+  showAttachments: boolean,
+  manualOrder: Record<string, string[]>,
+): TreeNode {
   if (!node.children) return node;
+  const folderKey = node.path || '';
+  const manual = manualOrder[folderKey] ?? [];
+  const pos = new Map(manual.map((p, i) => [p, i]));
   const cmp = (a: TreeNode, b: TreeNode): number => {
+    if (order === 'manual') {
+      const ai = pos.get(a.path);
+      const bi = pos.get(b.path);
+      if (ai != null && bi != null) return ai - bi;
+      if (ai != null) return -1;
+      if (bi != null) return 1;
+      return a.name.localeCompare(b.name);
+    }
     if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
     if (a.type === 'folder') return a.name.localeCompare(b.name);
     switch (order) {
@@ -462,8 +632,10 @@ function sortTree(node: TreeNode, order: TreeSort): TreeNode {
       default: return a.name.localeCompare(b.name); // name-asc
     }
   };
-  const children = node.children
-    .map((c) => (c.type === 'folder' ? sortTree(c, order) : c))
+  // Hidden attachment folders are dropped from this render copy only; the raw store tree
+  // (used for name collisions, delete counts, etc.) still contains them.
+  const children = displayChildren(node.children, showAttachments)
+    .map((c) => (c.type === 'folder' ? sortTree(c, order, showAttachments, manualOrder) : c))
     .sort(cmp);
   return { ...node, children };
 }
@@ -471,7 +643,10 @@ function sortTree(node: TreeNode, order: TreeSort): TreeNode {
 export default function FileTree() {
   const rawTree = useStore((s) => s.tree);
   const treeSort = useStore((s) => s.treeSort);
-  const tree = rawTree ? sortTree(rawTree, treeSort) : rawTree;
+  const manualOrder = useStore((s) => s.manualOrder);
+  const setManualOrderForParent = useStore((s) => s.setManualOrderForParent);
+  const showAttachmentFolders = useStore((s) => s.showAttachmentFolders);
+  const tree = rawTree ? sortTree(rawTree, treeSort, showAttachmentFolders, manualOrder) : rawTree;
   const loadTree = useStore((s) => s.loadTree);
   const notify = useStore((s) => s.notify);
   const closeTab = useStore((s) => s.closeTab);
@@ -522,8 +697,17 @@ export default function FileTree() {
 
   const onRootDrop = async (e: React.DragEvent) => {
     e.preventDefault();
+    const dragged = pruneDescendants(readDragPaths(e));
+    activeDrag = [];
+    // Manual mode: root-level items dropped on the empty area go to the end of the root order.
+    if (treeSort === 'manual' && dragged.length > 0 && dragged.every((p) => !p.includes('/'))) {
+      const current = manualOrder[''] ?? (rawTree?.children ?? []).map((c) => c.path);
+      const moving = new Set(dragged);
+      setManualOrderForParent('', [...current.filter((p) => !moving.has(p)), ...current.filter((p) => moving.has(p))]);
+      return;
+    }
     // Drop on the empty area = move to the vault root. Only nested items move.
-    const paths = readDragPaths(e).filter((p) => p.includes('/'));
+    const paths = dragged.filter((p) => p.includes('/'));
     if (paths.length) await moveItemsTo(paths, '');
   };
 

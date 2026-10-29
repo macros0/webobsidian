@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { getSettings } from './settings.js';
+import { TRASH_INDEX_NAME, deletedAtFor, forgetTrashed, readDeletedAt, recordTrashed } from './trashindex.js';
 
 export interface TreeNode {
   name: string;
@@ -282,6 +283,25 @@ export async function copy(from: string, to: string): Promise<string[]> {
   return out;
 }
 
+/**
+ * After a file inside an `attachments/` folder was deleted or trashed, remove that folder if it
+ * is now empty (it was auto-created for pasted images, so an empty one is just clutter).
+ * Never touches the vault root, non-attachment folders, or a folder that still has content.
+ * Keep the name in sync with ATTACHMENT_DIR_NAME in web/src/lib/attachments.ts.
+ */
+export async function pruneEmptyAttachmentsDir(relFile: string): Promise<boolean> {
+  const dir = path.posix.dirname(relFile);
+  if (dir === '.' || path.posix.basename(dir).toLowerCase() !== 'attachments') return false;
+  try {
+    const abs = await resolveInVault(dir);
+    if ((await fs.readdir(abs)).length > 0) return false;
+    await fs.rmdir(abs); // rmdir only succeeds on an empty directory
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Permanently delete a file or folder (no trash). */
 export async function remove(rel: string): Promise<void> {
   const abs = await resolveInVault(rel);
@@ -303,6 +323,8 @@ export async function trash(rel: string): Promise<string> {
     finalDest = `${dest.slice(0, dest.length - ext.length)}.${Date.now()}${ext}`;
   }
   await fs.rename(absFrom, finalDest);
+  // rename keeps the original mtime, so record when it entered the trash (retention clock).
+  await recordTrashed(trashRoot, path.relative(trashRoot, finalDest));
   return toRel(root, finalDest);
 }
 
@@ -323,10 +345,10 @@ export interface TrashItem {
   original: string; // where it restores to, e.g. "folder/note.md"
   ext: string;
   size: number;
-  mtime: number; // deletion time (file mtime when it landed in trash)
+  mtime: number; // deletion time (from the trash index; file mtime for untracked items)
 }
 
-async function getTrashRoot(): Promise<string> {
+export async function getTrashRoot(): Promise<string> {
   const s = await getSettings();
   const root = await getVaultRoot();
   return path.join(root, s.vault.trash);
@@ -362,6 +384,7 @@ export async function listTrash(): Promise<TrashItem[]> {
   const root = await getVaultRoot();
   const trashRoot = await getTrashRoot();
   const out: TrashItem[] = [];
+  const deletedAt = await readDeletedAt(trashRoot);
   async function walk(dir: string) {
     let entries;
     try {
@@ -370,18 +393,20 @@ export async function listTrash(): Promise<TrashItem[]> {
       return; // trash folder doesn't exist yet
     }
     for (const e of entries) {
+      if (dir === trashRoot && (e.name === TRASH_INDEX_NAME || e.name === `${TRASH_INDEX_NAME}.tmp`)) continue;
       const abs = path.join(dir, e.name);
       if (e.isDirectory()) {
         await walk(abs);
       } else if (e.isFile()) {
         const st = await fs.stat(abs).catch(() => null);
+        const original = path.relative(trashRoot, abs).split(path.sep).join('/');
         out.push({
           name: e.name,
           path: toRel(root, abs),
-          original: path.relative(trashRoot, abs).split(path.sep).join('/'),
+          original,
           ext: path.extname(e.name).toLowerCase(),
           size: st?.size ?? 0,
-          mtime: st ? st.mtimeMs : 0,
+          mtime: deletedAtFor(deletedAt, original) ?? (st ? st.mtimeMs : 0),
         });
       }
     }
@@ -406,6 +431,7 @@ export async function restoreFromTrash(trashRel: string): Promise<string> {
   }
   await fs.mkdir(path.dirname(absTo), { recursive: true });
   await fs.rename(absFrom, absTo);
+  await forgetTrashed(trashRoot, relInTrash);
   await pruneEmptyDirs(path.dirname(absFrom), trashRoot);
   return destRel;
 }
@@ -414,8 +440,19 @@ export async function restoreFromTrash(trashRel: string): Promise<string> {
 export async function deleteFromTrash(trashRel: string): Promise<void> {
   const trashRoot = await getTrashRoot();
   const abs = await resolveInVault(trashRel);
-  assertInTrash(abs, trashRoot);
+  const relInTrash = assertInTrash(abs, trashRoot);
   await fs.rm(abs, { recursive: true, force: true });
+  await forgetTrashed(trashRoot, relInTrash);
+  await pruneEmptyDirs(path.dirname(abs), trashRoot);
+}
+
+/** Permanently remove a trash-relative item (used by the retention purge). */
+export async function purgeTrashEntry(trashRel: string): Promise<void> {
+  const trashRoot = await getTrashRoot();
+  const abs = path.resolve(trashRoot, trashRel);
+  const relInTrash = assertInTrash(abs, trashRoot);
+  await fs.rm(abs, { recursive: true, force: true });
+  await forgetTrashed(trashRoot, relInTrash);
   await pruneEmptyDirs(path.dirname(abs), trashRoot);
 }
 

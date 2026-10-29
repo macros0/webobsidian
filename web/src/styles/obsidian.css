@@ -354,6 +354,12 @@ html, body, #root { height: 100%; margin: 0; }
   color: var(--text-normal);
   background-color: var(--background-primary);
 }
+.modal, .context-menu, .toast { color: var(--text-normal); }
+.setting-row label { color: var(--text-normal); }
+/* CodeMirror draws its own cursor (border-left, default black). */
+.cm-editor .cm-cursor, .cm-editor .cm-dropCursor { border-left-color: var(--text-normal); }
+.cm-editor .cm-cursor-primary { border-left-color: var(--text-normal); }
+.theme-dark .cm-editor .cm-cursor, .theme-dark .cm-editor .cm-dropCursor { border-left-color: #fff; }
 body {
   font-family: var(--font-ui);
   color: var(--text-normal);
@@ -480,6 +486,14 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 .tree-row .bm-star { margin-left: auto; color: #d6a429; flex-shrink: 0; }
 .tree-children { margin-left: 12px; border-left: 1px solid var(--bg-modifier-border); padding-left: 2px; }
 .tree-row.drop-target { background: var(--tag-bg); box-shadow: inset 0 0 0 1px var(--interactive-accent); }
+/* Manual sort: insertion line shown above/below a row while dragging a sibling over its edge. */
+.tree-row.drop-before, .tree-row.drop-after { position: relative; }
+.tree-row.drop-before::before, .tree-row.drop-after::after {
+  content: ''; position: absolute; left: 4px; right: 4px; height: 2px; border-radius: 1px;
+  background: var(--interactive-accent); pointer-events: none; z-index: 2;
+}
+.tree-row.drop-before::before { top: -1px; }
+.tree-row.drop-after::after { bottom: -1px; }
 
 /* ---------- Workspace ---------- */
 .workspace { position: relative; display: flex; flex-direction: column; overflow: hidden; min-width: 0;
@@ -535,7 +549,31 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
   border-bottom: 1px solid var(--bg-modifier-border); background: var(--bg-primary); font-size: 12px; color: var(--text-faint); }
 .split-head .grow { flex: 1; }
 
+.cm-outline-wrap { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column;
+  position: relative; container-type: inline-size; }
 .cm-host { flex: 1; overflow: auto; }
+
+/* Floating scroll-aware document outline (sits in the right margin, no layout impact) */
+.doc-outline { position: absolute; top: 50%; right: 14px; transform: translateY(-50%); z-index: 20;
+  max-height: 70%; display: flex; justify-content: flex-end; }
+.doc-outline ul { list-style: none; margin: 0; padding: 0; }
+.doc-outline-markers { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding: 8px 4px;
+  overflow: hidden; }
+.doc-outline-marker { display: block; height: 3px; padding: 0; border: 0; border-radius: 2px; cursor: pointer;
+  background: var(--text-faint); opacity: 0.5; transition: opacity .15s, background .15s, transform .15s; }
+.doc-outline-marker.active { background: var(--interactive-accent); opacity: 1; transform: scaleY(1.6); }
+.doc-outline-panel { display: none; min-width: 180px; max-width: 280px; max-height: 100%; overflow-y: auto;
+  padding: 6px 0; background: var(--background-primary); border: 1px solid var(--bg-modifier-border);
+  border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2); }
+.doc-outline:hover .doc-outline-markers { display: none; }
+.doc-outline:hover .doc-outline-panel { display: block; }
+.doc-outline-item { display: block; width: 100%; text-align: left; background: none; border: 0; cursor: pointer;
+  padding: 4px 12px; font-size: 13px; color: var(--text-muted); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.doc-outline-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.doc-outline-item.active { color: var(--interactive-accent); font-weight: 600; }
+@container (max-width: 760px) { .doc-outline { display: none; } }
+@media print { .doc-outline { display: none; } }
 .cm-editor { height: 100%; background: var(--background-primary) !important; color: var(--text-normal); }
 .cm-editor.cm-focused { outline: none !important; }
 .cm-editor .cm-content { font-family: var(--font-text); font-size: var(--font-text-size); line-height: var(--line-height-normal);
@@ -617,6 +655,22 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 .cm-s-obsidian .cm-task-checkbox:checked::after, .markdown-preview input[type="checkbox"]:checked::after {
   content: ''; position: absolute; left: 4.5px; top: 1.5px; width: 4px; height: 8px;
   border: solid var(--text-on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+/* Hanging indent for wrapped list/task lines (live preview): each indent unit and the
+   marker (bullet / checkbox + gap) have fixed widths, so padding-left = prefix width
+   and a negative text-indent of the same marker-adjusted width aligns wrapped text. */
+.cm-s-obsidian {
+  --hang-indent-w: 2em;
+  --hang-marker-w: calc(var(--font-text-size) + 6px);
+}
+.cm-s-obsidian .cm-task-checkbox { box-sizing: border-box; }
+.cm-s-obsidian .cm-bullet { display: inline-block; width: var(--hang-marker-w); text-indent: 0; }
+/* Ordered-list marker (`1.`): fixed box incl. the gap; width set per line (digit count). */
+.cm-s-obsidian .cm-line.HyperMD-hang .cm-ol-marker { display: inline-block; width: var(--hang-marker-w); text-indent: 0; white-space: nowrap; vertical-align: top; }
+.cm-s-obsidian .cm-line.HyperMD-hang .cm-indent { width: var(--hang-indent-w); overflow: hidden; vertical-align: top; text-indent: 0; }
+.cm-s-obsidian .cm-line.HyperMD-hang {
+  padding-left: calc(var(--hang-prefix) + 6px);
+  text-indent: calc(0px - var(--hang-prefix));
 }
 /* Math (KaTeX) */
 .cm-math-rendered.math-block { display: block; text-align: center; padding: 0.5em 0; }
@@ -807,7 +861,8 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 .markdown-preview ul, .markdown-preview ol { padding-left: 1.6em; }
 .markdown-preview li::marker { color: var(--text-faint); }
 /* Tasks: no bullet, strike only x/X (same rule as Live mode, §7) */
-.markdown-preview li.task-list-item { list-style: none; }
+.markdown-preview li.task-list-item { list-style: none; padding-left: calc(var(--font-text-size) + 6px); text-indent: calc(0px - (var(--font-text-size) + 6px)); }
+.markdown-preview li.task-list-item > * { text-indent: 0; }
 .markdown-preview ul:has(> li.task-list-item) { padding-left: 0.6em; }
 .markdown-preview li.task-list-item input[type="checkbox"] { pointer-events: none; }
 .markdown-preview li[data-task="x"], .markdown-preview li[data-task="X"] {
@@ -1076,6 +1131,12 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 .modal { background: var(--bg-primary); border: 1px solid var(--bg-modifier-border); border-radius: 10px;
   width: 640px; max-width: 92vw; max-height: 70vh; overflow: hidden; box-shadow: var(--shadow);
   display: flex; flex-direction: column; }
+/* In-app confirm (replaces window.confirm, which embedded browsers suppress). */
+.modal.confirm-dialog { width: 380px; padding: 18px 20px 16px; overflow: visible; }
+.confirm-dialog-msg { margin: 0 0 16px; color: var(--text-normal); font-size: 14px; line-height: 1.45; word-break: break-word; }
+.confirm-dialog-msg + .confirm-dialog-detail { margin-top: -8px; }
+.confirm-dialog-detail { margin: 0 0 16px; color: var(--text-muted); font-size: 13px; line-height: 1.45; }
+.confirm-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .palette-input { width: 100%; padding: 14px 16px; font-size: 16px; background: transparent; border: 0;
   border-bottom: 1px solid var(--bg-modifier-border); color: var(--text-normal); outline: none; }
 .palette-list { overflow-y: auto; padding: 6px; }
@@ -2224,6 +2285,30 @@ button.task-due:hover .task-due-caret { opacity: 1; }
 .cm-image-resize-right { right: 5px; }
 .cm-image-wrap:hover .cm-image-resize,
 .cm-image-wrap.is-resizing .cm-image-resize { opacity: .9; }
+/* Trash icon (top-right) — appears on hover in Live Preview and Reading mode. */
+.cm-image-delete {
+  position: absolute; top: 8px; right: 8px; z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; line-height: 1; border-radius: 6px;
+  background: var(--background-secondary, rgba(0,0,0,.6)); color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: 0 1px 3px rgba(0,0,0,.35);
+  opacity: 0; pointer-events: none; cursor: pointer; transition: opacity .12s ease, color .12s ease;
+}
+.cm-image-wrap:hover .cm-image-delete { opacity: .95; pointer-events: auto; }
+.cm-image-delete:hover { color: var(--text-error, #e5534b); opacity: 1; }
+.cm-image-wrap.is-resizing .cm-image-delete { display: none; }
+
+/* ---- External media embeds (YouTube / Instagram / Facebook) ---- */
+.external-embed { display: block; width: 100%; max-width: 100%; margin: 8px 0; line-height: 0; }
+.external-embed iframe {
+  display: block; width: 100%; max-width: 100%; border: 0;
+  border-radius: var(--radius); background: var(--background-secondary, #000);
+}
+.external-embed-video iframe { aspect-ratio: 16 / 9; height: auto; }
+.external-embed-portrait iframe { aspect-ratio: 9 / 16; height: auto; max-width: 360px; max-height: 80vh; }
+.external-embed-post iframe { height: 600px; max-width: 540px; }
+.cm-external-embed-wrap { display: block; }
 
 /* ---- Embedded audio/video players: `![[clip.mp4]]` / `![[song.mp3]]` ---- */
 .cm-media-wrap { display: block; max-width: 100%; line-height: 0; margin: 6px 0; }
@@ -2298,3 +2383,51 @@ audio.media-embed { display: block; width: min(100%, 480px); max-width: 100%; ma
 /* The tree badge — same slot as the bookmark star, muted so it reads as metadata. */
 .lock-badge { display: inline-flex; align-items: center; color: var(--text-faint, var(--text-muted)); }
 .nav-file-title:hover .lock-badge, .nav-file-title.is-active .lock-badge { color: var(--text-muted); }
+/* Rich link preview cards (pasted standalone URLs) */
+.link-preview { display: block; margin: 0.6em 0; max-width: 100%; }
+.link-preview-card {
+  display: flex; align-items: stretch; width: 100%; max-width: 640px; min-height: 90px; overflow: hidden;
+  border: 1px solid var(--background-modifier-border); border-radius: 8px;
+  background: var(--background-secondary); color: var(--text-normal) !important;
+  text-decoration: none !important; box-sizing: border-box;
+}
+.link-preview-card:hover { border-color: var(--interactive-accent, var(--text-accent)); }
+.link-preview-thumb { flex: 0 0 140px; max-width: 35%; background: var(--background-modifier-border); }
+.link-preview-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; margin: 0; }
+.link-preview-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 10px 12px; flex: 1; }
+.link-preview-title {
+  font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
+}
+.link-preview-desc {
+  font-size: var(--font-smaller, 0.85em); color: var(--text-muted); line-height: 1.4; display: -webkit-box;
+  -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
+}
+.link-preview-domain {
+  margin-top: auto; font-size: var(--font-smaller, 0.8em); color: var(--text-faint, var(--text-muted));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@media (max-width: 480px) { .link-preview-thumb { flex-basis: 96px; } }
+
+/* Quick delete. Hidden with opacity (not display:none) so it stays in the tab order:
+   it fades in on row hover, row focus-within, and its own keyboard focus. Touch /
+   coarse-pointer devices have no hover, so it is always visible there. */
+.tree-row .tree-del {
+  display: grid; place-items: center; opacity: 0; margin-left: auto; padding: 2px; border: 0;
+  background: transparent; color: var(--text-faint); cursor: pointer; flex-shrink: 0;
+  border-radius: 4px; line-height: 0;
+}
+.tree-row:hover .tree-del, .tree-row:focus-within .tree-del, .tree-row .tree-del:focus-visible { opacity: 1; }
+.tree-row .tree-del:hover { color: var(--text-error, #e5484d); background: var(--bg-modifier-hover); }
+.tree-row .tree-del:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+.tree-row .bm-star + .tree-del { margin-left: 4px; }
+/* Folder quick-create buttons reuse .tree-del's hover reveal; only the first keeps the auto margin. */
+.tree-row .tree-add + .tree-del { margin-left: 2px; }
+.tree-row .tree-add:hover { color: var(--text-normal); }
+/* Touch: no hover, and an icon on every row is clutter plus accidental-tap bait. Tapping a
+   row selects it, so only the selected row shows the button (larger tap target); on the
+   others it is invisible AND inert so stray taps near the row's edge can't trigger it. */
+@media (hover: none), (pointer: coarse) {
+  .tree-row .tree-del { opacity: 0; pointer-events: none; padding: 8px; margin-block: -6px; }
+  .tree-row.selected .tree-del { opacity: 1; pointer-events: auto; }
+}

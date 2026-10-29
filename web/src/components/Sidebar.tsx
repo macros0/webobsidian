@@ -81,6 +81,8 @@ export default function Sidebar() {
         { label: '', separator: true },
         { label: 'Created time (new to old)', icon: treeSort === 'ctime-desc' ? 'check' : undefined, onClick: () => setTreeSort('ctime-desc') },
         { label: 'Created time (old to new)', icon: treeSort === 'ctime-asc' ? 'check' : undefined, onClick: () => setTreeSort('ctime-asc') },
+        { label: '', separator: true },
+        { label: 'Manual', icon: treeSort === 'manual' ? 'check' : undefined, onClick: () => setTreeSort('manual') },
       ],
     });
   };
@@ -105,7 +107,7 @@ export default function Sidebar() {
             </button>
             <button
               className={`nav-action ${autoReveal ? 'active' : ''}`}
-              title="Auto reveal current file"
+              title="Reveal active file in explorer"
               onClick={() => toggleAutoReveal()}
             >
               <Icon name="crosshair" size={16} />

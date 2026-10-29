@@ -154,6 +154,16 @@
 > Changelog 1.6 (FR-1 — symlink vault roots): hỗ trợ **symlink trong vault**: folder/file được trỏ qua
 > symlink được liệt kê và đọc/ghi bình thường kể cả khi trỏ ra ngoài vault root (miễn realpath nằm trong
 > `vault.allowedRoots`); cycle guard bằng `realpath` chống vòng lặp symlink.
+> Phiên bản: 1.12 · Cập nhật: 2026-10-16 · Trạng thái: Draft
+> Changelog 1.12 (FR-1 — Reveal active file in explorer, issue #36): thêm tuỳ chọn **Settings → Vault & Files → Reveal active file in explorer** (mặc định tắt, lưu trong workspace state nên đồng bộ giữa tab/thiết bị). Khi bật, đổi tab/mở tài liệu sẽ tự mở thư mục cha cần thiết, cuộn tree tới file đang active và highlight đúng 1 file active; khi tắt thì không tự đổi trạng thái mở folder hay vị trí cuộn của file explorer.
+> Changelog 1.11 (FR-1 — Manual sorting trong file explorer, issue #34): thêm lựa chọn sort **Manual** trong Files sidebar. Khi bật Manual, người dùng kéo-thả trực tiếp trong tree để đổi thứ tự file/folder theo từng thư mục; thứ tự tuỳ chỉnh lưu trong workspace state server-side (`/api/uistate`) theo key từng parent folder, không đổi tên file/folder và không sửa nội dung markdown. Chuyển sang mode sort khác không xoá dữ liệu manual; chuyển lại Manual thì khôi phục thứ tự cũ. Item mới hoặc item được move vào thư mục sẽ được thêm vào cuối danh sách manual của thư mục đích. **Bổ sung (sửa 3 vấn đề):** (1) ở Manual, kéo thả dùng 3 vùng theo vị trí con trỏ trên hàng — mép trên/dưới = chèn trước/sau (có vạch chỉ vị trí), giữa hàng folder = chuyển vào folder, nên vẫn chuyển được file vào folder cùng cấp; (2) mép dưới hàng cuối (hoặc thả vào vùng trống dưới tree với item ở root) = xuống cuối danh sách; (3) đổi tên/di chuyển giữ vị trí thủ công: đổi tên file/folder giữ nguyên slot, folder mang theo thứ tự con, di chuyển sang folder khác thì xuống cuối thứ tự của folder đích.
+> Changelog 1.11 (FR-2 — Floating document outline, issue #32): Live/Reading view hiển thị outline nổi ở lề phải: mỗi heading `#`–`######` là một marker (độ dài theo cấp), marker của section đang xem được làm nổi theo scroll; hover mở rộng thành mục lục có thụt lề, click marker/mục cuộn mượt tới heading. Ẩn khi note không có heading, ở Source mode, khi pane hẹp (<760px) hoặc khi in. Cập nhật tự động khi sửa heading. (Các setting vị trí/độ sâu/min headings để sau.)
+> Changelog 1.10 (FR-1 — Ẩn thư mục attachments trong file tree): thêm tuỳ chọn **Settings → Vault & Files → Show attachment folders** (mặc định **tắt**, lưu cùng workspace state nên đồng bộ giữa tab/thiết bị). Khi tắt, thư mục tên `attachments` (không phân biệt hoa thường) bị ẩn khỏi file tree, folder view và hộp "Move to…" — **trừ khi** bên trong (kể cả thư mục con) có note `.md`/`.markdown` hoặc canvas (safeguard để không ẩn thư mục thật của người dùng). Chỉ ẩn khi hiển thị: file vẫn nằm trên đĩa, embed/share không đổi, cảnh báo xoá folder vẫn đếm cả nội dung ẩn; "Reveal file in navigation" cho file nằm trong thư mục ẩn sẽ báo cách bật tuỳ chọn. Sau khi xoá/đưa vào trash file trong `attachments/`, thư mục `attachments/` rỗng được tự dọn (không đụng thư mục khác).
+> Changelog 1.9 (FR-1/FR-2 — Local attachment folders + nút xoá ảnh, issue #30): ảnh dán/drop được lưu vào `attachments/` **cạnh note** (tự tạo; tên không bao giờ ghi đè: `image.png`, `image-1.png`…) và chèn đường dẫn tương đối `![](attachments/x.png)`. `GET /api/files/content?path=…&from=<note>` resolve đường dẫn tương đối theo thư mục note trước, rồi mới fallback basename toàn vault. Hover ảnh (Live Preview + Reading) hiện icon thùng rác góc trên-phải: xoá tham chiếu khỏi note; kiểm tra tham chiếu ở note khác (`GET /api/files/references`) — không còn ai dùng thì xoá vĩnh viễn file (`DELETE /api/files?permanent=1`), còn dùng thì cảnh báo và chỉ gỡ khỏi note hiện tại (giữ file).
+> Changelog 1.8 (FR-1 — Trash retention): thêm setting `vault.trashRetentionDays` (mặc định **0** trong macros0 (source fork: 30), `0` = giữ mãi) trong Settings → Vault & Files. Item trong `.trash` bị **xoá vĩnh viễn** sau số ngày này, tính từ **thời điểm item được chuyển vào trash** (không phải mtime của file — `rename` giữ nguyên mtime gốc). Thời điểm ghi trong `<trash>/.trash-index.json`; item có sẵn trong trash trước tính năng được bắt đầu tính từ lần quét đầu tiên (không bị xoá ngay). Dọn lúc khởi động, mỗi giờ và ngay khi đổi setting; chỉ tác động trong `.trash`.
+> Changelog 1.7 (FR-1 — Inline rename từ file tree, issue #19): double-click tên file, folder hoặc canvas để vào inline rename; Enter xác nhận, Escape huỷ. Giữ Rename trong context menu và dùng cùng validation hiện có.
+> Changelog 1.6 (FR-2 — Link preview card, issue #7): URL đứng riêng một dòng render thành thẻ preview (thumbnail, title, mô tả 2 dòng, domain) ở Reading view, Live Preview và trang Public share; Markdown gốc giữ nguyên, lỗi fetch → link thường. Server fetch metadata an toàn (chặn IP nội bộ, giới hạn redirect/size/timeout, chỉ lấy OG text) qua provider chain mở rộng được.
+>
 > Changelog 1.5 (FR-13 — Desktop app Electron đa nền tảng, theo yêu cầu người dùng): bổ sung **FR-13** —
 > đóng gói WebObsidian thành **app cài đặt** macOS/Windows/Linux (arm64/x64/ia32). Workspace mới `desktop/`
 > là **Electron shell** spawn đúng server Express hiện có như tiến trình con (qua `ELECTRON_RUN_AS_NODE`,
@@ -173,7 +183,7 @@
 > `web/lib/media.ts`. Không thêm API mới.
 > Changelog 1.3 (FR-1 — File explorer header toolbar parity Obsidian, theo yêu cầu người dùng): header sidebar
 > **Files** bổ sung đủ nút như Obsidian: **New note**, **New canvas**, **New folder**, **Change sort order**
-> (dropdown 6 kiểu: File name A→Z/Z→A, Modified time new↔old, Created time new↔old), **Auto reveal current
+> (dropdown 7 kiểu: File name A→Z/Z→A, Modified time new↔old, Created time new↔old, Manual), **Auto reveal current
 > file** (toggle: tự mở folder cha + cuộn tới file đang xem), **Collapse all / Expand all**. Sort theo thời gian
 > nhanh nhờ **stat cache trong RAM** ở server (`listTree` fill 1 lần, watcher invalidate file đổi → 0 syscall
 > ở steady-state); `TreeNode` thêm `ctime`. Không thêm API mới (tree cũ nay kèm `mtime`/`ctime`). Canvas (FR-12):
@@ -323,14 +333,29 @@ webobsidian/
 - Chọn/đổi thư mục Vault qua Settings (đường dẫn server-side, có folder browser an toàn trong allowed roots).
 - CRUD file & folder: tạo, đọc, ghi, đổi tên, di chuyển, xoá. Chế độ xoá cấu hình qua
   `vault.deleteMode`: `trash` (→ `.trash`, khôi phục được — mặc định) hoặc `permanent` (xoá hẳn).
+- **Inline rename trong file tree**: double-click tên file, folder hoặc canvas để sửa trực tiếp; Enter xác nhận,
+  Escape huỷ. Giữ thao tác Rename trong context menu và áp dụng cùng validation hiện có.
+- **Sort trong file tree**: 7 chế độ (`File name A→Z`, `File name Z→A`, `Modified new→old`, `Modified old→new`,
+  `Created new→old`, `Created old→new`, `Manual`). Ở mode **Manual**, kéo-thả trên tree đổi thứ tự file/folder
+  theo từng thư mục; metadata thứ tự lưu server-side trong uistate, không đổi tên file và không sửa nội dung note.
+  Chuyển mode sort khác không xoá thứ tự manual; item mới hoặc move vào thư mục được thêm vào cuối thứ tự manual
+  của thư mục đích.
+  Thả vào mép trên/dưới của một hàng = chèn trước/sau (hiện vạch chỉ vị trí); thả vào giữa hàng folder = chuyển vào folder.
+  Đổi tên giữ vị trí; đổi tên folder giữ thứ tự của các mục con.
 - **Trash**: giao diện xem các file đã xoá, **Restore** về vị trí gốc, **xoá vĩnh viễn** từng file, **Empty
   trash**. Trash ẩn khỏi file tree (dotfile) và khỏi watcher; mở qua nút 🗑 header Files hoặc command palette.
+- **Trash retention**: item trong `.trash` tự xoá vĩnh viễn sau `vault.trashRetentionDays` ngày (mặc định 0; `0` = không tự dọn),
+  tính từ lúc chuyển vào trash (index `.trash-index.json`); folder bị xoá hết cùng lúc như một đơn vị. Danh sách Trash hiển thị
+  thời điểm xoá thật.
 - **Copy/Cut/Paste** trên context menu file tree (file & folder): clipboard session-local; Cut = move (`rename`),
   Copy = copy đệ quy (`POST /api/files/copy`, `fs.cp` recursive); Paste vào folder đích, tự né trùng tên, chặn dán
   folder vào chính nó/thư mục con.
 - Hỗ trợ attachments (ảnh/pdf/…); upload từ web. Thư mục đích upload resolve **case-insensitive** với folder
   sẵn có (`vault.resolveDirCaseInsensitive`) — tránh tạo thư mục trùng khác hoa-thường (vd `attachments` cạnh
   `Attachments` có sẵn) trên filesystem phân biệt hoa-thường (Linux).
+- Ảnh dán/drop vào note lưu ở `<thư-mục-note>/attachments/` (tự tạo, tên unique) và dùng link tương đối; hover ảnh có
+  icon xoá (gỡ tham chiếu + xoá file nếu không note nào khác dùng) — xem Changelog 1.9.
+- Thư mục `attachments/` mặc định **ẩn** khỏi file tree (tuỳ chọn *Show attachment folders*; thư mục có chứa note/canvas không bao giờ bị ẩn) — xem Changelog 1.10.
 - Watch filesystem (chokidar) để phản ánh thay đổi ngoài (git pull, sửa trực tiếp).
 - **Symlink vault roots**: folder/file được trỏ qua symlink trong vault được liệt kê, đọc/ghi và index như
   file thường — kể cả khi symlink trỏ ra ngoài vault root, miễn realpath của đích nằm trong
@@ -1055,6 +1080,7 @@ DELETE /api/files/trash/item # xoá vĩnh viễn 1 item trong trash
 DELETE /api/files/trash      # empty trash (xoá hẳn toàn bộ)
 GET    /api/search?q=...
 GET    /api/tasks?folder=&status=&priority=&owner=&q=   # board tasks (ghi chú type: task), { tasks }
+GET    /api/linkpreview?url=...   # OG metadata (title/description/image/domain) cho link preview card; SSRF-guarded, cache RAM
 GET    /api/backlinks?path=...
 GET    /api/git/status | POST /api/git/{pull,commit,push,sync}
 GET/PUT /api/settings
@@ -1099,7 +1125,7 @@ GET    /api/v1/tasks?folder=&status=&priority=&owner=&q=   # board tasks, scope 
   "auth":   { "userPasswordHash": "scrypt$... (pass đã đổi; rỗng = dùng mặc định 123456)",
               "passwordHash": "scrypt$... (override khôi phục; rỗng = không có)",
               "jwtSecret": "..." },
-  "vault":  { "path": "/vault", "allowedRoots": ["/vault"], "trash": ".trash", "deleteMode": "trash" },
+  "vault":  { "path": "/vault", "allowedRoots": ["/vault"], "trash": ".trash", "deleteMode": "trash", "trashRetentionDays": 0 },
   "git":    { "enabled": false, "remote": "", "branch": "main",
               "token": "", "authorName": "", "authorEmail": "",
               "autoSync": false, "intervalSec": 300,

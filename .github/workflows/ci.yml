@@ -20,7 +20,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
@@ -33,6 +33,9 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Merged fork integration smoke test
+        run: node scripts/integration-smoke.mjs
 
       - name: Smoke test (auth hardening, symlinked vault, graceful shutdown)
         run: scripts/smoke-test.sh

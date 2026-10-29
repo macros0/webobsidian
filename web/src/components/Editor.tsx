@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import DocOutline from './DocOutline';
 import { Compartment, EditorState, Prec } from '@codemirror/state';
-import { EditorView, keymap, highlightActiveLine, drawSelection } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { EditorView, keymap, highlightActiveLine, drawSelection, rectangularSelection, crosshairCursor } from '@codemirror/view';
+import { defaultKeymap, simplifySelection, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { search, searchKeymap } from '@codemirror/search';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { yamlFrontmatter } from '@codemirror/lang-yaml';
 import { languages } from '@codemirror/language-data';
 import { syntaxHighlighting } from '@codemirror/language';
 import { obsidianHighlightStyle } from '../lib/highlight';
@@ -34,6 +36,8 @@ import {
   setLivePreviewEnabled,
   setLivePreviewLinkHandler,
   setLivePreviewMenuHandler,
+  setLivePreviewImageDeleteHandler,
+  setLivePreviewNotePath,
   setLivePreviewNoteEmbedProvider,
   setLivePreviewPropertyProvider,
   setLivePreviewPropertyTypes,
@@ -44,9 +48,10 @@ import {
 import { renderMarkdown } from '../lib/markdown';
 import { setActiveEditor } from '../lib/activeEditor';
 import { api } from '../lib/api';
+import { humanizeTitle } from '../lib/title';
+import { confirmDialog } from '../lib/confirm';
 
-const titleOf = (path: string | null) =>
-  path ? (path.split('/').pop() ?? path).replace(/\.(md|markdown)$/i, '') : '';
+const titleOf = (path: string | null) => (path ? humanizeTitle(path) : '');
 
 // Reading mode = the same Live Preview editor, made read-only via this compartment.
 const readonlyExt = (reading: boolean) =>
@@ -58,6 +63,7 @@ const isReadonly = (viewMode: string, locked: boolean) => viewMode === 'reading'
 export default function Editor() {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
+  const [editorView, setEditorView] = useState<EditorView | null>(null);
   const readonlyComp = useRef(new Compartment()).current;
   const applyingExternal = useRef(false);
   const activePath = useStore((s) => s.activePath);
@@ -78,6 +84,57 @@ export default function Editor() {
   useEffect(() => {
     setLivePreviewLinkHandler(openWikilink);
   }, [openWikilink]);
+
+  // Trash icon on a rendered image: drop the reference from the note and delete
+  // the attachment file too — unless another note (or another spot in this one)
+  // still uses it, in which case the user may remove just this reference.
+  useEffect(() => {
+    setLivePreviewImageDeleteHandler(async ({ target, view: v, remove }) => {
+      const { notify, loadTree } = useStore.getState();
+      const note = useStore.getState().activePath ?? '';
+      const file = target ? await api.resolveAttachment(target, note).then((r) => r.path).catch(() => null) : null;
+      if (!file) {
+        remove(); // web URL / missing file → only the reference can go
+        return;
+      }
+      const base = (file.split('/').pop() ?? file).toLowerCase();
+      const refs = (await api.references(file, note).catch(() => ({ references: [] as string[] }))).references;
+      // Other embeds of the same file left in THIS note (the one being removed counts once).
+      // The file name can appear raw or %20-encoded; count each distinct spelling once —
+      // names without spaces have identical spellings and must not be counted twice.
+      const doc = v.state.doc.toString().toLowerCase();
+      const spellings = Array.from(new Set([base, base.replace(/ /g, '%20')]));
+      const mentions = spellings.reduce((n, s) => n + (doc.split(s).length - 1), 0);
+      const inThisNote = mentions > 1;
+      // Native confirm() is blocked or silently auto-cancelled in embedded browsers (the click
+      // then does nothing), so use the in-app dialog.
+      if (refs.length || inThisNote) {
+        const where = refs.length
+          ? `${refs.length} other note${refs.length > 1 ? 's' : ''} (${refs.slice(0, 3).join(', ')}${refs.length > 3 ? ', …' : ''})`
+          : 'elsewhere in this note';
+        const ok = await confirmDialog(`"${file}" is also used in ${where}.`, {
+          detail: 'Remove the image from this note only? The file will be kept.',
+          confirmLabel: 'Remove from this note',
+        });
+        if (ok) remove();
+        return;
+      }
+      const ok = await confirmDialog(`Remove this image and permanently delete "${file}"?`, {
+        detail: 'This cannot be undone: the file is deleted immediately, not moved to the trash.',
+        confirmLabel: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
+      remove();
+      try {
+        await api.remove(file, true);
+        await loadTree();
+        notify(`Deleted ${file}`);
+      } catch (e: any) {
+        notify(e.message);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     setLivePreviewMenuHandler(openContextMenu);
@@ -249,6 +306,7 @@ export default function Editor() {
   useEffect(() => {
     if (!host.current) return;
     view.current?.destroy();
+    setLivePreviewNotePath(activePath);
 
     const isMd = activePath ? /\.(md|markdown)$/i.test(activePath) : false;
     // Place the caret after the frontmatter so Properties render immediately.
@@ -260,6 +318,11 @@ export default function Editor() {
       extensions: [
         history(),
         drawSelection(),
+        // VS Code-style multi-cursor: Alt+Click adds a cursor, Shift+Alt+Drag = column selection.
+        EditorState.allowMultipleSelections.of(true),
+        EditorView.clickAddsSelectionRange.of((e) => e.altKey && !e.shiftKey),
+        rectangularSelection({ eventFilter: (e) => e.altKey && e.shiftKey && e.button === 0 }),
+        crosshairCursor({ key: 'Alt' }),
         highlightActiveLine(),
         // Obsidian default hotkeys (§4) win over CodeMirror's defaults.
         Prec.high(
@@ -274,10 +337,11 @@ export default function Editor() {
         ),
         // In-document Find/Replace (⌘F / ⌘⇧F open the panel; ⌘G next).
         search({ top: true }),
-        keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+        keymap.of([{ key: 'Escape', run: simplifySelection }, ...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
         // GFM base so Strikethrough/Table/TaskList nodes exist (Obsidian dialect);
         // codeLanguages lazy-loads grammars for fenced blocks (Obsidian: Prism).
-        markdown({ base: markdownLanguage, codeLanguages: languages }),
+        // YAML front matter (--- … ---) is parsed as YAML; the rest stays Markdown.
+        yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: languages }) }),
         suggesterPlugin,
         // Obsidian token palette via CSS vars (works in both themes); markdown
         // structure styling is owned by the Live Preview decorations.
@@ -310,8 +374,11 @@ export default function Editor() {
     });
     const v = new EditorView({ state, parent: host.current });
     view.current = v;
+    setEditorView(v);
     setActiveEditor(v);
-    v.focus();
+    // Don't steal focus from the file tree's inline rename box (double-click on a
+    // note that isn't open yet opens it, then enters rename).
+    if (!useStore.getState().renamingPath) v.focus();
     return () => {
       setActiveEditor(null);
       v.destroy();
@@ -374,7 +441,12 @@ export default function Editor() {
       {locked && activePath && (
         <LockBanner reason={lockReason} mode={unlockMode} onUnlock={unlockLocked} />
       )}
-      <div className={cls} ref={host} onContextMenu={onContextMenu} />
+      <div className="cm-outline-wrap">
+        <div className={cls} ref={host} onContextMenu={onContextMenu} />
+        {viewMode !== 'source' && activePath && /\.(md|markdown)$/i.test(activePath) && (
+          <DocOutline view={editorView} content={content} />
+        )}
+      </div>
     </>
   );
 }

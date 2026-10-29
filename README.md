@@ -4,6 +4,11 @@
 
 # WebObsidian
 
+> **This repository is a community-maintained fork of WebObsidian.** The original project
+> appears to be inactive, so this fork continues development, fixes, and releases
+> independently.
+> **Original project:** [xnohat/webobsidian](https://github.com/xnohat/webobsidian)
+
 **A self-hosted, Obsidian-compatible web app for your Markdown "second brain".**
 
 Point it at a folder of Markdown files and edit your notes from any browser — with a
@@ -19,11 +24,9 @@ GitHub sync (incl. Git LFS), an API for AI agents, and community-plugin support.
 
 > 📐 Design: [PRD.md](PRD.md) · 📋 Progress: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 
-> 🔀 **This repository is the fork `phamtruonghung/webobsidian`** — upstream
-> [`xnohat/webobsidian`](https://github.com/xnohat/webobsidian) plus **every open upstream pull
-> request**, and the tooling that deploys and verifies it. What changed, how it is deployed, how to
-> check which build is live and what to watch out for when upgrading:
-> **[§ This fork](#-this-fork)**.
+> 🔀 **This repository is `macros0/webobsidian`.** It combines the `phamtruonghung`
+> and `lakylekidd` forks with their Git histories intact. See
+> [integration provenance and verification](docs/FORK_INTEGRATION.md).
 
 </div>
 
@@ -48,18 +51,21 @@ stack runs from a single `docker compose up`.
 
 ## 🔀 This fork
 
-`phamtruonghung/webobsidian` = upstream [`xnohat/webobsidian`](https://github.com/xnohat/webobsidian)
-`v0.1.1` **plus every open upstream pull request merged into `main`**, plus the tooling that deploys
-and verifies it. Each PR keeps its own merge commit and author; the full table, the conflict
-decisions and the bugs found while merging are in
-[docs/UPSTREAM_PR_MERGES.md](docs/UPSTREAM_PR_MERGES.md).
+`macros0/webobsidian` combines these community forks:
 
-**Where it runs:** LXC 107 (Proxmox homelab), Docker Compose, published at
-`https://webobsidian.digitalciapp.com`. Merging to `main` deploys itself — CI → `Deploy (LXC 107)` on
-a self-hosted runner *inside that LXC* → `deploy/deploy.sh`: git sync → rolling backup → keep the
-previous image as `webobsidian:rollback` → build → `up -d` → wait for healthy → smoke test, with
-automatic rollback if the build, the health check or the smoke test fails. Host layout, runbook and
-rollback procedure: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- [phamtruonghung/webobsidian](https://github.com/phamtruonghung/webobsidian): auth/path safeguards,
+  PDF and binary downloads, vault locks, tasks/timeline, templates, preview tabs, CLI and MCP.
+- [lakylekidd/webobsidian](https://github.com/lakylekidd/webobsidian): manual file sorting,
+  explorer shortcuts, document outline, editing improvements, local attachment folders,
+  rich links, media embeds and configurable trash retention.
+
+**Automatic trash cleanup defaults to disabled (`trashRetentionDays: 0`).** Explicit existing
+retention settings are preserved. Enable a positive number only when permanent deletion is wanted.
+
+Exact source commits, conflict resolutions and checks: [docs/FORK_INTEGRATION.md](docs/FORK_INTEGRATION.md).
+Older documents about LXC 107 describe the Pham source fork. This repository has no deployment
+connection to that machine; its inherited deployment workflow is guarded to the source repository.
+No existing installation is upgraded automatically by this integration.
 
 ### Which build is running?
 
@@ -72,10 +78,10 @@ curl -s http://localhost:8787/healthz      # or the public URL
 Compare it with the branch tip, and check that the container runs the image you just built:
 
 ```bash
-gh api repos/phamtruonghung/webobsidian/commits/main --jq '.sha[0:8]'
+gh api repos/macros0/webobsidian/commits/main --jq '.sha[0:8]'
 docker inspect <container> --format '{{.Image}}'
 docker image inspect webobsidian:latest --format '{{.Id}}'   # the two must match
-gh run list --repo phamtruonghung/webobsidian --workflow "Deploy (LXC 107)" --limit 3
+gh run list --repo macros0/webobsidian --workflow CI --limit 3
 ```
 
 ### Upgrade notes — coming from upstream `v0.1.1`
@@ -187,7 +193,7 @@ scripts/merge-upstream-pr.sh <n>           # fetch refs/pull/<n>/head and merge 
 ## 🚀 Quick start (Docker)
 
 ```bash
-git clone https://github.com/phamtruonghung/webobsidian.git   # the fork (see § This fork)
+git clone https://github.com/macros0/webobsidian.git
 cd webobsidian
 cp .env.example .env          # edit VAULT_HOST_PATH, set WEBOBSIDIAN_PASSWORD
 docker compose up -d --build

@@ -6,14 +6,17 @@ import {
   ViewUpdate,
   WidgetType,
 } from '@codemirror/view';
+import { frontmatterTitle } from './title';
 import { StateField, StateEffect, type EditorState, type Range, type Text } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
 import { CALLOUT_SLOT, CALLOUT_RE, calloutDefaultTitle, calloutIconSvg } from './callouts';
+import { fetchLinkPreview, createPreviewCard } from './linkPreview';
 import { openLightbox } from './imageLightbox';
 import { VIDEO_EXT_RE, AUDIO_EXT_RE, PDF_EXT_RE } from './media';
 import { optionsFor, type PropOption } from './propOptions';
 import { useStore } from './store';
 import { themedPopupHost } from './theme';
+import { resolveExternalEmbed, createEmbedElement, type ExternalEmbed } from './embeds';
 
 /**
  * Live Preview for CodeMirror 6 — an Obsidian-style WYSIWYG editing mode.
@@ -40,6 +43,24 @@ export interface LpMenuItem {
 let openMenu: (m: { x: number; y: number; items: LpMenuItem[] }) => void = () => {};
 export function setLivePreviewMenuHandler(fn: (m: { x: number; y: number; items: LpMenuItem[] }) => void) {
   openMenu = fn;
+}
+
+/** Path of the note being rendered — relative image refs resolve against its folder. */
+let notePath = '';
+export function setLivePreviewNotePath(p: string | null) {
+  notePath = p ?? '';
+}
+
+/** Trash-icon click on an image: `target` is the raw vault reference (null for web URLs). */
+export interface ImageDeleteRequest {
+  target: string | null;
+  view: EditorView;
+  /** Remove the image's Markdown reference from the note. */
+  remove: () => void;
+}
+let imageDeleteHandler: (r: ImageDeleteRequest) => void = (r) => r.remove();
+export function setLivePreviewImageDeleteHandler(fn: (r: ImageDeleteRequest) => void) {
+  imageDeleteHandler = fn;
 }
 
 export interface PropSuggestion {
@@ -166,6 +187,30 @@ class MdLinkWidget extends WidgetType {
   }
 }
 
+class LinkPreviewWidget extends WidgetType {
+  constructor(readonly url: string) {
+    super();
+  }
+  eq(o: LinkPreviewWidget) {
+    return o.url === this.url;
+  }
+  toDOM() {
+    const wrap = document.createElement('span');
+    wrap.className = 'link-preview cm-link-preview';
+    const a = document.createElement('a');
+    a.className = 'cm-md-link external-link';
+    a.textContent = this.url;
+    wrap.appendChild(a);
+    fetchLinkPreview(this.url).then((meta) => {
+      if (meta && wrap.isConnected) wrap.replaceChildren(createPreviewCard(meta));
+    });
+    return wrap;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
 class CheckboxWidget extends WidgetType {
   constructor(readonly checked: boolean, readonly pos: number) {
     super();
@@ -231,9 +276,51 @@ function writeImageWidth(view: EditorView, wrap: HTMLElement, width: number): vo
   }
 }
 
+/**
+ * Remove the image token (`![[img]]` / `![alt](url)`) a rendered image widget
+ * stands for. A line left empty by the removal is dropped with its newline.
+ */
+function removeImageToken(view: EditorView, wrap: HTMLElement): void {
+  let pos: number;
+  try {
+    pos = view.posAtDOM(wrap);
+  } catch {
+    return;
+  }
+  const line = view.state.doc.lineAt(pos);
+  const off = pos - line.from;
+  for (const re of [/!\[\[([^\]]+?)\]\]/g, /!\[([^\]]*)\]\(([^)]+)\)/g]) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line.text))) {
+      if (m.index <= off && off <= m.index + m[0].length) {
+        let from = line.from + m.index;
+        let to = from + m[0].length;
+        if ((line.text.slice(0, m.index) + line.text.slice(m.index + m[0].length)).trim() === '') {
+          from = line.from;
+          to = line.to;
+          if (to < view.state.doc.length) to += 1;
+          else if (from > 0) from -= 1;
+        }
+        view.dispatch({ changes: { from, to, insert: '' }, userEvent: 'delete' });
+        return;
+      }
+    }
+  }
+}
+
+const TRASH_SVG =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+
 class ImageWidget extends WidgetType {
   /** `width`/`height` from the Obsidian size param `![[img|300]]` / `![[img|300x200]]`. */
-  constructor(readonly src: string, readonly alt: string, readonly width?: number, readonly height?: number) {
+  constructor(
+    readonly src: string,
+    readonly alt: string,
+    readonly width?: number,
+    readonly height?: number,
+    /** Raw vault reference (null for web URLs) — what the trash icon deletes. */
+    readonly target: string | null = null,
+  ) {
     super();
   }
   eq(o: ImageWidget) {
@@ -264,6 +351,24 @@ class ImageWidget extends WidgetType {
       openLightbox(this.src, this.alt);
     });
     wrap.appendChild(img);
+
+    // Hover trash icon (top-right) — removes the reference and, when nothing else
+    // uses the file, the attachment itself (decided by the delete handler).
+    const del = document.createElement('span');
+    del.className = 'cm-image-delete';
+    del.title = 'Delete image';
+    del.setAttribute('role', 'button');
+    del.innerHTML = TRASH_SVG;
+    del.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    del.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      imageDeleteHandler({ target: this.target, view, remove: () => removeImageToken(view, wrap) });
+    });
+    wrap.appendChild(del);
 
     // Drag-to-resize — left/right edge bars; width is written back as `|W`,
     // keeping aspect ratio (height auto), like Obsidian's image resize.
@@ -343,6 +448,25 @@ class MediaWidget extends WidgetType {
       embedNotFound(miss, this.alt);
     };
     wrap.appendChild(el);
+    return wrap;
+  }
+}
+
+/** Inline players are built only for the supported media providers. */
+class ExternalEmbedWidget extends WidgetType {
+  constructor(readonly embed: ExternalEmbed) {
+    super();
+  }
+  eq(o: ExternalEmbedWidget) {
+    return o.embed.src === this.embed.src;
+  }
+  ignoreEvent() {
+    return true;
+  }
+  toDOM() {
+    const wrap = document.createElement('div');
+    wrap.className = 'cm-external-embed-wrap';
+    wrap.appendChild(createEmbedElement(this.embed));
     return wrap;
   }
 }
@@ -2060,7 +2184,9 @@ const EMPHASIS_CLASS: Record<string, string> = {
 const hidden = Decoration.replace({});
 
 function attachmentUrl(target: string): string {
-  return `/api/files/content?path=${encodeURIComponent(target)}`;
+  return `/api/files/content?path=${encodeURIComponent(target)}${
+    notePath ? `&from=${encodeURIComponent(notePath)}` : ''
+  }`;
 }
 
 /**
@@ -2364,12 +2490,25 @@ function buildDecorations(view: EditorView): DecorationSet {
           i = end;
         }
       };
+      // Hanging indent: wrapped lines align with the text after the marker. Indent
+      // units and the marker widget have fixed widths (see .HyperMD-hang in CSS).
+      // Build the prefix by addition because CSS calc multiplication is not supported
+      // by all browsers. `markerW` varies with digit count for ordered lists.
+      const hang = (ws: string, markerW?: string): Record<string, string> => {
+        if (bodyStart) return {};
+        let units = 0;
+        for (let i = 0; i < ws.length; i += ws[i] === '\t' ? 1 : 4) units++;
+        const prefix = [...Array.from({ length: units }, () => 'var(--hang-indent-w)'), 'var(--hang-marker-w)'].join(' + ');
+        // `--hang-marker-w` must be set on the line itself: the ordered-list marker box
+        // (.cm-ol-marker) reads it for its width, so it has to match what the prefix uses.
+        return { style: `${markerW ? `--hang-marker-w:${markerW};` : ''}--hang-prefix:calc(${prefix})` };
+      };
       const task = body.match(/^(\s*)([-*+])\s+\[(.)\]\s/);
       if (task) {
         all.push(
           Decoration.line({
-            class: 'HyperMD-list-line HyperMD-task-line',
-            attributes: { 'data-task': task[3] },
+            class: bodyStart ? 'HyperMD-list-line HyperMD-task-line' : 'HyperMD-list-line HyperMD-task-line HyperMD-hang',
+            attributes: { 'data-task': task[3], ...hang(task[1]) },
           }).range(line.from, line.from),
         );
         indentGuides(task[1]);
@@ -2380,7 +2519,12 @@ function buildDecorations(view: EditorView): DecorationSet {
       } else {
         const bullet = body.match(/^(\s*)([-*+])(\s+)/);
         if (bullet) {
-          all.push(Decoration.line({ class: 'HyperMD-list-line' }).range(line.from, line.from));
+          all.push(
+            Decoration.line({
+              class: bodyStart ? 'HyperMD-list-line' : 'HyperMD-list-line HyperMD-hang',
+              attributes: hang(bullet[1]),
+            }).range(line.from, line.from),
+          );
           indentGuides(bullet[1]);
           // Replace the `-`/`*`/`+` marker with a bullet and collapse its trailing
           // whitespace to a single space, so `-   Item` reads `• Item` like Obsidian.
@@ -2388,19 +2532,35 @@ function buildDecorations(view: EditorView): DecorationSet {
           const markerEnd = start + 1;
           const spaceEnd = markerEnd + bullet[3].length;
           if (!touches(start, spaceEnd)) {
-            pushReplace(start, markerEnd, Decoration.replace({ widget: new BulletWidget() }));
+            pushReplace(start, markerEnd + 1, Decoration.replace({ widget: new BulletWidget() }));
             if (bullet[3].length > 1) pushReplace(markerEnd + 1, spaceEnd, hidden);
           }
         } else {
-          // Ordered list: keep the `1.` but collapse extra spaces after it.
+          // Ordered list: keep the `1.` but collapse extra spaces after it. The marker
+          // is drawn in a fixed-width box (width grows with digit count) so wrapped
+          // lines can hang under the text, like bullets.
           const ol = body.match(/^(\s*)(\d{1,9}[.)])(\s+)/);
           if (ol) {
-            all.push(Decoration.line({ class: 'HyperMD-list-line' }).range(line.from, line.from));
+            const digits = ol[2].length - 1;
+            const markerW = `${(1.6 + (digits - 1) * 0.6).toFixed(2)}em`;
+            all.push(
+              Decoration.line({
+                class: bodyStart ? 'HyperMD-list-line' : 'HyperMD-list-line HyperMD-hang',
+                attributes: hang(ol[1], markerW),
+              }).range(line.from, line.from),
+            );
             indentGuides(ol[1]);
-            if (ol[3].length > 1) {
-              const markerEnd = bodyFrom + ol[1].length + ol[2].length;
-              const spaceEnd = markerEnd + ol[3].length;
-              if (!touches(bodyFrom + ol[1].length, spaceEnd)) pushReplace(markerEnd + 1, spaceEnd, hidden);
+            const start = bodyFrom + ol[1].length;
+            const markerEnd = start + ol[2].length;
+            const spaceEnd = markerEnd + ol[3].length;
+            if (!touches(start, spaceEnd)) {
+              if (bodyStart) {
+                // In quotes/callouts there is no hanging box: keep one space after the marker.
+                if (ol[3].length > 1) pushReplace(markerEnd + 1, spaceEnd, hidden);
+              } else {
+                all.push(Decoration.mark({ class: 'cm-ol-marker' }).range(start, markerEnd));
+                pushReplace(markerEnd, spaceEnd, hidden);
+              }
             }
           }
         }
@@ -2541,7 +2701,7 @@ function buildDecorations(view: EditorView): DecorationSet {
               h = sm[2] ? Number(sm[2]) : undefined;
             }
           }
-          pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(attachmentUrl(href), href, w, h) }));
+          pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(attachmentUrl(href), href, w, h, href) }));
         } else if (isEmbed && (VIDEO_EXT_RE.test(href) || AUDIO_EXT_RE.test(href))) {
           // `![[clip.mp4]]` / `![[song.mp3]]` → native HTML5 player like Obsidian.
           const kind = VIDEO_EXT_RE.test(href) ? 'video' : 'audio';
@@ -2572,6 +2732,15 @@ function buildDecorations(view: EditorView): DecorationSet {
         }
       }
 
+      // Standalone media URL → inline player (raw URL shows while the caret is on it)
+      const embedM = text.match(/^\s*(https?:\/\/\S+)\s*$/);
+      if (embedM) {
+        const s = line.from + text.indexOf(embedM[1]);
+        const e = s + embedM[1].length;
+        const emb = !touches(s, e) && !inCode(s, e) ? resolveExternalEmbed(embedM[1]) : null;
+        if (emb) pushReplace(s, e, Decoration.replace({ widget: new ExternalEmbedWidget(emb) }));
+      }
+
       // Markdown images ![alt](url) — URL may contain spaces (real-world vaults)
       const imgRe = /!\[([^\]]*)\]\(([^)]+)\)/g;
       while ((m = imgRe.exec(text))) {
@@ -2595,8 +2764,17 @@ function buildDecorations(view: EditorView): DecorationSet {
         // Browser-loadable URLs load directly; anything else (a relative path or
         // any custom scheme) is resolved by basename via the vault file index.
         const webLoadable = /^(https?|data|blob|file):/i.test(url);
-        const src = webLoadable ? url : attachmentUrl(decodeLinkTarget(url.split('/').pop() || url));
-        pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(src, alt, w, h) }));
+        let vaultRef: string | null = null;
+        if (!webLoadable) {
+          vaultRef = url.replace(/^<|>$/g, '');
+          try {
+            vaultRef = decodeURIComponent(vaultRef);
+          } catch {
+            /* keep raw */
+          }
+        }
+        const src = vaultRef === null ? url : attachmentUrl(vaultRef);
+        pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(src, alt, w, h, vaultRef) }));
       }
 
       // Markdown links [text](url) — not preceded by ! (those are images)
@@ -2607,6 +2785,11 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (touches(s, e) || inCode(s, e)) continue;
         const url = m[2].replace(/\s+"[^"]*"$/, '').trim();
         pushReplace(s, e, Decoration.replace({ widget: new MdLinkWidget(m[1], url) }));
+      }
+
+      // Standalone bare URL line → rich preview card (raw text shown while editing).
+      if (/^https?:\/\/\S+$/i.test(text) && !lineActive(line.from) && !inCode(line.from, line.to)) {
+        pushReplace(line.from, line.to, Decoration.replace({ widget: new LinkPreviewWidget(text) }));
       }
 
       // Markdown escapes `\.` `\*` … — conceal the backslash like Obsidian LP
@@ -2698,8 +2881,9 @@ export const noteTitleField = StateField.define<string>({
 
 function buildInlineTitle(state: EditorState): DecorationSet {
   if (!state.field(livePreviewState, false)) return Decoration.none;
-  const title = state.field(noteTitleField, false) ?? '';
-  if (!title) return Decoration.none;
+  const baseTitle = state.field(noteTitleField, false) ?? '';
+  if (!baseTitle) return Decoration.none;
+  const title = frontmatterTitle(state.doc.sliceString(0, Math.min(state.doc.length, 2000))) ?? baseTitle;
   // Skip when the note already opens with an H1 equal to the title — the Trilium
   // export repeats the title as a heading, and Obsidian would otherwise show it twice.
   const head = state.doc.sliceString(0, Math.min(state.doc.length, 2000));
@@ -2835,7 +3019,7 @@ let plainClickAt: { x: number; y: number } | null = null;
 
 export const editorClickFix = EditorView.domEventHandlers({
   mousedown(event, view) {
-    if (event.button !== 0 || event.shiftKey || event.detail > 1) {
+    if (event.button !== 0 || event.shiftKey || event.altKey || event.detail > 1) {
       plainClickAt = null;
       return false;
     }

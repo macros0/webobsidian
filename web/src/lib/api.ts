@@ -132,10 +132,31 @@ async function req<T>(url: string, opts: RequestInit = {}): Promise<T> {
   return (ct.includes('application/json') ? res.json() : (res.text() as unknown)) as Promise<T>;
 }
 
+export interface LinkPreview {
+  url: string;
+  title: string;
+  description: string;
+  image: string | null;
+  domain: string;
+}
+
 export class ApiError extends Error {
   constructor(message: string, public status: number, public data?: unknown) {
     super(message);
   }
+}
+
+/**
+ * Lets the store react to renames/moves (e.g. keep manual sort order) no matter which component
+ * triggered them, without api.ts depending on the store.
+ */
+export interface RenameHook {
+  start(): void;
+  done(from: string, to: string, ok: boolean): void;
+}
+let renameHook: RenameHook | null = null;
+export function setRenameHook(h: RenameHook | null): void {
+  renameHook = h;
 }
 
 export const api = {
@@ -159,6 +180,8 @@ export const api = {
     }),
   me: () => req<{ authenticated: boolean; mustChangePassword: boolean }>('/auth/me'),
 
+  linkPreview: (url: string) => req<LinkPreview>(`/api/linkpreview?url=${encodeURIComponent(url)}`),
+
   // files
   tree: () => req<TreeNode>('/api/files/'),
   read: (path: string) =>
@@ -179,14 +202,32 @@ export const api = {
     }),
   createFolder: (path: string) =>
     req<{ ok: true }>('/api/files/folder', { method: 'POST', body: JSON.stringify({ path }) }),
-  rename: (from: string, to: string) =>
-    req<{ ok: true }>('/api/files/rename', { method: 'PATCH', body: JSON.stringify({ from, to }) }),
+  rename: async (from: string, to: string) => {
+    renameHook?.start();
+    let ok = false;
+    try {
+      const r = await req<{ ok: true }>('/api/files/rename', { method: 'PATCH', body: JSON.stringify({ from, to }) });
+      ok = true;
+      return r;
+    } finally {
+      renameHook?.done(from, to, ok);
+    }
+  },
   copy: (from: string, to: string) =>
     req<{ ok: true }>('/api/files/copy', { method: 'POST', body: JSON.stringify({ from, to }) }),
-  remove: (path: string) =>
+  remove: (path: string, permanent = false) =>
     req<{ ok: true; trashed?: string; deleted?: string }>(
-      `/api/files/?path=${encodeURIComponent(path)}`,
+      `/api/files/?path=${encodeURIComponent(path)}${permanent ? '&permanent=1' : ''}`,
       { method: 'DELETE' },
+    ),
+  resolveAttachment: (path: string, from: string) =>
+    req<{ path: string | null }>(
+      `/api/files/resolve?path=${encodeURIComponent(path)}&from=${encodeURIComponent(from)}`,
+    ),
+  // notes (other than `exclude`) still referencing an attachment
+  references: (path: string, exclude?: string) =>
+    req<{ references: string[] }>(
+      `/api/files/references?path=${encodeURIComponent(path)}${exclude ? `&exclude=${encodeURIComponent(exclude)}` : ''}`,
     ),
   // trash (FR-1)
   listTrash: () => req<{ items: TrashItem[] }>('/api/files/trash'),

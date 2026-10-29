@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { Router } from 'express';
 import type { Request } from 'express';
 import jwt from 'jsonwebtoken';
@@ -12,6 +13,7 @@ import {
   type ShareRecord,
 } from '../services/shares.js';
 import { canvasEmbedTargets } from '../services/rendercanvas.js';
+import { vaultTarget } from '../services/renderhtml.js';
 import { mimeFor } from '../services/mime.js';
 import { sendFileWithRange } from '../services/httpfile.js';
 
@@ -111,7 +113,7 @@ function embedTargets(content: string): string[] {
     const url = m[1].replace(/\s+"[^"]*"$/, '').trim();
     // web-loadable URLs are loaded directly by the browser, not via the vault
     if (url && !/^(https?|data|blob|file):/i.test(url)) {
-      out.add(decodeURIComponent(url.split('/').pop() || url));
+      out.add(vaultTarget(url));
     }
   }
   return [...out];
@@ -121,6 +123,21 @@ function embedTargets(content: string): string[] {
 async function resolveVaultPath(rel: string): Promise<string | null> {
   if (await vault.exists(rel)) return rel;
   return resolveFile(rel) ?? null;
+}
+
+/**
+ * Resolve an embed target for the shared note at `notePath`: a relative target
+ * (`attachments/x.png`) is looked up next to the note first, exactly like the app's own
+ * GET /api/files/content?from=…, then falls back to the vault-wide lookup (wikilink style).
+ * Without this, same-named images in different folders resolve to the wrong file.
+ */
+async function resolveForNote(target: string, notePath: string): Promise<string | null> {
+  if (!target.startsWith('/')) {
+    const dir = path.posix.dirname(notePath);
+    const cand = path.posix.normalize(path.posix.join(dir === '.' ? '' : dir, target));
+    if (cand && !cand.startsWith('..') && !path.posix.isAbsolute(cand) && (await vault.exists(cand))) return cand;
+  }
+  return resolveVaultPath(target);
 }
 
 export const publicSharesRouter = Router();
@@ -208,7 +225,7 @@ publicSharesRouter.get(
       res.status(401).json({ error: 'password required', passwordRequired: true });
       return;
     }
-    const target = await resolveVaultPath(requested);
+    const target = await resolveForNote(requested, share.path);
     if (!target || isMd(target)) {
       res.status(404).json({ error: 'not found' });
       return;
@@ -218,7 +235,7 @@ publicSharesRouter.get(
     const targets = isCanvas(share.path) ? await canvasEmbedTargets(content) : embedTargets(content);
     const allowed = new Set<string>();
     for (const t of targets) {
-      const r = await resolveVaultPath(t);
+      const r = await resolveForNote(t, share.path);
       if (r) allowed.add(r);
     }
     if (!allowed.has(target)) {

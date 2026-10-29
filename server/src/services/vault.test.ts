@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -153,13 +153,32 @@ describe('path safety (resolveInVault)', () => {
 
 describe('symlinked vault contents (#23 — follow symlinks within allowedRoots)', () => {
   let outside: string;
-  beforeEach(async () => {
+  let canSymlink = true;
+  beforeAll(async () => {
+    // Windows requires Developer Mode or an elevated token for file symlinks.
+    // Probe the capability instead of failing before reaching the assertions.
+    const probe = await fs.mkdtemp(path.join(os.tmpdir(), 'wo-symlink-probe-'));
+    try {
+      await fs.writeFile(path.join(probe, 'target'), 'probe');
+      await fs.symlink(path.join(probe, 'target'), path.join(probe, 'link'), 'file');
+    } catch (err) {
+      if (process.platform === 'win32' && (err as NodeJS.ErrnoException).code === 'EPERM') {
+        canSymlink = false;
+      } else {
+        throw err;
+      }
+    } finally {
+      await fs.rm(probe, { recursive: true, force: true });
+    }
+  });
+  beforeEach(async (context) => {
+    if (!canSymlink) context.skip();
     outside = await fs.mkdtemp(path.join(os.tmpdir(), 'wo-outside-'));
     settings.vault.allowedRoots = [outside];
   });
   afterEach(async () => {
     settings.vault.allowedRoots = [];
-    await fs.rm(outside, { recursive: true, force: true });
+    if (outside) await fs.rm(outside, { recursive: true, force: true });
   });
 
   it('lists a symlinked folder whose target is an allowed root', async () => {

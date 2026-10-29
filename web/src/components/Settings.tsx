@@ -69,9 +69,26 @@ function Row({ name, desc, children }: { name: string; desc?: string; children: 
 }
 
 function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
+  const autoReveal = useStore((st) => st.autoReveal);
+  const setAutoReveal = useStore((st) => st.setAutoReveal);
+  const showAttachmentFolders = useStore((st) => st.showAttachmentFolders);
+  const setShowAttachmentFolders = useStore((st) => st.setShowAttachmentFolders);
   const [path, setPath] = useState(s.vault.path);
   const [deleteMode, setDeleteMode] = useState(s.vault.deleteMode ?? 'trash');
+  const [retention, setRetention] = useState(String(s.vault.trashRetentionDays ?? 0));
   const [browser, setBrowser] = useState<any>(null);
+  // Whole days, 0 (keep forever) … 3650. Invalid input snaps back to the saved value.
+  const saveRetention = async () => {
+    const n = Number(retention);
+    const saved = s.vault.trashRetentionDays ?? 0;
+    if (!Number.isInteger(n) || n < 0 || n > 3650) {
+      setRetention(String(saved));
+      return;
+    }
+    if (n === saved) return;
+    await api.putSettings({ vault: { trashRetentionDays: n } });
+    await reload();
+  };
   const save = async () => {
     await api.putSettings({ vault: { path } });
     await reload();
@@ -123,6 +140,45 @@ function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
           <option value="trash">Move to .trash (recoverable)</option>
           <option value="permanent">Permanently delete</option>
         </select>
+      </Row>
+      <Row
+        name="Show attachment folders"
+        desc={'Pasted images are stored in an "attachments" folder next to each note. Hidden in the file tree by default; folders that contain notes are never hidden.'}
+      >
+        <input
+          type="checkbox"
+          checked={showAttachmentFolders}
+          onChange={(e) => setShowAttachmentFolders(e.target.checked)}
+        />
+      </Row>
+      <Row
+        name="Reveal active file in explorer"
+        desc="When enabled, opening or switching documents auto-expands parent folders, scrolls to the active file, and highlights it in the file explorer."
+      >
+        <input
+          type="checkbox"
+          checked={autoReveal}
+          onChange={(e) => setAutoReveal(e.target.checked)}
+        />
+      </Row>
+      <Row
+        name="Trash retention (days)"
+        desc="Items in .trash are permanently deleted this many days after they were moved there. 0 keeps them forever."
+      >
+        <input
+          className="text-input"
+          type="number"
+          min={0}
+          max={3650}
+          step={1}
+          style={{ width: 90 }}
+          value={retention}
+          onChange={(e) => setRetention(e.target.value)}
+          onBlur={saveRetention}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+        />
       </Row>
     </div>
   );

@@ -6,6 +6,7 @@ import { asyncHandler } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getSettings, updateSettings, redactSettings, ensureVaultBrowsable } from '../services/settings.js';
 import { config } from '../config.js';
+import { purgeExpiredTrash } from '../services/trashretention.js';
 
 export const settingsRouter = Router();
 settingsRouter.use(requireAuth);
@@ -44,6 +45,10 @@ settingsRouter.put(
         d.api.rateLimitPerMin = body.api.rateLimitPerMin;
       }
     });
+    // A new retention period applies right away (don't wait for the hourly check).
+    if (body.vault && 'trashRetentionDays' in body.vault) {
+      void purgeExpiredTrash().catch(() => undefined);
+    }
     res.json(redactSettings(updated));
   }),
 );
@@ -54,6 +59,10 @@ function sanitizeVault(v: any) {
   if (typeof v.trash === 'string') out.trash = v.trash;
   if (v.deleteMode === 'trash' || v.deleteMode === 'permanent') out.deleteMode = v.deleteMode;
   if (typeof v.attachmentDir === 'string') out.attachmentDir = v.attachmentDir;
+  // Whole days, 0 (keep forever) … 3650. Anything else is dropped rather than persisted.
+  if (Number.isInteger(v.trashRetentionDays) && v.trashRetentionDays >= 0 && v.trashRetentionDays <= 3650) {
+    out.trashRetentionDays = v.trashRetentionDays;
+  }
   if (Array.isArray(v.allowedRoots)) {
     // allowedRoots is the gate for vault.path / Browse, so keep it well-formed:
     // only non-empty strings, normalised to absolute paths. Drops anything else

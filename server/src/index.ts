@@ -21,6 +21,7 @@ import { tasksRouter } from './routes/tasks.js';
 import { searchRouter } from './routes/search.js';
 import { settingsRouter } from './routes/settings.js';
 import { gitRouter } from './routes/git.js';
+import { linkPreviewRouter } from './routes/linkpreview.js';
 import { keysRouter } from './routes/keys.js';
 import { pluginsRouter } from './routes/plugins.js';
 import { agentRouter } from './routes/agent.js';
@@ -33,6 +34,7 @@ import { buildFileIndex, indexFile, unindexFile } from './services/fileindex.js'
 import { setBroadcaster, broadcast } from './services/realtime.js';
 import { getVaultRoot, ensureVault, invalidateStat } from './services/vault.js';
 import { startAutoSync, stopAutoSync } from './services/autosync.js';
+import { startTrashRetention } from './services/trashretention.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -98,7 +100,13 @@ async function main() {
           fontSrc: ["'self'", 'data:'],
           connectSrc: ["'self'", 'ws:', 'wss:'],
           objectSrc: ["'none'"],
-          frameSrc: ["'self'", 'blob:'],
+          frameSrc: [
+            "'self'",
+            'blob:',
+            'https://www.youtube.com',
+            'https://www.instagram.com',
+            'https://www.facebook.com',
+          ],
           baseUri: ["'self'"],
           formAction: ["'self'"],
           // The app frames its own content — `![[doc.pdf]]` and the PDF file view load
@@ -140,6 +148,7 @@ async function main() {
   app.use('/api/settings', settingsRouter);
   app.use('/api/git', gitRouter);
   app.use('/api/keys', keysRouter);
+  app.use('/api/linkpreview', linkPreviewRouter);
   app.use('/api/plugins', pluginsRouter);
   app.use('/api/uistate', uiStateRouter);
   app.use('/api/shares', sharesRouter); // manage public share links (auth)
@@ -186,6 +195,7 @@ async function main() {
   const wss = setupWebsocket(server);
   const watcher = await setupWatcher();
   startAutoSync();
+  startTrashRetention();
 
   server.listen(config.port, config.host, () => {
     console.log(`\n  WebObsidian server → http://${config.host}:${config.port}`);

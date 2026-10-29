@@ -1,5 +1,17 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Community integration — 2026-10-29
+
+- [x] Create `macros0/webobsidian` and dedicated local checkout.
+- [x] Merge pinned Pham and Lakyle source branches, preserving both histories.
+- [x] Resolve editor, rendering, tree, state, server and documentation conflicts.
+- [x] Default trash retention to zero; test new and legacy settings.
+- [~] Verify build, tests and isolated HTTP integration; independent review.
+- [ ] Publish reviewed integration branch and adopt it after CI.
+
+The following source-fork records are retained for provenance. Current evidence is in
+`docs/FORK_INTEGRATION.md`; deployment is outside this task.
+
 > Track tiến độ phát triển. Tham chiếu thiết kế: [PRD.md](PRD.md).
 > Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong.
 > Cập nhật file này **mỗi khi** một mục thay đổi trạng thái.
@@ -49,6 +61,7 @@ Cập nhật lần cuối: 2026-09-30 (Phase 45 — danh sách giá trị cho th
 - [x] M14.3 Implementing `webo` subcommands: `install`, `start`, `stop`, `restart`, `status`, `logs`, `config`, `uninstall`
 - [x] M14.4 Setup PID file (`~/.webobsidian/webo.pid`), log file (`webo.log`), và scaffold configuration (`~/.webobsidian/.env`)
 - [x] M14.5 Root package scripts (`npm run webo`) & documentation trong README.md / PRD.md / CHANGELOG.md
+Cập nhật lần cuối: 2026-10-16 (issue #36 reveal active file in explorer; floating document outline #32; manual file/folder sorting kéo-thả theo thư mục #34; ẩn thư mục attachments trong tree; local attachment folders + nút xoá ảnh #30; trash retention; fix hanging indent list/task #20; nút xoá nhanh trong file tree + confirm trong app; double-click inline rename #19; trước đó: hanging indent list/task/ordered; multi-cursor #10; link preview card #7)
 
 ---
 
@@ -477,6 +490,41 @@ Cập nhật lần cuối: 2026-09-30 (Phase 45 — danh sách giá trị cho th
       GitHub Release draft, `GH_TOKEN`, `CSC_IDENTITY_AUTO_DISCOVERY=false`). `ci.yml` thêm typecheck + build
       bundle desktop. Root scripts `desktop`/`desktop:dist`/`desktop:publish`; `.gitignore` thêm `desktop/.gen`,
       `desktop/release`.
+- [x] M27.6 Chuẩn bị release v0.1.2 cho fork `lakylekidd/webobsidian`: bump root + desktop theo lịch sử v0.1.1,
+      đồng bộ lockfile, publish target/homepage/download links trỏ về fork; kiểm chứng typecheck + build
+      web/server/desktop OK. Workflow fork đang active; push annotated tag `v0.1.2` để CI tạo draft release,
+      chỉ Publish sau khi cả ba runner hoàn thành.
+
+- [x] M27.7 External media embeds (#6): URL YouTube/Instagram/Facebook đứng riêng một dòng render inline
+      (Reading, Live Preview, Public Share); whitelist trong `web/src/lib/embeds.ts` (+ bản server), iframe
+      dựng lại từ ID đã validate sau sanitize; CSP `frame-src` chỉ thêm 3 domain.
+
+## Phase 28 — Inline rename trong file tree (FR-1, issue #19)
+- [x] M28.1 Double-click tên file/folder để vào inline rename qua `RenameInput` hiện có; giữ Rename context menu,
+      Enter xác nhận, Escape huỷ, click đơn vẫn xử lý bình thường. Web typecheck + production build sạch.
+      `Editor.tsx` không `v.focus()` khi đang rename (double-click note chưa mở: editor mount cướp focus làm input bị blur/đóng).
+
+## Phase 29 — List hanging indent compatibility (FR-2, issue #20)
+- [x] M29.1 Tạo prefix indent bằng phép cộng và phép trừ CSS `calc()` thay phép nhân, để hanging indent hoạt động ổn định trên Edge với bullet, numbered, task và nested lists. Typecheck/build sạch; Chromium xác nhận wrapped line thẳng hàng cho bullet, numbered, task và nested list.
+
+## Phase 30 — Trash retention (FR-1, PRD 1.8)
+- [x] M30.1 Setting `vault.trashRetentionDays` (int 0–3650, mặc định 30; 0 = giữ mãi) + validate ở `PUT /api/settings` + ô nhập trong Settings → Vault & Files.
+- [x] M30.2 Ghi thời điểm vào trash: `services/trashindex.ts` (`<trash>/.trash-index.json`, khoá theo path, lock tuần tự, guard path escape); `vault.trash()` ghi, restore/xoá item cập nhật; `listTrash` trả thời điểm xoá thật.
+- [x] M30.3 Purge: `services/trashretention.ts` — chạy sau khi khởi động (15s), mỗi giờ và ngay khi đổi setting; item chưa có index được backfill = "now" (không xoá ngay trash cũ); chỉ log số lượng, không log tên.
+
+## Phase 31 — Local attachment folders + xoá ảnh (FR-1/FR-2, PRD 1.9, issue #30)
+- [x] M31.1 Dán/drop ảnh → `<thư-mục-note>/attachments/` (tự tạo, tên unique), chèn `![](attachments/x.png)` tại caret.
+- [x] M31.2 Server: `GET /files/content|resolve` nhận `from` (resolve tương đối theo note, fallback basename); `GET /files/references`; `DELETE /files?permanent=1`.
+- [x] M31.3 Icon thùng rác khi hover ảnh (Live Preview + Reading): gỡ tham chiếu, kiểm tra tham chiếu khác, xoá vĩnh viễn hoặc cảnh báo + chỉ gỡ khỏi note.
+
+## Phase 32 — Manual sorting trong file explorer (FR-1, issue #34)
+- [x] M32.1 Thêm sort mode `manual` vào `treeSort` (persist trong uistate), menu "Change sort order" có mục Manual.
+- [x] M32.2 Lưu metadata thứ tự thủ công theo từng thư mục (`manualOrder`: key = parent folder path, value = child paths) và reconcile khi tree thay đổi để giữ thứ tự cũ, item mới append cuối.
+- [x] M32.3 Drag-and-drop ở Manual mode: thả lên sibling row để reorder file/folder trong cùng thư mục; không rename file/folder.
+- [x] M32.4 Chuyển sang mode sort khác không xoá metadata manual; chuyển lại Manual khôi phục thứ tự trước đó.
+
+## Phase 33 — Reveal active file in explorer (FR-1, issue #36)
+- [x] M33.1 Thêm setting `Reveal active file in explorer` trong Settings → Vault & Files, dùng chung state `autoReveal` đã có (persist qua uistate), đồng bộ wording với nút toggle ở header Files.
 
 ## Phase 32 — Live Preview: click đúng dòng (height map của CodeMirror) — FR-2 (theo yêu cầu người dùng)
 - [x] M32.1 Xác định nguyên nhân bằng browser thật (Chromium + CDP, dev instance, vault test dựng riêng):
@@ -1076,6 +1124,28 @@ Cập nhật lần cuối: 2026-09-30 (Phase 45 — danh sách giá trị cho th
   is rejected and the recovery password accepted; with nothing configured `123456` still works (200) and
   login reports `mustChangePassword: true`, preserving the documented first-run flow. `/auth/status` returns
   `{"passwordSet":true}` with no `mustChangePassword` key. Typecheck + build clean.
+
+- 2026-10-16 (Issue #36 — bắt đầu): xác nhận logic auto reveal hiện có (`autoReveal` + expand ancestor + scroll + active highlight) đã đáp ứng phần hành vi; đang bổ sung setting hiển thị rõ ràng trong Settings → Vault & Files và cập nhật PRD/plan.
+- 2026-10-16 (Issue #36 — hoàn tất): thêm checkbox `Reveal active file in explorer` ở Settings → Vault & Files (bind trực tiếp state persisted `autoReveal`), bổ sung setter `setAutoReveal` trong store, đổi tooltip nút crosshair ở header Files theo cùng wording, và cập nhật PRD 1.12 + plan phase 32. Verify: `npm --workspace web run typecheck` + `npm --workspace web run build` pass.
+- 2026-10-16 (Issue #34 — Manual sorting file explorer): thêm mode sort `Manual` + metadata `manualOrder` persist trong `/api/uistate` theo từng parent folder; khi reload/reopen/switch folder vẫn giữ thứ tự. Drag-thả trên sibling row trong cùng thư mục sẽ reorder (file+folder cùng danh sách), không đổi tên đường dẫn. Khi tree đổi (create/move/delete), reconcile giữ thứ tự cũ và append item mới vào cuối thư mục đích. Verify: web/server typecheck + build sạch.
+- 2026-10-16 (Local attachments #30): ảnh dán lưu cạnh note + link tương đối; endpoint resolve/references/permanent delete;
+  icon xoá khi hover ảnh. Server + web typecheck sạch; chưa kiểm thử thủ công trên trình duyệt.
+- 2026-10-16 (Quick create #23): hover thư mục trong file tree hiện icon New note / New canvas ở bên phải; tạo
+  trong thư mục đó và vào inline rename ngay (newCanvas dùng cùng luồng rename như newNote). Chưa chạy được
+  typecheck/build trong môi trường này (thiếu deps).
+- 2026-10-16 (Issue #20): hanging indent không ổn định do phép nhân trong CSS `calc()` khi tạo prefix và negative indent. Thay bằng chuỗi phép cộng theo số cấp lồng, cùng phép trừ tương thích hơn với Edge. Verify: typecheck/build sạch; Chromium xác nhận wrapped line thẳng hàng cho bullet, numbered, task và nested list.
+- 2026-10-16 (Double-click rename #19): dùng lại inline rename hiện có cho tên file tree, bỏ xử lý click lần hai
+  để tránh mở/toggle thêm; giữ nguyên luồng context menu. Web typecheck + production build sạch.
+  Sửa: double-click note chưa mở → editor mount `v.focus()` làm blur input rename; bỏ focus khi `renamingPath` set. Verify thủ công: note/canvas/folder rename + Escape.
+- 2026-10-14 (External media embeds #6): thêm `resolveExternalEmbed` + rehype plugin chạy sau sanitize,
+  widget Live Preview, CSS responsive. Typecheck OK; kiểm chứng render server (HTML iframe thô bị loại).
+- 2026-10-13 (release v0.1.2 — cấu hình đã kiểm chứng): root/desktop + lockfile đồng bộ `0.1.2`;
+  publish target/homepage/download links trỏ về fork. `npm ci`, typecheck root + desktop, build
+  web/server + desktop bundle đều OK sau thay đổi. Nội dung kể từ v0.1.1: fix dark-mode contrast/cursor
+  (#19), metadata và tài liệu fork. npm báo 45 vulnerability dependency có sẵn; không đổi dependency.
+- 2026-10-13 (release v0.1.2 — bắt đầu): theo quy trình tag/draft của FR-13; giữ author/copyright upstream.
+  Baseline: `npm ci`, typecheck root + desktop, build web/server + desktop bundle đều OK.
+- 2026-10-12 (Bug #19 — dark mode contrast): chữ tối trên nền tối trong modal/Settings do `body` resolve `--text-normal` theo `:root` (light) nên con kế thừa màu tối; con trỏ CodeMirror mặc định đen. Fix CSS (`obsidian.css`): đặt `color`/`background` trên `.theme-light/.theme-dark`, `.modal`, `.context-menu`, `.toast`; đặt `border-left-color` cho `.cm-cursor`/`.cm-dropCursor` (trắng ở dark). Typecheck OK; chưa kiểm chứng trực quan.
 - 2026-06-27 (security fix — leo thang quyền qua token share): `verifyToken()` (server/src/services/auth.ts)
   chỉ kiểm tra chữ ký nên **mọi** token ký bằng `auth.jwtSecret` đều được chấp nhận như phiên owner. Endpoint
   public `POST /public/shares/:id/unlock` ký unlock-cookie bằng cùng secret → người được chia sẻ (có mật khẩu
@@ -1929,3 +1999,16 @@ Cập nhật lần cuối: 2026-09-30 (Phase 45 — danh sách giá trị cho th
   mode). Docs: docs/AGENT_API.md viết lại (bảng endpoint + mục error + ví dụ đọc–sửa), README (§ Agent
   API + MCP), mcp-server/README.md, PRD 1.8, CHANGELOG, docs/UPSTREAM_PR_MERGES.md → "Adopted from
   other forks" (kèm danh sách fork đã khảo sát và lý do loại).
+- 2026-10-15: Link preview card (issue #7, PRD 1.6) — `server/src/services/linkpreview.ts` (OG fetch SSRF-guarded, cache, provider chain, SSR `embedLinkPreviews` cho share page), route `GET /api/linkpreview`, web `lib/linkPreview.ts` (Reading view) + `LinkPreviewWidget` (Live Preview), CSS `.link-preview-card`. Verify: typecheck sạch; test thủ công parse OG, chặn loopback, fallback link thường.
+- 2026-10-15: Multi-cursor & column selection (issue #10) — `Editor.tsx`: allowMultipleSelections, Alt+Click thêm cursor, Shift+Alt+Drag chọn cột (rectangularSelection), Escape về 1 cursor (simplifySelection); `livePreview.ts` `editorClickFix` bỏ qua Alt+Click để không collapse multi-cursor. Verify: typecheck sạch; test thủ công Alt+Click thêm cursor + Escape (Source mode); Shift+Alt+Drag chưa kiểm chứng.
+- 2026-10-15: Hanging indent cho list/task/ordered list (Live Preview) — `livePreview.ts` (`hang()` đặt `--hang-units`/`--hang-marker-w`, class `HyperMD-hang`; ordered list: marker `1.` bọc `cm-ol-marker` rộng cố định theo số chữ số, khoảng trắng sau marker ẩn khi caret không chạm), `obsidian.css` (padding-left + text-indent âm). Không áp dụng trong quote/callout. Verify: typecheck sạch; đo pixel dòng wrap == dòng đầu cho bullet/task/lồng nhau/ordered 1–3 chữ số; trạng thái raw khi caret chạm marker ổn định.
+- 2026-10-15: Highlight YAML front matter trong Source mode (issue #9) — `Editor.tsx` dùng `yamlFrontmatter` (@codemirror/lang-yaml) bọc markdown; `highlight.ts` thêm style `meta` cho `---`. Verify: typecheck.
+- 2026-10-16: Trash retention (PRD 1.8) — setting `vault.trashRetentionDays` (30 mặc định), index thời điểm xoá `.trash-index.json`, purge khi khởi động/mỗi giờ/đổi setting. Verify: typecheck sạch; test thủ công — item 31 ngày bị xoá, 29 ngày giữ; file mtime 2020 vừa xoá không bị purge; folder hết hạn xoá cả cây; retention 0 giữ; giá trị sai (99999, chữ, số lẻ, âm) bị bỏ qua; UI lưu/giữ lại giá trị cũ khi nhập sai.
+- 2026-10-16: Nút xoá nhanh (hover) trên hàng file tree — `FileTree.tsx` (`.tree-del`, gọi `doDelete`). Sửa lỗi nút "không phản hồi": `window.confirm()` bị chặn/tự huỷ trong trình duyệt nhúng (preview pane) nên không có prompt → thêm `lib/confirm.ts` (`confirmDialog` dạng promise) + `ConfirmDialog.tsx` (Esc/Cancel/backdrop = huỷ, focus mặc định ở Cancel); dùng cho `doDelete`/`doDeleteMany` (context menu cũng hưởng). Verify: typecheck sạch; cancel/Esc giữ file, Delete chuyển vào .trash. Xoá folder: dòng cảnh báo phụ (`detail`) "folder và nội dung (N mục) sẽ bị xoá" / "folder rỗng"; xoá nhiều mục có folder → "Folders and everything inside them will be removed.". Chưa đổi các `confirm()` khác (Settings, TrashView, VersionHistory, ShareDialog, Workspace) Fallback touch/keyboard: nút dùng `opacity` thay `display:none` (tab được, hiện khi hover/focus-within/focus-visible), `@media (hover:none),(pointer:coarse)` chỉ hiện trên hàng đang chọn (`.selected`, tap hàng để chọn; hàng khác opacity 0 + `pointer-events:none` để không chạm nhầm) + vùng chạm lớn hơn; `ConfirmDialog` bẫy Tab giữa Cancel/Delete.
+- 2026-10-16: Sửa hanging indent ordered list sau khi đổi `calc()` (nhánh fix-indentations-in-lists) — `hang()` phải đặt cả `--hang-marker-w` lên dòng (box `.cm-ol-marker` dùng biến này làm width), nếu không box lấy giá trị mặc định và dòng wrap lệch 4–13px. Verify: đo pixel 15 dòng lồng nhau (bullet/task/ordered 1–2 chữ số/tab/hỗn hợp) + note cũ, tất cả thẳng hàng; typecheck sạch.
+- 2026-10-16: Sửa 3 lỗi của Local attachment folders (#30) — (1) nút xoá ảnh dùng `confirmDialog` trong app thay vì `confirm()` native (bị chặn/tự huỷ trong trình duyệt nhúng nên click không phản hồi), thêm dòng cảnh báo "xoá vĩnh viễn, không vào trash"; `ConfirmDialog` bắt Esc ở mức window (Esc vẫn đóng khi focus bị editor giành lại). (2) `inThisNote` đếm đôi khi tên file không có dấu cách (`image.png` luôn bị coi là "dùng ở chỗ khác trong note" nên không bao giờ xoá file) → đếm từng cách viết (raw / %20) một lần. (3) Trang public share: ảnh `![](attachments/x.png)` giờ giữ thư mục + decode đúng một lần (`vaultTarget` trong `renderhtml.ts`) và `GET /public/shares/:id/file` + allowlist resolve tương đối theo thư mục note được share (`resolveForNote`) — trước đó chỉ lấy basename nên ảnh trùng tên ở thư mục khác bị phục vụ nhầm và tên có dấu cách bị 404 (double-encode `%2520`). Verify: typecheck/build sạch; share note-b trả đúng 150 byte (trước đó 106 byte của ảnh khác), `shared pic.png` 200; allowlist vẫn chặn file không embed, `..`, đường dẫn tuyệt đối, .md (404); og:image 200; wikilink cũ vẫn hoạt động; xoá ảnh unique xoá file + bỏ token, ảnh dùng chung chỉ gỡ tham chiếu.
+- 2026-10-16: Ẩn thư mục `attachments` trong file tree (PRD 1.10) — `web/src/lib/attachments.ts` (`ATTACHMENT_DIR_NAME`, `isHiddenAttachmentFolder` = tên `attachments` không phân biệt hoa thường VÀ không chứa note/canvas ở bất kỳ cấp nào, `displayChildren`); store `showAttachmentFolders` (persist qua uistate, mặc định false); lọc trong `sortTree` (bản copy để render, tree gốc giữ nguyên nên đếm khi xoá folder vẫn gồm nội dung ẩn), `FolderView`, `FolderPicker`; `revealInTree` báo cách bật tuỳ chọn khi file nằm trong thư mục ẩn; toggle ở Settings → Vault & Files; server `vault.pruneEmptyAttachmentsDir` tự xoá `attachments/` rỗng sau khi xoá/trash file trong đó; upload dùng chung hằng số tên thư mục. Verify: typecheck/build sạch; mặc định ẩn A/attachments (chỉ ảnh) và C/Attachments (khác hoa thường), vẫn hiện B/attachments (có note) và D/attachments (canvas lồng sâu); bật/tắt tức thì + lưu qua reload; cảnh báo xoá folder đếm 3 mục gồm phần ẩn; prune: permanent/trash/hoa thường OK, thư mục còn file khác hoặc không phải attachments giữ nguyên. Ghi chú: setting `vault.attachmentDir` vẫn chưa được dùng (tên cố định `attachments`).
+- 2026-10-16: Manual sort — sửa 3 vấn đề (issue #34): (1) `FileTree.tsx` vùng thả before/inside/after theo vị trí con trỏ (folder: 25% trên = trước, 25% dưới = sau nếu đang thu gọn, giữa = chuyển vào; file: nửa trên/dưới) + vạch chỉ vị trí `.drop-before/.drop-after`; dragover dùng biến module `activeDrag` vì trình duyệt thật ẩn dữ liệu dataTransfer lúc dragover; ngoài Manual hoặc khi item kéo không cùng cấp thì giữ hành vi cũ. (2) vị trí cuối: mép dưới hàng cuối, hoặc thả vào vùng trống dưới tree (item ở root → cuối thứ tự root). (3) `api.rename` có hook (`setRenameHook`) nên mọi nơi đổi tên/di chuyển (inline rename, kéo thả, Move to…, cut/paste, inline title) đều gọi `remapManualOrder` trong store: đổi tên giữ slot, folder mang theo thứ tự con (đổi key + giá trị theo prefix), chuyển folder khác thì xuống cuối folder đích; reconcile bị bỏ qua khi có rename đang chờ server để không coi item đổi tên là "xoá + mới". Verify (drag event mô phỏng, dragover dùng DataTransfer rỗng như trình duyệt thật + thao tác UI thật): vùng/vạch đúng cho file/folder; chuyển file vào folder cùng cấp ở Manual; thả mép dưới hàng cuối → cuối; rename file/folder (qua API app và inline UI) giữ vị trí và thứ tự con; move xuống cuối folder đích; rename lỗi không đổi thứ tự; chế độ sort khác không đổi hành vi; typecheck/build sạch.
+- 2026-10-16: Floating scroll-aware document outline (issue #32, PRD 1.11) — `DocOutline.tsx` (parse heading bỏ qua frontmatter/code fence, marker theo cấp, active theo scroll qua `lineBlockAtHeight`, hover mở panel, click cuộn mượt), gắn trong `Editor.tsx`, style `.doc-outline` trong `obsidian.css`. Verify: typecheck sạch; chưa kiểm tra thủ công trên trình duyệt.
+- 2026-10-16: Sửa click outline nổi (issue #32) cuộn thiếu ở note dài — `DocOutline.tsx` `go()` dùng `EditorView.scrollIntoView(pos, {y:'start', yMargin})` + 1 lượt chốt lại sau 150ms thay cho `scrollTo(lineBlockAt().top, smooth)`: dòng nằm xa viewport chỉ có chiều cao ƯỚC LƯỢNG tới khi được render/đo, nên offset tính một lần bị thiếu và animation smooth bị CodeMirror huỷ khi đo lại (dừng cách heading hàng nghìn px, section active sai). Verify: click chuột thật trên 5 heading (xa xuôi, xa ngược, giữa, tiêu đề trùng, gần) đều tới đúng heading + đúng section active; typecheck/build sạch.
+- 2026-10-16: Outline nổi — cuộn có easing (ease-in-out cubic) khi click heading (issue #32): `DocOutline.tsx` `go()` chạy animation rAF tự viết (chậm → nhanh → chậm; thời lượng 300–900ms theo khoảng cách; tôn trọng `prefers-reduced-motion`; huỷ khi người dùng wheel/touch/click/phím hoặc khi outline unmount). Mỗi frame đi đúng phần quãng đường CÒN LẠI tính từ vị trí hiện tại tới đích, đích tính lại mỗi frame (ước lượng chiều cao dòng của CodeMirror đổi khi dòng được render/đo; khi heading đã render thì nhắm vị trí thật) → không giật khi CodeMirror re-measure và không còn cú giật cuối. Verify (click chuột thật + lấy mẫu scrollTop mỗi frame): xuống xa tốc độ 1→~130→0 px/frame ~870ms, lên xa tới H1 mượt, wheel giữa chừng dừng ngay, reduced-motion nhảy tức thì, chuyển Source giữa chừng không lỗi; typecheck/build sạch.

@@ -1,8 +1,9 @@
 import { create } from 'zustand';
-import { ApiError, api, setUnlock, type TreeNode, type ShareRecord } from './api';
+import { ApiError, api, setUnlock, setRenameHook, type TreeNode, type ShareRecord } from './api';
 import { findNode, isFolderPath } from './tree';
 import { isAttachmentTarget } from './media';
 import { dateStamp, slugify, substituteTemplate, timeStamp, uniqueNotePath } from './templates';
+import { isInsideHiddenAttachmentFolder } from './attachments';
 
 /** Per-tab id so we can ignore the echo of our own server-pushed state change. */
 export const CLIENT_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -14,8 +15,9 @@ export type TasksMode = 'board' | 'timeline';
 export type TreeSort =
   | 'name-asc' | 'name-desc'
   | 'mtime-desc' | 'mtime-asc'
-  | 'ctime-desc' | 'ctime-asc';
-const TREE_SORTS: TreeSort[] = ['name-asc', 'name-desc', 'mtime-desc', 'mtime-asc', 'ctime-desc', 'ctime-asc'];
+  | 'ctime-desc' | 'ctime-asc'
+  | 'manual';
+const TREE_SORTS: TreeSort[] = ['name-asc', 'name-desc', 'mtime-desc', 'mtime-asc', 'ctime-desc', 'ctime-asc', 'manual'];
 
 /** Sentinel tab path for the Graph view (it lives in a tab, like Obsidian). */
 export const GRAPH_PATH = 'graph://view';
@@ -135,8 +137,15 @@ interface AppState {
   // file tree sort order + auto-reveal active file (both persisted)
   treeSort: TreeSort;
   setTreeSort: (s: TreeSort) => void;
+  /** Per-folder manual order (key: folder path, '' = vault root; value: ordered child paths). */
+  manualOrder: Record<string, string[]>;
+  setManualOrderForParent: (parent: string, order: string[]) => void;
   autoReveal: boolean;
+  setAutoReveal: (v: boolean) => void;
   toggleAutoReveal: () => void;
+  /** Show auto-created `attachments/` folders in the file tree (persisted; hidden by default). */
+  showAttachmentFolders: boolean;
+  setShowAttachmentFolders: (v: boolean) => void;
 
   // split pane (open to the side)
   splitPath: string | null;
@@ -245,6 +254,9 @@ interface AppState {
   newCanvas: (dir?: string) => Promise<void>;
   /** Tree path currently being inline-renamed (null = none); FileTree shows an input for it. */
   renamingPath: string | null;
+  /** Path of a just-created note awaiting its first (inline) rename; opened once that finishes. */
+  newNotePath: string | null;
+  setNewNotePath: (path: string | null) => void;
   setRenamingPath: (path: string | null) => void;
   openDailyNote: () => Promise<void>;
   /**
@@ -280,7 +292,7 @@ const TEXT_RE = /\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i;
 const PERSIST_KEYS = [
   'tabs', 'activePath', 'viewMode', 'expanded', 'splitPath', 'splitDirection',
   'recent', 'bookmarks', 'leftPanel', 'rightPanel', 'leftOpen', 'rightOpen', 'graphSettings',
-  'treeSort', 'autoReveal',
+  'treeSort', 'manualOrder', 'autoReveal', 'showAttachmentFolders',
 ] as const;
 
 function pickPersisted(s: any): Record<string, unknown> {
@@ -308,6 +320,82 @@ function migrateGraphSettings(gs: unknown): GraphSettings {
   return merged;
 }
 
+/** Sanitize persisted manual order data (folderPath -> ordered child paths). */
+function parseManualOrder(input: unknown): Record<string, string[]> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (!Array.isArray(v)) continue;
+    const seen = new Set<string>();
+    const arr: string[] = [];
+    for (const p of v) {
+      if (typeof p !== 'string' || !p || seen.has(p)) continue;
+      seen.add(p);
+      arr.push(p);
+    }
+    out[k] = arr;
+  }
+  return out;
+}
+
+const parentOfPath = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+
+/**
+ * Carry manual order across a rename/move so the item keeps its place:
+ *  - same folder (rename): the item keeps its slot in that folder's order;
+ *  - a renamed/moved FOLDER takes its children's order with it (keys and values are re-prefixed);
+ *  - moved to another folder: dropped from the old folder's order and appended to the end of the
+ *    new folder's order (when that folder has a manual order; otherwise it just uses the default).
+ */
+function remapManualOrder(order: Record<string, string[]>, from: string, to: string): Record<string, string[]> {
+  if (!from || from === to) return order;
+  const prefix = `${from}/`;
+  const swap = (p: string) => (p === from ? to : p.startsWith(prefix) ? to + p.slice(from.length) : p);
+  const out: Record<string, string[]> = {};
+  for (const [k, list] of Object.entries(order)) out[swap(k)] = list.map(swap);
+  const fromParent = parentOfPath(from);
+  const toParent = parentOfPath(to);
+  if (fromParent !== toParent) {
+    if (out[fromParent]) out[fromParent] = out[fromParent].filter((p) => p !== to);
+    if (out[toParent]) out[toParent] = [...out[toParent].filter((p) => p !== to), to];
+  }
+  return out;
+}
+
+// Renames/moves currently awaiting the server. While any is pending the tree on screen and the
+// manual order can disagree, so reconciling then would treat the renamed item as "deleted + new".
+let renamesInFlight = 0;
+
+/**
+ * Keep manual-order metadata in sync with the live tree:
+ * - remove deleted paths,
+ * - preserve known order,
+ * - append brand-new children to the end (per-folder).
+ */
+function reconcileManualOrder(tree: TreeNode | null, current: Record<string, string[]>): Record<string, string[]> {
+  if (!tree) return {};
+  const out: Record<string, string[]> = {};
+  const walk = (node: TreeNode) => {
+    const key = node.path || '';
+    const children = node.children ?? [];
+    const childPaths = children.map((c) => c.path);
+    const known = new Set(childPaths);
+    const existing = current[key] ?? [];
+    const kept = existing.filter((p) => known.has(p));
+    const seen = new Set(kept);
+    for (const p of childPaths) {
+      if (!seen.has(p)) {
+        kept.push(p);
+        seen.add(p);
+      }
+    }
+    out[key] = kept;
+    for (const c of children) if (c.type === 'folder') walk(c);
+  };
+  walk(tree);
+  return out;
+}
+
 function applyPersisted(s: any, set: (p: any) => void): void {
   set({
     tabs: Array.isArray(s.tabs) ? s.tabs : [],
@@ -315,7 +403,9 @@ function applyPersisted(s: any, set: (p: any) => void): void {
     viewMode: ['live', 'source', 'reading'].includes(s.viewMode) ? s.viewMode : 'live',
     expanded: Array.isArray(s.expanded) ? s.expanded : [],
     treeSort: TREE_SORTS.includes(s.treeSort) ? s.treeSort : 'name-asc',
+    manualOrder: parseManualOrder(s.manualOrder),
     autoReveal: s.autoReveal === true,
+    showAttachmentFolders: s.showAttachmentFolders === true,
     splitPath: typeof s.splitPath === 'string' ? s.splitPath : null,
     splitDirection: s.splitDirection === 'down' ? 'down' : 'right',
     recent: Array.isArray(s.recent) ? s.recent : [],
@@ -384,7 +474,7 @@ export const useStore = create<AppState>()(
       tree: null,
       loadTree: async () => {
         const tree = await api.tree();
-        set({ tree });
+        set((s) => ({ tree, manualOrder: renamesInFlight > 0 ? s.manualOrder : reconcileManualOrder(tree, s.manualOrder) }));
       },
 
       tabs: [],
@@ -435,8 +525,19 @@ export const useStore = create<AppState>()(
       setExpanded: (paths) => set({ expanded: paths }),
       treeSort: 'name-asc',
       setTreeSort: (treeSort) => set({ treeSort }),
+      manualOrder: {},
+      setManualOrderForParent: (parent, order) =>
+        set((s) => ({
+          manualOrder: {
+            ...s.manualOrder,
+            [parent]: Array.from(new Set(order.filter(Boolean))),
+          },
+        })),
       autoReveal: false,
+      setAutoReveal: (autoReveal) => set({ autoReveal }),
       toggleAutoReveal: () => set((s) => ({ autoReveal: !s.autoReveal })),
+      showAttachmentFolders: false,
+      setShowAttachmentFolders: (showAttachmentFolders) => set({ showAttachmentFolders }),
 
       splitPath: null,
       splitContent: '',
@@ -551,6 +652,11 @@ export const useStore = create<AppState>()(
       revealInTree: (path) => {
         // Expand every ancestor folder so the file's row is rendered, open the
         // Files panel, then let FileTree scroll the now-visible row into view.
+        const st0 = get();
+        if (!st0.showAttachmentFolders && isInsideHiddenAttachmentFolder(st0.tree, path)) {
+          st0.notify('That file is in a hidden attachments folder — turn on Settings → Vault & Files → Show attachment folders.', 4500);
+          return;
+        }
         const segs = path.split('/');
         segs.pop();
         const ancestors: string[] = [];
@@ -646,13 +752,15 @@ export const useStore = create<AppState>()(
         }
       },
 
-      closeTab: (path) =>
-        set((s) => {
-          const tabs = s.tabs.filter((t) => t.path !== path);
-          const wasActive = s.activePath === path;
-          const activePath = wasActive ? (tabs.at(-1)?.path ?? null) : s.activePath;
-          return { tabs, activePath, ...(wasActive ? { content: '', dirty: false } : {}) };
-        }),
+      closeTab: (path) => {
+        const s = get();
+        const tabs = s.tabs.filter((t) => t.path !== path);
+        const wasActive = s.activePath === path;
+        const activePath = wasActive ? (tabs.at(-1)?.path ?? null) : s.activePath;
+        set({ tabs, activePath, ...(wasActive ? { content: '', dirty: false } : {}) });
+        // The newly selected tab must load its content, otherwise the editor stays blank.
+        if (wasActive && activePath) void get().openFile(activePath);
+      },
 
       setContent: (c) => set((s) => ({
         content: c,
@@ -704,8 +812,20 @@ export const useStore = create<AppState>()(
         let name = 'Untitled.md';
         for (let i = 1; taken.has(name.toLowerCase()); i++) name = `Untitled ${i}.md`;
         const path = base ? `${base}/${name}` : name;
-        await get().createNote(path, '');
-        if (base) get().revealInTree(path);
+        // Create the file, then drop straight into inline rename (like newFolder);
+        // the note is opened once the rename finishes so the editor can't steal focus.
+        await api.write(path, '');
+        await get().loadTree();
+        if (base) {
+          const ancestors: string[] = [];
+          let acc = '';
+          for (const sg of base.split('/')) { acc = acc ? `${acc}/${sg}` : sg; ancestors.push(acc); }
+          set((st) => ({ expanded: Array.from(new Set([...st.expanded, ...ancestors])) }));
+        }
+        set({ leftPanel: 'files', leftOpen: true, newNotePath: path, renamingPath: path, selected: [path], selectAnchor: path });
+        window.setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('wo-reveal-file', { detail: { path } }));
+        }, 60);
       },
 
       newCanvas: async (dir) => {
@@ -715,11 +835,24 @@ export const useStore = create<AppState>()(
         let name = 'Untitled.canvas';
         for (let i = 1; taken.has(name.toLowerCase()); i++) name = `Untitled ${i}.canvas`;
         const path = base ? `${base}/${name}` : name;
-        await get().createNote(path, '{\n\t"nodes":[],\n\t"edges":[]\n}');
-        if (base) get().revealInTree(path);
+        // Same flow as newNote: create, then inline-rename; opened once the rename finishes.
+        await api.write(path, '{\n\t"nodes":[],\n\t"edges":[]\n}');
+        await get().loadTree();
+        if (base) {
+          const ancestors: string[] = [];
+          let acc = '';
+          for (const sg of base.split('/')) { acc = acc ? `${acc}/${sg}` : sg; ancestors.push(acc); }
+          set((st) => ({ expanded: Array.from(new Set([...st.expanded, ...ancestors])) }));
+        }
+        set({ leftPanel: 'files', leftOpen: true, newNotePath: path, renamingPath: path, selected: [path], selectAnchor: path });
+        window.setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('wo-reveal-file', { detail: { path } }));
+        }, 60);
       },
 
       renamingPath: null,
+      newNotePath: null,
+      setNewNotePath: (path) => set({ newNotePath: path }),
       setRenamingPath: (path) => set({ renamingPath: path }),
 
       newFolder: async (dir) => {
@@ -883,4 +1016,17 @@ useStore.subscribe((state, prev) => {
   if (JSON.stringify(pickPersisted(state)) !== JSON.stringify(pickPersisted(prev))) {
     scheduleSave();
   }
+});
+
+// Keep manual sort order attached to items when ANY caller renames or moves them (inline rename,
+// drag-and-drop, "Move to…", cut/paste, inline title). Reconcile (which drops order entries for
+// paths that vanished) runs on the next tree load, by which time the order has been remapped.
+setRenameHook({
+  start: () => {
+    renamesInFlight++;
+  },
+  done: (from, to, ok) => {
+    renamesInFlight = Math.max(0, renamesInFlight - 1);
+    if (ok) useStore.setState((s) => ({ manualOrder: remapManualOrder(s.manualOrder, from, to) }));
+  },
 });

@@ -16,6 +16,8 @@ permissions:
 jobs:
   check:
     name: Any new upstream PRs?
+    # Preserve the source automation without scheduling issue creation in this fork.
+    if: github.repository == 'phamtruonghung/webobsidian'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

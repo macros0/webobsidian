@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, mock, test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
-import { ApiError, api, type TreeNode } from '../src/lib/api';
+import { ApiError, api, setUnlock, type TreeNode } from '../src/lib/api';
 import { GRAPH_PATH, TASKS_PATH, isViewPath, useStore } from '../src/lib/store';
 
 // Workspace persistence uses browser timers; run them deterministically in Node.
@@ -27,8 +27,39 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setUnlock({ active: false });
   mock.restoreAll();
   mock.timers.reset();
+});
+
+test('rename hook preserves manual sorting alongside preview tabs and unlock headers', async () => {
+  await state().openFile('Preview.md');
+  useStore.setState({ manualOrder: { '': ['folder', 'Preview.md'], folder: ['folder/a.md'] } });
+  const tabs = state().tabs;
+  setUnlock({ active: true, password: 'test-only' });
+  const request = mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {
+    assert.equal(new Headers(init?.headers).get('x-unlock-locked'), '1');
+    assert.equal(new Headers(init?.headers).get('x-unlock-password'), 'test-only');
+    return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } });
+  });
+  await api.rename('folder', 'renamed');
+  assert.equal(request.mock.callCount(), 1);
+  assert.deepEqual(state().manualOrder, { '': ['renamed', 'Preview.md'], renamed: ['renamed/a.md'] });
+  assert.deepEqual(state().tabs, tabs);
+  assert.equal(state().activePath, 'Preview.md');
+});
+
+test('a locked rename leaves manual sorting and preview tabs intact', async () => {
+  await state().openFile('Preview.md');
+  const order = { '': ['locked.md', 'Preview.md'] };
+  useStore.setState({ manualOrder: order });
+  const tabs = state().tabs;
+  mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ error: 'locked' }), {
+    status: 423, headers: { 'content-type': 'application/json' },
+  }));
+  await assert.rejects(api.rename('locked.md', 'new.md'), (err: unknown) => err instanceof ApiError && err.status === 423);
+  assert.deepEqual(state().manualOrder, order);
+  assert.deepEqual(state().tabs, tabs);
 });
 
 test('browsing many notes reuses one preview tab', async () => {

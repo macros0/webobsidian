@@ -67,20 +67,45 @@ filesRouter.get(
   }),
 );
 
+// Resolve a link/embed target to a real vault path. Relative references
+// (`attachments/x.png`) resolve against the folder of the note that embeds them
+// (`from`) first, then fall back to the Obsidian-style vault-wide basename lookup.
+async function resolveRef(target: string, from: string): Promise<string> {
+  let rel = target;
+  if (from && !rel.startsWith('/')) {
+    const dir = path.posix.dirname(from);
+    const cand = path.posix.normalize(path.posix.join(dir === '.' ? '' : dir, rel));
+    if (!cand.startsWith('..') && (await vault.exists(cand))) return cand;
+  }
+  if (!(await vault.exists(rel))) {
+    const resolved = resolveFile(rel);
+    if (resolved) rel = resolved;
+  }
+  return rel;
+}
+
 filesRouter.get(
-  '/content',
+  '/resolve',
   asyncHandler(async (req, res) => {
-    let rel = String(req.query.path ?? '');
-    if (!rel) {
+    const target = String(req.query.path ?? '');
+    if (!target) {
       res.status(400).json({ error: 'path required' });
       return;
     }
-    // Obsidian-style resolution: if the exact path doesn't exist (e.g. an embed
-    // `![[image.jpg]]` that lives in Attachments/), resolve it by basename.
-    if (!(await vault.exists(rel))) {
-      const resolved = resolveFile(rel);
-      if (resolved) rel = resolved;
+    const rel = await resolveRef(target, typeof req.query.from === 'string' ? req.query.from : '');
+    res.json({ path: (await vault.exists(rel)) ? rel : null });
+  }),
+);
+
+filesRouter.get(
+  '/content',
+  asyncHandler(async (req, res) => {
+    const target = String(req.query.path ?? '');
+    if (!target) {
+      res.status(400).json({ error: 'path required' });
+      return;
     }
+    const rel = await resolveRef(target, typeof req.query.from === 'string' ? req.query.from : '');
     // Still missing: a text-looking path that is not there is a 404. Without this the read fell
     // through to readFileText and surfaced ENOENT as a 500 (found by the deploy smoke).
     if (!(await vault.exists(rel))) {
@@ -178,7 +203,14 @@ filesRouter.post(
     // Reuse an existing folder that differs only in case (e.g. an Obsidian vault's
     // "Attachments") instead of creating a duplicate "attachments". See vault.ts.
     const resolvedDir = dir ? await vault.resolveDirCaseInsensitive(dir) : '';
-    const rel = path.posix.join(resolvedDir, file.originalname);
+    // Never overwrite an existing attachment: pick image.png, image-1.png, image-2.png, …
+    const original = path.posix.basename(file.originalname.replace(/\\/g, '/')) || 'file';
+    const ext = path.posix.extname(original);
+    const stem = ext ? original.slice(0, -ext.length) : original;
+    let rel = path.posix.join(resolvedDir, original);
+    for (let i = 1; await vault.exists(rel); i++) {
+      rel = path.posix.join(resolvedDir, `${stem}-${i}${ext}`);
+    }
     await vault.writeFileBuffer(rel, file.buffer);
     res.json({ ok: true, path: rel, size: file.size });
   }),
@@ -268,6 +300,54 @@ filesRouter.delete(
   }),
 );
 
+// Notes (other than `exclude`) that still reference the given attachment — used
+// to protect shared attachments before deleting the file from an image's trash icon.
+filesRouter.get(
+  '/references',
+  asyncHandler(async (req, res) => {
+    const target = String(req.query.path ?? '');
+    const exclude = String(req.query.exclude ?? '');
+    if (!target) {
+      res.status(400).json({ error: 'path required' });
+      return;
+    }
+    const abs = target.toLowerCase();
+    const base = (abs.split('/').pop() ?? abs).toLowerCase();
+    const refs: string[] = [];
+    for (const note of await vault.listMarkdownFiles()) {
+      if (note === exclude) continue;
+      let text: string;
+      try {
+        text = await vault.readFileText(note);
+      } catch {
+        continue;
+      }
+      const lower = text.toLowerCase();
+      if (!lower.includes(base) && !lower.includes(base.replace(/ /g, '%20'))) continue;
+      const dir = path.posix.dirname(note);
+      const targets: string[] = [];
+      for (const m of text.matchAll(/\[\[([^\]|#]+)[^\]]*\]\]/g)) targets.push(m[1]);
+      for (const m of text.matchAll(/\]\(([^)\s][^)]*?)(?:\s+"[^"]*")?\)/g)) targets.push(m[1]);
+      const hit = targets.some((raw) => {
+        let t = raw.trim().replace(/^<|>$/g, '').split('#')[0];
+        try {
+          t = decodeURIComponent(t);
+        } catch {
+          /* keep raw */
+        }
+        if ((t.split('/').pop() ?? t).toLowerCase() !== base) return false;
+        // Bare basename (wikilink / vault-wide lookup) → conservatively a reference.
+        if (!t.includes('/')) return true;
+        const fromRoot = path.posix.normalize(t.replace(/^\/+/, '')).toLowerCase();
+        const fromNote = path.posix.normalize(path.posix.join(dir === '.' ? '' : dir, t)).toLowerCase();
+        return fromRoot === abs || fromNote === abs;
+      });
+      if (hit) refs.push(note);
+    }
+    res.json({ references: refs });
+  }),
+);
+
 filesRouter.delete(
   '/',
   asyncHandler(async (req, res) => {
@@ -278,13 +358,15 @@ filesRouter.delete(
     }
     const s = await getSettings();
     qmd.remove(rel);
-    if (s.vault.deleteMode === 'permanent') {
+    if (s.vault.deleteMode === 'permanent' || req.query.permanent === '1') {
       await vault.remove(rel);
+      await vault.pruneEmptyAttachmentsDir(rel);
       reindex({ removed: rel });
       res.json({ ok: true, deleted: rel });
       return;
     }
     const dest = await vault.trash(rel);
+    await vault.pruneEmptyAttachmentsDir(rel);
     reindex({ removed: rel });
     res.json({ ok: true, trashed: dest });
   }),
