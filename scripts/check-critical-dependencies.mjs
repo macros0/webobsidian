@@ -1,4 +1,4 @@
-// Guard every nested lockfile copy against the critical advisories remediated in October 2026.
+// Guard every nested lockfile copy against the critical/high advisories remediated in October 2026.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
@@ -6,6 +6,9 @@ const floors = {
   '@simple-git/argv-parser': '2.0.1', 'simple-git': '4.0.2',
   dompurify: '3.4.17', 'proxy-addr': '2.0.8', 'shell-quote': '1.11.0',
   tar: '7.5.22', tinypool: '2.1.2', vitest: '4.1.12', concurrently: '9.2.5',
+  '@modelcontextprotocol/sdk': '1.32.0', 'body-parser': '1.20.9',
+  browserslist: '4.29.5', electron: '42.11.16', 'extract-zip': null,
+  multer: '2.5.0', vite: '6.4.5', zod: '4.6.6',
 };
 const compare = (actual, minimum) => {
   assert.match(actual, /^\d+\.\d+\.\d+$/, `Unexpected dependency version: ${actual}`);
@@ -20,14 +23,23 @@ for (const [location, entry] of Object.entries(lock.packages)) {
   for (const [name, minimum] of Object.entries(floors)) {
     if (!`/${location}`.endsWith(`/node_modules/${name}`)) continue;
     checked++;
+    if (minimum === null) {
+      failures.push(`${location}: unsupported vulnerable package must be removed`);
+      continue;
+    }
     // concurrently 10.0.0–10.0.5 reintroduced a vulnerable shell-quote dependency.
     const vulnerableNextMajor = name === 'concurrently' && entry.version.startsWith('10.0.')
       && compare(entry.version, '10.0.6') < 0;
-    if (compare(entry.version, minimum) < 0 || vulnerableNextMajor) {
+    const vulnerableBodyParser2 = name === 'body-parser' && entry.version.startsWith('2.')
+      && compare(entry.version, '2.4.0') < 0;
+    if (compare(entry.version, minimum) < 0 || vulnerableNextMajor || vulnerableBodyParser2) {
       failures.push(`${location}: ${entry.version} (minimum secure baseline ${minimum})`);
     }
   }
 }
 assert.ok(checked > 0, 'No protected dependencies found; check the lockfile format');
-assert.deepEqual(failures, [], 'Known critical dependency versions remain in the lockfile');
-console.log(`PASS: ${checked} dependency copies satisfy the remediated critical-advisory baselines`);
+assert.deepEqual(failures, [], 'Known critical/high dependency versions remain in the lockfile');
+const desktop = JSON.parse(await readFile(new URL('../desktop/package.json', import.meta.url), 'utf8'));
+assert.equal(desktop.devDependencies.electron, desktop.build.electronVersion, 'Electron install and packaging pins must match');
+assert.equal(lock.packages['node_modules/electron'].version, desktop.build.electronVersion);
+console.log(`PASS: ${checked} dependency copies satisfy the remediated critical/high-advisory baselines`);

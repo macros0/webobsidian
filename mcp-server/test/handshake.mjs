@@ -104,6 +104,10 @@ test('MCP server exposes the vault as tools over stdio', { skip: !BASE || !KEY }
 
   const tools = await client.request(2, 'tools/list');
   const names = tools.result.tools.map((x) => x.name);
+  const readSchema = tools.result.tools.find((tool) => tool.name === 'read_note')?.inputSchema;
+  const listSchema = tools.result.tools.find((tool) => tool.name === 'list_notes')?.inputSchema;
+  assert.equal(readSchema?.properties?.path?.minLength, 1);
+  assert.equal(listSchema?.properties?.limit?.maximum, 500);
   for (const expected of [
     'list_notes',
     'read_note',
@@ -157,4 +161,8 @@ test('MCP server exposes the vault as tools over stdio', { skip: !BASE || !KEY }
 
   const search = await client.callTool(10, 'search_notes', { query: 'marker' });
   assert.ok(Array.isArray(search.json.hits));
+  for (const [id, name, args] of [[11, 'read_note', { path: '' }], [12, 'list_notes', { limit: 501 }]]) {
+    const invalid = await client.request(id, 'tools/call', { name, arguments: args });
+    assert.ok(invalid.error || invalid.result?.isError, `invalid ${name} arguments must be rejected`);
+  }
 });

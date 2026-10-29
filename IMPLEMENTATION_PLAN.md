@@ -1,5 +1,18 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## High dependency remediation — 2026-10-29
+
+- [x] Audit baseline: 8 high / 0 critical; independent boundary and compatibility investigation.
+- [x] Add bounded-collection security regression and fresh/legacy settings compatibility controls.
+- [x] Upgrade parents and migrate settings defaults; audit reduced high8 ->0, critical remains0.
+- [x] Verify types, 177 server/168 web tests locally, all builds, HTTP/uploads and Windows packaging/runtime.
+- [x] Independent candidate review found no confirmed surviving bypass or compatibility regression.
+- [x] Linux/Docker CI passed at `08188bb`: 184 server +168 web tests, 31 smoke assertions,
+  MCP stdio/schema constraints, high/critical audit, HTTP controls and Linux desktop packaging.
+  Evidence: https://github.com/macros0/webobsidian/actions/runs/40840116331 (PR #3).
+
+Production and real vaults remain outside scope; lower-severity unrelated migrations are deferred.
+
 ## Critical dependency remediation — 2026-10-29
 
 - [x] Capture npm audit baseline and investigate runtime/tooling boundaries independently.

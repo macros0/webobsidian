@@ -162,7 +162,7 @@ if start_server env; then
   if [[ -f mcp-server/dist/index.js ]]; then
     WEBOBSIDIAN_BASE_URL="$BASE" WEBOBSIDIAN_API_KEY="$KEY" node --test mcp-server/test/*.mjs > /tmp/wo-d-mcp.log 2>&1
     mcp_rc=$?
-    chk "MCP handshake, tools/list and 8 tool calls (incl. conflict propagation)" "0" "$mcp_rc"
+    chk "MCP handshake, tools/list, tool calls, input constraints and conflicts" "0" "$mcp_rc"
     [[ $mcp_rc -ne 0 ]] && tail -20 /tmp/wo-d-mcp.log | sed 's/^/  MCP  /'
   else
     echo "  FAIL  mcp-server/dist/index.js missing (run npm run build)"; fail=$((fail+1))
