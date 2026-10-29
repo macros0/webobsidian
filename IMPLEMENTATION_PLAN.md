@@ -9,7 +9,7 @@ Cập nhật lần cuối: 2026-10-29.
 - [x] Split dependency audit into a parallel blocking job; explicitly include dev dependencies and all severities, preserve the remediated-version guard, retain JSON reports on success/failure.
 - [x] Local validation: actionlint 1.7.12, 27 protected dependency copies, npm audit (zero vulnerabilities), all workspace/desktop typechecks, 186 server tests +253 web tests, application/desktop builds and disposable HTTP integration smoke pass. Seven Windows symlink tests skipped. Local runtime: Windows/Node 26.3.0; Linux/Node 22, Bash runtime smoke, Docker and Linux desktop packaging require the first hosted run after push (Docker daemon unavailable locally). No hosted run of the edited workflow is claimed.
 
-Progress log 2026-10-29: user requested CI setup and vulnerability auditing, then explicitly authorized committing/pushing only these changes and verifying hosted Actions. Publish the CI workflow and its documentation separately from unrelated editor work. Report hosted results with the exact commit and Actions run URL; production access remains out of scope.
+Progress log 2026-10-29: user requested CI setup and vulnerability auditing, then explicitly authorized committing/pushing only these changes and verifying hosted Actions. Initial hosted run `40871273318` passed Docker and the zero-vulnerability audit but exposed Electron 43's lazy runtime installation: npm ci leaves chrome-sandbox absent. Install the pinned runtime explicitly before configuring the sandbox, then repeat hosted verification. Publish CI and its documentation separately from unrelated editor work; production access remains out of scope.
 
 ## Rendering dependency remediation — 2026-10-29
 

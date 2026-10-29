@@ -78,6 +78,8 @@ jobs:
 
       - name: Prepare Electron browser tests
         run: |
+          # Electron 43 downloads its runtime lazily, rather than during npm ci.
+          node node_modules/electron/install.js
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends xvfb xauth libgtk-3-0 libnss3 libasound2t64
           # Chromium needs its setuid helper when user namespaces are restricted.
