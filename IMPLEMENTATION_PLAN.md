@@ -1,5 +1,19 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Live code block selection — 2026-10-29
+
+- [x] Keep code backgrounds below the selection layer, including the active line.
+- [x] Move horizontal note margins outside the content box so multiline selection stays within block edges.
+- [x] Add real browser pixel checks for wrapped, empty and active code lines, unselected margins, themes and viewport widths.
+- [x] Validate the isolated patch against the fork's main branch and prepare the pull request.
+
+Progress 2026-10-29: the corrected CSS is deployed and verified. Existing readable
+line width and centering are retained; the browser regression covers three themes
+and two viewport widths. Release verification passed 188 server and 364 web tests
+(seven Windows symlink skips), the production build and disposable HTTP smoke.
+Isolated-branch verification repeats the full suite with the Contract fixture's
+repository LF line endings; its unchanged Windows CRLF assertion otherwise fails.
+
 ## Literal color correction and Live mode verification — 2026-10-29
 
 - [x] Reproduce red `<LS_BEN>` and replace it with body text color across modes/themes.

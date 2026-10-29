@@ -576,8 +576,11 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 @media print { .doc-outline { display: none; } }
 .cm-editor { height: 100%; background: var(--background-primary) !important; color: var(--text-normal); }
 .cm-editor.cm-focused { outline: none !important; }
+/* CodeMirror extends multiline selections to the content box edges. Keep note
+   margins outside that box so selection cannot spill past the visible blocks. */
+.cm-editor .cm-scroller { padding-inline: var(--file-margins); }
 .cm-editor .cm-content { font-family: var(--font-text); font-size: var(--font-text-size); line-height: var(--line-height-normal);
-  margin: 0 auto; padding: 28px var(--file-margins) 40vh; caret-color: var(--text-normal); }
+  margin: 0 auto; padding: 28px 0 40vh; caret-color: var(--text-normal); }
 /* The visible caret is NOT the native one: `drawSelection()` hides the real caret
    (`caret-color: transparent !important`) and paints a `.cm-cursor` element instead,
    whose colour CodeMirror hard-codes to black unless its `darkTheme` facet is on — this
@@ -603,17 +606,15 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
   border: none !important; border-radius: var(--radius-s); padding: 3px 10px; cursor: pointer;
 }
 .cm-panels button.cm-button:hover { background: var(--interactive-accent-hover) !important; }
-.markdown-source-view.is-readable-line-width .cm-content { max-width: var(--file-line-width); }
+.markdown-source-view.is-readable-line-width .cm-content { max-width: calc(var(--file-line-width) - 2 * var(--file-margins)); }
 .cm-editor .cm-line { padding: 0; }
 .cm-s-obsidian .cm-literal-angle, .cm-s-obsidian .cm-literal-angle * { color: var(--text-normal) !important; }
 .cm-gutters { background: var(--background-primary) !important; border: 0 !important; color: var(--text-faint) !important; }
 .cm-activeLine { background: transparent !important; }
 .cm-activeLineGutter { background: transparent !important; }
-/* …but don't clobber lines that carry their own background (callout/code) */
+/* …but don't clobber callout lines that carry their own background. */
 .cm-s-obsidian .cm-line.cm-callout-line.cm-activeLine {
   background: rgba(var(--callout-color, var(--callout-default)), 0.1) !important; }
-.cm-s-obsidian .cm-line.HyperMD-codeblock-bg.cm-activeLine {
-  background: var(--background-primary-alt) !important; }
 .cm-selectionBackground, .cm-editor ::selection { background: var(--text-selection) !important; }
 
 /* ---- Obsidian editor typography (cm-s-obsidian, §19/§20) ---- */
@@ -678,7 +679,14 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 /* Code block: mono font on every code line; bg + inner padding only on fenced
    blocks (HyperMD-codeblock-bg) — indented code has no bg, like Obsidian. */
 .cm-s-obsidian .cm-line.HyperMD-codeblock { font-family: var(--font-mono); font-size: var(--font-smaller); }
-.cm-s-obsidian .cm-line.HyperMD-codeblock-bg { background: var(--background-primary-alt); padding-left: 16px; padding-right: 16px; }
+.cm-s-obsidian .cm-line.HyperMD-codeblock-bg { padding-left: 16px; padding-right: 16px; }
+/* Paint code backgrounds below CodeMirror's selection layer (-2), keeping both
+   selection and text visible. The line itself must stay transparent, including
+   the active line. Its positioned box also keeps the rounded corners intact. */
+.cm-s-obsidian .cm-line.HyperMD-codeblock-bg::before {
+  content: ''; position: absolute; inset: 0; z-index: -3; pointer-events: none;
+  background: var(--background-primary-alt); border-radius: inherit;
+}
 .cm-s-obsidian .cm-line.HyperMD-codeblock-begin { border-radius: var(--radius-s) var(--radius-s) 0 0; padding-top: 8px; }
 .cm-s-obsidian .cm-line.HyperMD-codeblock-end { border-radius: 0 0 var(--radius-s) var(--radius-s); padding-bottom: 8px; }
 /* HR — keep within the normal line box (no extra margins) */
