@@ -7,7 +7,9 @@
 - [x] Upgrade all six targets; audit moderate6 ->0 and complete KaTeX/Mermaid entries/declarations unchanged.
 - [x] Types, 186 server/168 web tests locally, all builds, temporary HTTP, Windows packaging/runtime/renderer pass.
 - [x] Independent candidate review found no confirmed surviving bypass or compatibility regression.
-- [~] Complete Linux/Docker/MCP CI before adopting.
+- [x] Linux/Docker/MCP CI passed at `1c12d10`: 193 server +168 web tests, 31 smoke assertions,
+  moderate audit gate, builds and Linux desktop directory packaging.
+  Evidence: https://github.com/macros0/webobsidian/actions/runs/40846431268 (PR #4).
 
 Only disposable test services are started; the installed server and real vault are untouched.
 
