@@ -1,10 +1,57 @@
 # PRD — WebObsidian
 
+> FR-2 clarification 2026-10-29: literal angle identifiers containing underscores
+> (for example `<LS_BEN>`) must use the normal body text color, not HTML tag red.
+> Apply in Source/Live/Reading without editing the note. Earlier red-preservation
+> acceptance is superseded by this explicit user correction.
+> Paired multiline backticks in Live also follow Obsidian's observed behavior across
+> blank paragraphs: delimiters conceal and body lines stay literal in normal type.
+
+> FR-2 background parity follow-up 2026-10-29: synthetic Obsidian 1.14.5 captures
+> run in a separate hidden profile without OS focus/input. Match measured text/table
+> metrics; render quoted/list tables with preserved empty columns and container prefixes;
+> resolve compound heading paths within their parent sections. Transclusion follows the
+> observed six-level depth limit. Viewing never rewrites note text. Capture evidence and
+> remaining visual matrix are tracked in `docs/rendering-compatibility.md`.
+
+> FR-2 rendering parity follow-up 2026-10-29: shared browser/public Markdown dialect
+> and HTML policy, rendered table inline formatting, nested callouts, numbered Reading
+> footnotes with local navigation, paragraph/list block embeds and source-relative note
+> resolution. Unsupported complex YAML remains visible as source instead of entering the
+> lossy simple Properties editor. Source is never rewritten to achieve display parity.
+> Original Obsidian 1.14.5 comparison evidence and remaining limitations:
+> `docs/rendering-compatibility.md`. Pixel-level visual acceptance is still pending.
+
+> FR-2 rendering parity, critical batch 2026-10-29: viewing and cursor movement must
+> preserve note text. Literal angle identifiers remain visible beside valid inline HTML;
+> code, escapes and HTML attributes must not trigger unrelated Markdown extensions.
+> Reading/preview/public hide comments; Live keeps them editable. Heading embeds select
+> only their section and subsections; embedded image resolution carries the source path.
+> Implementation status and remaining compatibility work:
+> `docs/superpowers/plans/2026-10-29-rendering-parity-progress.md`.
+
 > CI maintenance 2026-10-29: GitHub Actions validates Node 22 workspaces, Electron browser
 > fixtures, desktop packaging and Docker builds on main pushes, main PRs and manual runs.
 > A separate dependency audit rejects every advisory severity (including dev dependencies)
 > and retains its JSON report for 14 days. Jobs use read-only tokens, timeouts and cancellation
 > of superseded runs. Existing deployment restrictions and application behavior are unchanged.
+
+> FR-2 full toolbar implementation 2026-10-29 (revision 2):
+> port the 64 standard Editing Toolbar commands into the native editor, including
+> popup subpanels, nested groups, palettes, parameter dialogs, selection/fixed/mobile
+> layouts, configuration and import. Preserve selection and document identity across
+> overlays; verify formatting in Live Preview, Reading, split preview and public shares.
+> Design: `docs/superpowers/specs/2026-10-29-full-editing-toolbar-design.md`.
+> Execution plan: `docs/superpowers/plans/2026-10-29-full-editing-toolbar.md`.
+> Third-party Obsidian commands and AI/PKMer integrations are separate compatibility work.
+
+> FR-2 formatting extension 2026-10-29: extend the existing desktop/mobile toolbar with
+> text and background color palettes (including reset). Store colors as standard inline
+> HTML spans with hex color styles for Obsidian compatibility. Preserve safe colors in
+> Markdown preview without admitting arbitrary CSS. Show a compact selection toolbar
+> with bold/italic/link/code and the same color controls, positioned by CodeMirror within
+> the viewport. Keep selection when clicking controls, support Undo/Redo and Escape,
+> and prohibit formatting in read-only/locked editors. No new dependencies or deployment.
 
 > Rendering dependency maintenance 2026-10-29: update KaTeX to the patched 0.18 line and Mermaid
 > to 12.2, including Mermaid's KaTeX copy. Preserve default untrusted math rendering, sanitizers

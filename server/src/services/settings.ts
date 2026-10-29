@@ -17,6 +17,37 @@ const ApiKeySchema = z.object({
   lastUsed: z.string().nullable().default(null),
 });
 
+// Keep toolbar validation local to this field: a damaged toolbar must never reset
+// authentication, vault paths or other settings when loading an existing file.
+const ToolbarIconSchema = z.enum(['command','undo','redo','bold','italic','heading','palette','code','link','list','quote','paperclip','check-square','brackets','pencil','menu','more-horizontal','align-left','align-center','align-right','indent-increase','indent-decrease','hash','minus','columns','rows','crosshair','file-text','settings','paintbrush','eraser','type','strikethrough','underline','highlighter','maximize','table','copy','scissors','clipboard','arrow-up','arrow-down','list-ordered','message-square','superscript','subscript','align-justify']).catch('command');
+const ToolbarColorSchema = z.string().regex(/^#[\da-f]{6}(?:[\da-f]{2})?$/i).transform(v=>v.toLowerCase());
+type EditingToolbarNode =
+  | {type:'separator';instanceId:string}
+  | {type:'command';instanceId:string;commandId:string;label?:string;icon?:string;disabled?:boolean;disabledReason?:string}
+  | {type:'group';instanceId:string;label:string;icon?:string;style?:'menu'|'compact';children:EditingToolbarNode[]};
+function toolbarNodeSchema(depth:number):z.ZodType<EditingToolbarNode> {
+  const instanceId=z.string().min(1).max(160);
+  const command=z.object({type:z.literal('command'),instanceId,commandId:z.string().min(1).max(240),label:z.string().max(120).optional(),icon:ToolbarIconSchema.optional(),disabled:z.boolean().optional(),disabledReason:z.string().max(240).optional()});
+  const separator=z.object({type:z.literal('separator'),instanceId});
+  if(depth>=3)return z.union([command,separator]);
+  return z.union([command,separator,z.object({type:z.literal('group'),instanceId,label:z.string().max(120),icon:ToolbarIconSchema.optional(),style:z.enum(['menu','compact']).optional(),children:z.array(toolbarNodeSchema(depth+1)).max(200)})]);
+}
+const ToolbarLayoutSchema=z.object({
+  enabled:z.boolean(),
+  items:z.array(toolbarNodeSchema(0)).max(200).refine(items=>{
+    const count=(nodes:EditingToolbarNode[]):number=>nodes.reduce((sum,n)=>sum+1+(n.type==='group'?count(n.children):0),0);
+    return count(items)<=200;
+  },'At most 200 items per layout'),
+  position:z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1)}).optional(),
+});
+export const EditingToolbarSchema=z.object({
+  version:z.literal(1),
+  layouts:z.object({top:ToolbarLayoutSchema.optional().catch(undefined),following:ToolbarLayoutSchema.optional().catch(undefined),fixed:ToolbarLayoutSchema.optional().catch(undefined),mobile:ToolbarLayoutSchema.optional().catch(undefined)}),
+  appearance:z.object({iconSize:z.number().min(12).max(32).optional(),density:z.enum(['comfortable','compact']).optional(),showLabels:z.boolean().optional(),tooltips:z.boolean().optional(),overflow:z.enum(['scroll','wrap']).optional(),style:z.enum(['standard','compact']).optional(),backgroundColor:ToolbarColorSchema.optional().catch(undefined),iconColor:ToolbarColorSchema.optional().catch(undefined)}).optional(),
+  customCommands:z.array(z.object({id:z.string().max(120).regex(/^custom:[\w:-]+$/),label:z.string().min(1).max(120),icon:ToolbarIconSchema,prefix:z.string().max(4096),suffix:z.string().max(4096)})).max(100).refine(items=>new Set(items.map(i=>i.id)).size===items.length,'Custom command IDs must be unique').optional(),
+  customColors:z.array(ToolbarColorSchema).max(100).optional(),
+});
+
 const SettingsSchema = z.object({
   version: z.number().default(1),
   auth: z
@@ -86,6 +117,7 @@ const SettingsSchema = z.object({
       defaultView: z.enum(['live', 'source', 'reading']).default('live'),
       // Obsidian's "Show inline title": the filename rendered above the note body.
       showInlineTitle: z.boolean().default(true),
+      editingToolbar: EditingToolbarSchema.optional().catch(undefined),
     })
     .prefault({}),
   plugins: z

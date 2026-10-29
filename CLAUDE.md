@@ -4,6 +4,8 @@
 
 This is `macros0/webobsidian`, integrating `phamtruonghung` and `lakylekidd`.
 Read `docs/FORK_INTEGRATION.md` for source revisions and merge decisions.
+For the owner's actual server, SSH access, NAS mounts, startup and deployment/rollback,
+read `docs/INSTALLATION_CT102.md` (Proxmox `10.10.1.21`, LXC 102).
 Use `--repo macros0/webobsidian` explicitly for GitHub operations. References below to the
 Pham issue tracker or LXC 107 describe the source fork and must not direct operations there.
 Do not deploy or access a real vault unless explicitly requested. Use temporary local vaults
