@@ -62,6 +62,33 @@ test('a locked rename leaves manual sorting and preview tabs intact', async () =
   assert.deepEqual(state().tabs, tabs);
 });
 
+test('opening an embedded PDF resolves note-relative collisions before storing its tab path', async () => {
+  const resolve = mock.method(api, 'resolveAttachment', async (target: string, from: string) => {
+    assert.equal(target, 'attachments/report.pdf');
+    assert.equal(from, 'docs/note.md');
+    return { path: 'docs/attachments/report.pdf' };
+  });
+  await state().openAttachment('attachments/report.pdf', 'docs/note.md');
+  assert.equal(resolve.mock.callCount(), 1);
+  assert.equal(state().activePath, 'docs/attachments/report.pdf');
+  assert.deepEqual(paths(), ['docs/attachments/report.pdf']);
+});
+
+for (const kind of ['note', 'canvas'] as const) {
+  test(`inline creation of a ${kind} opens a permanent tab and preserves the previous preview`, async () => {
+    await state().openFile('Preview.md');
+    await (kind === 'note' ? state().newNote('') : state().newCanvas(''));
+    const created = state().newNotePath!;
+    assert.ok(created);
+    await state().openCreatedFile(created);
+    assert.deepEqual(paths(), ['Preview.md', created]);
+    assert.equal(state().tabs.find((tab) => tab.path === created)?.preview, false);
+    await state().openFile('Another.md');
+    assert.ok(paths().includes(created));
+    assert.ok(!paths().includes('Preview.md'));
+  });
+}
+
 test('browsing many notes reuses one preview tab', async () => {
   for (let i = 0; i < 25; i++) await state().openFile(`Note ${i}.md`);
   assert.deepEqual(paths(), ['Note 24.md']);

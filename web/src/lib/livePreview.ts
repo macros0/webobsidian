@@ -366,6 +366,7 @@ class ImageWidget extends WidgetType {
     del.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (view.state.readOnly) return;
       imageDeleteHandler({ target: this.target, view, remove: () => removeImageToken(view, wrap) });
     });
     wrap.appendChild(del);
@@ -478,11 +479,11 @@ class ExternalEmbedWidget extends WidgetType {
  * (`frame-src 'self'`) allows it.
  */
 class PdfEmbedWidget extends WidgetType {
-  constructor(readonly src: string, readonly path: string) {
+  constructor(readonly src: string, readonly path: string, readonly origin: string) {
     super();
   }
   eq(o: PdfEmbedWidget) {
-    return o.src === this.src && o.path === this.path;
+    return o.src === this.src && o.path === this.path && o.origin === this.origin;
   }
   /** Let the frame and the header button receive events instead of CodeMirror. */
   ignoreEvent() {
@@ -502,7 +503,7 @@ class PdfEmbedWidget extends WidgetType {
     open.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      void useStore.getState().openFile(this.path);
+      void useStore.getState().openAttachment(this.path, this.origin);
     });
     head.appendChild(open);
     const frame = document.createElement('iframe');
@@ -2716,7 +2717,7 @@ function buildDecorations(view: EditorView): DecorationSet {
         } else if (isEmbed && PDF_EXT_RE.test(href.split('#')[0])) {
           // FR-21: `![[doc.pdf]]` → the browser's viewer inline, like Obsidian.
           // The `#page=…` fragment (if any) addresses the viewer, not the file API.
-          pushReplace(s, e, Decoration.replace({ widget: new PdfEmbedWidget(attachmentUrl(href.split('#')[0]), href.split('#')[0]) }));
+          pushReplace(s, e, Decoration.replace({ widget: new PdfEmbedWidget(attachmentUrl(href.split('#')[0]), href.split('#')[0], notePath) }));
         } else if (isEmbed && !/\.[a-z0-9]{1,5}$/i.test(href.split('#')[0])) {
           // `![[note]]` (no binary extension) → real transclusion like Obsidian.
           pushReplace(s, e, Decoration.replace({ widget: new NoteEmbedWidget(href) }));

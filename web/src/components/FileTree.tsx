@@ -49,10 +49,7 @@ function RenameInput({ node, onDone }: { node: TreeNode; onDone: () => void }) {
     if (isNew) {
       // Keep the freshly named note selected, open and scrolled into view after re-sorting.
       const s2 = useStore.getState();
-      s2.setSelected([finalPath]);
-      s2.setSelectAnchor(finalPath);
-      await s2.openFile(finalPath);
-      s2.revealInTree(finalPath);
+      await s2.openCreatedFile(finalPath);
     }
   };
 

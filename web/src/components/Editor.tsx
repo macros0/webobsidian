@@ -49,7 +49,7 @@ import { renderMarkdown } from '../lib/markdown';
 import { setActiveEditor } from '../lib/activeEditor';
 import { api } from '../lib/api';
 import { humanizeTitle } from '../lib/title';
-import { confirmDialog } from '../lib/confirm';
+import { deleteEmbeddedImage } from '../lib/imageDelete';
 
 const titleOf = (path: string | null) => (path ? humanizeTitle(path) : '');
 
@@ -89,51 +89,7 @@ export default function Editor() {
   // the attachment file too — unless another note (or another spot in this one)
   // still uses it, in which case the user may remove just this reference.
   useEffect(() => {
-    setLivePreviewImageDeleteHandler(async ({ target, view: v, remove }) => {
-      const { notify, loadTree } = useStore.getState();
-      const note = useStore.getState().activePath ?? '';
-      const file = target ? await api.resolveAttachment(target, note).then((r) => r.path).catch(() => null) : null;
-      if (!file) {
-        remove(); // web URL / missing file → only the reference can go
-        return;
-      }
-      const base = (file.split('/').pop() ?? file).toLowerCase();
-      const refs = (await api.references(file, note).catch(() => ({ references: [] as string[] }))).references;
-      // Other embeds of the same file left in THIS note (the one being removed counts once).
-      // The file name can appear raw or %20-encoded; count each distinct spelling once —
-      // names without spaces have identical spellings and must not be counted twice.
-      const doc = v.state.doc.toString().toLowerCase();
-      const spellings = Array.from(new Set([base, base.replace(/ /g, '%20')]));
-      const mentions = spellings.reduce((n, s) => n + (doc.split(s).length - 1), 0);
-      const inThisNote = mentions > 1;
-      // Native confirm() is blocked or silently auto-cancelled in embedded browsers (the click
-      // then does nothing), so use the in-app dialog.
-      if (refs.length || inThisNote) {
-        const where = refs.length
-          ? `${refs.length} other note${refs.length > 1 ? 's' : ''} (${refs.slice(0, 3).join(', ')}${refs.length > 3 ? ', …' : ''})`
-          : 'elsewhere in this note';
-        const ok = await confirmDialog(`"${file}" is also used in ${where}.`, {
-          detail: 'Remove the image from this note only? The file will be kept.',
-          confirmLabel: 'Remove from this note',
-        });
-        if (ok) remove();
-        return;
-      }
-      const ok = await confirmDialog(`Remove this image and permanently delete "${file}"?`, {
-        detail: 'This cannot be undone: the file is deleted immediately, not moved to the trash.',
-        confirmLabel: 'Delete',
-        danger: true,
-      });
-      if (!ok) return;
-      remove();
-      try {
-        await api.remove(file, true);
-        await loadTree();
-        notify(`Deleted ${file}`);
-      } catch (e: any) {
-        notify(e.message);
-      }
-    });
+    setLivePreviewImageDeleteHandler(deleteEmbeddedImage);
   }, []);
 
   useEffect(() => {

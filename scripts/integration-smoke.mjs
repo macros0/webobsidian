@@ -21,6 +21,7 @@ let server;
 let output = '';
 try {
   await fs.mkdir(path.join(vault, 'notes', 'attachments'), { recursive: true });
+  await fs.mkdir(path.join(vault, 'attachments'), { recursive: true });
   await fs.mkdir(path.join(vault, '_system'), { recursive: true });
   await fs.writeFile(path.join(vault, '_system', 'locks.json'), JSON.stringify({
     locked: [{ glob: 'notes/locked.md', reason: 'integration fixture' }], unlock: 'confirm',
@@ -29,6 +30,7 @@ try {
   await fs.writeFile(path.join(vault, 'notes', 'editable.md'), '# Editable');
   const pdf = Buffer.from('%PDF-1.4\n% smoke-test fixture\n%%EOF\n');
   await fs.writeFile(path.join(vault, 'notes', 'attachments', 'document.pdf'), pdf);
+  await fs.writeFile(path.join(vault, 'attachments', 'document.pdf'), '%PDF-root-collision');
   server = spawn(process.execPath, ['server/dist/index.js'], {
     cwd: repo,
     env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production',
@@ -62,6 +64,8 @@ try {
   assert.ok(locked.version);
   assert.equal((await request('/api/files/content?path=missing.md')).status, 404);
   const relative = '/api/files/content?path=attachments/document.pdf&from=notes/editable.md';
+  const resolved = await (await request('/api/files/resolve?path=attachments/document.pdf&from=notes/editable.md')).json();
+  assert.equal(resolved.path, 'notes/attachments/document.pdf');
   const document = await request(relative);
   assert.equal(document.status, 200);
   assert.match(document.headers.get('content-type'), /application\/pdf/);

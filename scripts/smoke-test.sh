@@ -17,6 +17,7 @@ cd "$ROOT"
 [[ -f server/dist/index.js ]] || { echo "build first: npm run build" >&2; exit 64; }
 
 PORT="${SMOKE_PORT:-8799}"
+EXPECTED_VERSION="$(node -p "require('./package.json').version")"
 BASE="http://127.0.0.1:${PORT}"
 LOG="$(mktemp)"
 pass=0; fail=0
@@ -54,7 +55,7 @@ echo "== scenario A: fresh install (no override) =="
 if start_server env; then
   chk "GET /auth/status has no mustChangePassword (#15)" "['passwordSet']" \
       "$(curl -s "$BASE/auth/status" | python3 -c "import json,sys;print(sorted(json.load(sys.stdin).keys()))")"
-  chk "GET /healthz reports ok + version + build" "ok 0.1.1" \
+  chk "GET /healthz reports ok + version + build" "ok ${EXPECTED_VERSION}" \
       "$(curl -s "$BASE/healthz" | python3 -c "import json,sys;d=json.load(sys.stdin);print('ok' if d.get('ok') else 'not-ok', d.get('version','?'), d.get('build','?') if d.get('build') else 'missing')" | awk '{print $1, $2}')"
   echo "  INFO  /healthz build: $(curl -s "$BASE/healthz" | python3 -c "import json,sys;print(json.load(sys.stdin).get('build','?'))")"
   chk "login 123456 on a fresh install: accepted, change forced" "200 True" "$(login 123456)"

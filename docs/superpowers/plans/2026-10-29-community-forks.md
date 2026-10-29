@@ -25,13 +25,21 @@ Create `macros0/webobsidian` and its local checkout, importing the complete sele
 ## Tasks
 
 - [x] Create the GitHub fork and local checkout; configure `origin`, `upstream`, `phamtruonghung` and `lakylekidd` remotes.
-- [ ] Establish Pham's baseline with `npm ci`, typecheck and tests; separate any existing Windows-specific failures from integration regressions.
-- [ ] Merge Lakyle with `--no-ff --no-commit`, resolve the 12 conflict paths, and reconcile lockfiles/manifests.
-- [ ] Add focused regression coverage for overlapping write protection, sorting/state preservation and the safe trash-retention default; run it before and after any new fixes.
-- [ ] Update README, PRD, implementation log and source provenance; keep both source tips as merge ancestors.
-- [ ] Run typecheck, tests, production build and isolated runtime checks using a temporary vault only; inspect dependency audit results without automatically broadening dependency upgrades.
-- [ ] Obtain an independent review of the integration, fix material findings, and publish the reviewable branch to our fork.
-- [ ] Register/open the local project in Codex if the app exposes a supported mechanism; report any app-registration limitation separately from repository creation.
+- [x] Establish Pham's baseline with `npm ci`, typecheck and tests; separate any existing Windows-specific failures from integration regressions.
+- [x] Merge Lakyle with `--no-ff --no-commit`, resolve the 12 conflict paths, and reconcile lockfiles/manifests.
+- [x] Add focused regression coverage for overlapping write protection, sorting/state preservation and the safe trash-retention default; run it before and after any new fixes.
+- [x] Update README, PRD, implementation log and source provenance; keep both source tips as merge ancestors.
+- [x] Run typecheck, tests, production build and isolated runtime checks using a temporary vault only; inspect dependency audit results without automatically broadening dependency upgrades.
+- [x] Obtain an independent review of the integration, fix material findings, and publish the reviewable branch to our fork.
+- [x] Request opening README in Codex through its supported panel API (queued). No supported local-project registration API is exposed; the repository itself is ready to add as a project folder.
+
+## Review follow-through
+
+Independent review found three cross-feature regressions. Behavioral tests reproduced locked-image
+deletion; the guarded handler is now tested before and after confirmation. PDF references resolve to
+canonical paths before tab creation. Inline-created notes/canvases open permanent tabs. All focused
+tests passed after fixes. Linux CI's health-version expectation now follows the package manifest.
+Final CI adoption is recorded in `docs/FORK_INTEGRATION.md`.
 
 ## Review focus
 

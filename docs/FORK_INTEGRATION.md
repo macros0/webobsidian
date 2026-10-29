@@ -42,7 +42,7 @@ All local runtime checks use temporary directories and a loopback-only server.
 | Clean `npm ci --ignore-scripts` | Pass, merged lockfile installs 955 packages |
 | `npm run typecheck` | Pass: server, web, CLI, MCP |
 | Desktop typecheck | Pass |
-| `npm test` | Pass: 163 server tests and 161 web tests |
+| `npm test` | Pass after review fixes: 163 server tests and 168 web tests on Windows |
 | Windows symlinks | 7 tests skipped; six use an EPERM capability probe, one inherited platform skip |
 | `npm run build` | Pass: web production assets, server, CLI and MCP |
 | Desktop bundle build | Pass; installer packaging/signing not requested |
@@ -72,4 +72,15 @@ the main branch. Do not use source-repository GitHub sync for a notes vault.
 - Ruling: capability-skip Windows EPERM only; keep full symlink assertions active on Linux.
 - Ruling: use a dedicated clone as isolation; no separate worktree is needed for a new repository.
 - Ruling: publish a reviewable branch/PR; existing installations stay unchanged.
-- Independent review and Linux CI results are recorded below when available.
+- Independent review found three integration regressions, now covered and fixed:
+  image deletion from locked/reading notes (including locking/navigation during confirmation),
+  PDF tab paths losing the originating note context, and inline-created notes/canvases replacing
+  a preview instead of opening permanently. Image deletion logic was extracted for behavioral
+  tests; the widget hides/guards its delete control in read-only views.
+- Review considered but deferred inherited HTML split/transclusion attachment-directory resolution
+  and the inherited unlock-compartment effect dependency. These are source-fork limitations rather
+  than merge regressions; dependency advisories remain a separate follow-up.
+- First Linux CI: Docker build passed; unit tests and 30/31 inherited smoke assertions passed.
+  The sole failure was the old hardcoded health version `0.1.1` versus imported `0.3.0`.
+  The smoke test now reads the expected version from the package manifest.
+- Final Linux CI and full regression results are recorded after the fix commit.

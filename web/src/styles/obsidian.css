@@ -2286,6 +2286,11 @@ button.task-due:hover .task-due-caret { opacity: 1; }
 .cm-image-wrap:hover .cm-image-resize,
 .cm-image-wrap.is-resizing .cm-image-resize { opacity: .9; }
 /* Trash icon (top-right) — appears on hover in Live Preview and Reading mode. */
+.is-locked-note .cm-image-delete,
+.is-reading-mode .cm-image-delete {
+  display: none !important;
+}
+
 .cm-image-delete {
   position: absolute; top: 8px; right: 8px; z-index: 5;
   display: flex; align-items: center; justify-content: center;

@@ -235,6 +235,10 @@ interface AppState {
   notify: (msg: string, ms?: number) => void;
 
   openFile: (path: string, options?: { preview?: boolean }) => Promise<void>;
+  /** Open a media reference using its originating note, then keep the canonical path in tabs. */
+  openAttachment: (target: string, from: string) => Promise<void>;
+  /** Finish inline creation without replacing an existing preview tab. */
+  openCreatedFile: (path: string) => Promise<void>;
   keepTab: (path: string) => void;
   openWikilink: (target: string) => Promise<void>;
   closeTab: (path: string) => void;
@@ -681,6 +685,21 @@ export const useStore = create<AppState>()(
         if (ms > 0) {
           window.setTimeout(() => set((s) => (s.toast === msg ? { toast: '' } : {})), ms);
         }
+      },
+
+      openAttachment: async (target, from) => {
+        try {
+          const { path } = await api.resolveAttachment(target, from);
+          if (path) await get().openFile(path);
+          else get().notify('Attachment not found');
+        } catch (err: any) {
+          get().notify(err?.message ?? 'Could not open attachment');
+        }
+      },
+      openCreatedFile: async (path) => {
+        set({ selected: [path], selectAnchor: path });
+        await get().openFile(path, { preview: false });
+        get().revealInTree(path);
       },
 
       openFile: async (path, { preview = true } = {}) => {
