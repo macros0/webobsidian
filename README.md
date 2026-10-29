@@ -16,6 +16,7 @@ CodeMirror editor, live preview, wikilinks, an interactive graph, full-text sear
 GitHub sync (incl. Git LFS), an API for AI agents, and community-plugin support.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/macros0/webobsidian/actions/workflows/ci.yml/badge.svg)](https://github.com/macros0/webobsidian/actions/workflows/ci.yml)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.12-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
@@ -326,8 +327,18 @@ the store's theme changes.
 
 The server suite covers the vault write/trash/path-safety paths, git autosync and a real-git
 integration run (a throwaway repo + bare remote, no network); the web suite covers the workspace
-store, including preview-tab state. CI (`.github/workflows/ci.yml`) runs typecheck, tests, the smoke
-test and the Docker image build on every push and PR.
+store, including preview-tab state. CI (`.github/workflows/ci.yml`) runs on pushes to `main`,
+pull requests targeting `main`, and manually from **Actions → CI → Run workflow**. Three parallel
+jobs check dependencies, typecheck/test/build all workspaces (including desktop packaging), and
+build the Docker image. Linux browser fixtures run with Electron's sandbox and Xvfb on Ubuntu 24.04.
+Smoke tests use disposable local vaults.
+
+The **Dependency vulnerability audit** job runs the lockfile regression guard and `npm audit`
+against all production and development dependencies, failing on **low, moderate, high or critical**
+advisories or registry errors. Its `npm-audit` JSON artifact is retained for 14 days, including when
+the audit fails. Review fixes before updating the lockfile; avoid `npm audit fix --force`.
+CI uses a read-only repository token, limits job duration, and cancels superseded runs for the same
+event and branch/PR. No additional secrets are needed.
 
 ---
 

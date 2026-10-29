@@ -1,5 +1,11 @@
 # PRD — WebObsidian
 
+> CI maintenance 2026-10-29: GitHub Actions validates Node 22 workspaces, Electron browser
+> fixtures, desktop packaging and Docker builds on main pushes, main PRs and manual runs.
+> A separate dependency audit rejects every advisory severity (including dev dependencies)
+> and retains its JSON report for 14 days. Jobs use read-only tokens, timeouts and cancellation
+> of superseded runs. Existing deployment restrictions and application behavior are unchanged.
+
 > Rendering dependency maintenance 2026-10-29: update KaTeX to the patched 0.18 line and Mermaid
 > to 12.2, including Mermaid's KaTeX copy. Preserve default untrusted math rendering, sanitizers
 > and both preview paths. Mermaid 12 requires an ES2024-capable browser (Safari 17.4+); layout
