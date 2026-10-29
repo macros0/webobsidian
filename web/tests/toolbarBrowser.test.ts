@@ -47,8 +47,13 @@ test('real browser: selection toolbar colors, reset, focus, Escape, undo, locks 
         };
         const floating = () => document.querySelector('.floating-format-toolbar');
         check(!!floating(), 'nonempty selection shows floating toolbar');
+        // CodeMirror initially parks tooltips at -10000px until its asynchronous
+        // measurement runs. A fixed 80ms delay races that pass on Linux/headless.
+        const positionedBy = performance.now() + 2500;
+        while (floating()?.style.top === '-10000px' && performance.now() < positionedBy) await wait();
         let rect = floating().getBoundingClientRect();
-        check(rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight, 'floating toolbar stays inside viewport');
+        check(rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
+          'floating toolbar stays inside viewport: '+JSON.stringify({mobile,viewport:[innerWidth,innerHeight],rect:rect.toJSON()}));
         await click('[aria-label="Editing"]');
         check(document.querySelectorAll('.toolbar-popover [role="menuitem"]').length===5, 'editing popup has five actions');
         check(view.state.sliceDoc(view.state.selection.main.from,view.state.selection.main.to)==='hello', 'menu opening preserves selection');
