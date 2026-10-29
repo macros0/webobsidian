@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../lib/store';
 import { api, type TreeNode } from '../lib/api';
 import { pruneDescendants } from '../lib/tree';
+import { displayChildren } from '../lib/attachments';
 
 /** Collect every folder path in the vault, in tree order. */
-function collectFolders(node: TreeNode | null): string[] {
+function collectFolders(node: TreeNode | null, showAttachments: boolean): string[] {
   if (!node) return [];
   const out: string[] = [];
   const walk = (n: TreeNode) => {
-    for (const c of n.children ?? []) {
+    for (const c of displayChildren(n.children ?? [], showAttachments)) {
       if (c.type === 'folder') {
         out.push(c.path);
         walk(c);
@@ -28,6 +29,7 @@ export default function FolderPicker() {
   const movePath = useStore((s) => s.movePath);
   const setMovePath = useStore((s) => s.setMovePath);
   const tree = useStore((s) => s.tree);
+  const showAttachmentFolders = useStore((s) => s.showAttachmentFolders);
   const loadTree = useStore((s) => s.loadTree);
   const openFile = useStore((s) => s.openFile);
   const closeTab = useStore((s) => s.closeTab);
@@ -48,13 +50,13 @@ export default function FolderPicker() {
   // Root + every folder, minus targets that would move a folder into itself or a
   // descendant of any source (and, for a single item, its own folder — a no-op).
   const folders = useMemo(() => {
-    const all = ['', ...collectFolders(tree)];
+    const all = ['', ...collectFolders(tree, showAttachmentFolders)];
     return all.filter((f) => {
       if (single !== null && f === currentDir) return false;
       if (froms.some((src) => f === src || f.startsWith(`${src}/`))) return false;
       return true;
     });
-  }, [tree, froms, single, currentDir]);
+  }, [tree, showAttachmentFolders, froms, single, currentDir]);
 
   const lc = q.trim().toLowerCase();
   const matches = useMemo(

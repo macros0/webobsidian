@@ -11,6 +11,7 @@ import * as vault from '../services/vault.js';
 import { getActiveShare } from '../services/shares.js';
 import { isUnlocked } from './shares.js';
 import { renderNoteHtml, metaDescription, firstImage, escapeHtml } from '../services/renderhtml.js';
+import { embedLinkPreviews } from '../services/linkpreview.js';
 import { renderCanvasHtml, canvasDescription, canvasFirstImage, canvasViewerScript } from '../services/rendercanvas.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -138,7 +139,7 @@ document.getElementById('unlock-form').addEventListener('submit', async (e) => {
 
     const html = isCanvas
       ? await renderCanvasHtml(content, fileUrl)
-      : await renderNoteHtml(content, fileUrl);
+      : await embedLinkPreviews(await renderNoteHtml(content, fileUrl));
 
     const head = [
       `<meta name="description" content="${escapeHtml(desc)}" />`,

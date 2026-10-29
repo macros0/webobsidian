@@ -24,5 +24,6 @@ export const obsidianHighlightStyle = HighlightStyle.define([
   { tag: [t.number, t.bool, t.atom, t.null, t.unit, t.color, t.constant(t.variableName)], color: 'var(--color-purple)' },
   { tag: [t.annotation, t.self, t.changed], color: 'var(--color-orange)' },
   { tag: [t.className, t.namespace, t.typeName], color: 'var(--color-cyan)' },
+  { tag: t.meta, color: 'var(--color-orange)' },
   { tag: t.invalid, color: 'var(--text-error, var(--color-red))' },
 ]);

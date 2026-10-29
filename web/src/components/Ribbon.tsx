@@ -7,9 +7,11 @@ export default function Ribbon({ onTheme }: { onTheme: () => void }) {
   const setLeftPanel = useStore((s) => s.setLeftPanel);
   const leftPanel = useStore((s) => s.leftPanel);
   const setGraph = useStore((s) => s.setGraph);
+  const openTasks = useStore((s) => s.openTasks);
   const setSettings = useStore((s) => s.setSettings);
   const setPalette = useStore((s) => s.setPalette);
   const openDailyNote = useStore((s) => s.openDailyNote);
+  const setTemplatePicker = useStore((s) => s.setTemplatePicker);
   const notify = useStore((s) => s.notify);
   const loadTree = useStore((s) => s.loadTree);
 
@@ -49,11 +51,17 @@ export default function Ribbon({ onTheme }: { onTheme: () => void }) {
       <button title="Graph view" onClick={() => setGraph(true)}>
         <Icon name="graph" size={18} />
       </button>
+      <button title="Tasks" onClick={() => openTasks()}>
+        <Icon name="check-square" size={18} />
+      </button>
       <button className={leftPanel === 'bookmarks' ? 'active' : ''} title="Bookmarks & recent" onClick={() => setLeftPanel('bookmarks')}>
         <Icon name="bookmark" size={18} />
       </button>
       <button title="Daily note" onClick={() => openDailyNote()}>
         <Icon name="calendar" size={18} />
+      </button>
+      <button title="New note from template" onClick={() => setTemplatePicker(true)}>
+        <Icon name="file-plus" size={18} />
       </button>
       <button className={leftPanel === 'tags' ? 'active' : ''} title="Tags" onClick={() => setLeftPanel('tags')}>
         <Icon name="hash" size={18} />

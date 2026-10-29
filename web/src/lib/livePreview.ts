@@ -6,11 +6,17 @@ import {
   ViewUpdate,
   WidgetType,
 } from '@codemirror/view';
+import { frontmatterTitle } from './title';
 import { StateField, StateEffect, type EditorState, type Range, type Text } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
 import { CALLOUT_SLOT, CALLOUT_RE, calloutDefaultTitle, calloutIconSvg } from './callouts';
+import { fetchLinkPreview, createPreviewCard } from './linkPreview';
 import { openLightbox } from './imageLightbox';
-import { VIDEO_EXT_RE, AUDIO_EXT_RE } from './media';
+import { VIDEO_EXT_RE, AUDIO_EXT_RE, PDF_EXT_RE } from './media';
+import { optionsFor, type PropOption } from './propOptions';
+import { useStore } from './store';
+import { themedPopupHost } from './theme';
+import { resolveExternalEmbed, createEmbedElement, type ExternalEmbed } from './embeds';
 
 /**
  * Live Preview for CodeMirror 6 — an Obsidian-style WYSIWYG editing mode.
@@ -37,6 +43,24 @@ export interface LpMenuItem {
 let openMenu: (m: { x: number; y: number; items: LpMenuItem[] }) => void = () => {};
 export function setLivePreviewMenuHandler(fn: (m: { x: number; y: number; items: LpMenuItem[] }) => void) {
   openMenu = fn;
+}
+
+/** Path of the note being rendered — relative image refs resolve against its folder. */
+let notePath = '';
+export function setLivePreviewNotePath(p: string | null) {
+  notePath = p ?? '';
+}
+
+/** Trash-icon click on an image: `target` is the raw vault reference (null for web URLs). */
+export interface ImageDeleteRequest {
+  target: string | null;
+  view: EditorView;
+  /** Remove the image's Markdown reference from the note. */
+  remove: () => void;
+}
+let imageDeleteHandler: (r: ImageDeleteRequest) => void = (r) => r.remove();
+export function setLivePreviewImageDeleteHandler(fn: (r: ImageDeleteRequest) => void) {
+  imageDeleteHandler = fn;
 }
 
 export interface PropSuggestion {
@@ -163,6 +187,30 @@ class MdLinkWidget extends WidgetType {
   }
 }
 
+class LinkPreviewWidget extends WidgetType {
+  constructor(readonly url: string) {
+    super();
+  }
+  eq(o: LinkPreviewWidget) {
+    return o.url === this.url;
+  }
+  toDOM() {
+    const wrap = document.createElement('span');
+    wrap.className = 'link-preview cm-link-preview';
+    const a = document.createElement('a');
+    a.className = 'cm-md-link external-link';
+    a.textContent = this.url;
+    wrap.appendChild(a);
+    fetchLinkPreview(this.url).then((meta) => {
+      if (meta && wrap.isConnected) wrap.replaceChildren(createPreviewCard(meta));
+    });
+    return wrap;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
 class CheckboxWidget extends WidgetType {
   constructor(readonly checked: boolean, readonly pos: number) {
     super();
@@ -228,9 +276,51 @@ function writeImageWidth(view: EditorView, wrap: HTMLElement, width: number): vo
   }
 }
 
+/**
+ * Remove the image token (`![[img]]` / `![alt](url)`) a rendered image widget
+ * stands for. A line left empty by the removal is dropped with its newline.
+ */
+function removeImageToken(view: EditorView, wrap: HTMLElement): void {
+  let pos: number;
+  try {
+    pos = view.posAtDOM(wrap);
+  } catch {
+    return;
+  }
+  const line = view.state.doc.lineAt(pos);
+  const off = pos - line.from;
+  for (const re of [/!\[\[([^\]]+?)\]\]/g, /!\[([^\]]*)\]\(([^)]+)\)/g]) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line.text))) {
+      if (m.index <= off && off <= m.index + m[0].length) {
+        let from = line.from + m.index;
+        let to = from + m[0].length;
+        if ((line.text.slice(0, m.index) + line.text.slice(m.index + m[0].length)).trim() === '') {
+          from = line.from;
+          to = line.to;
+          if (to < view.state.doc.length) to += 1;
+          else if (from > 0) from -= 1;
+        }
+        view.dispatch({ changes: { from, to, insert: '' }, userEvent: 'delete' });
+        return;
+      }
+    }
+  }
+}
+
+const TRASH_SVG =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+
 class ImageWidget extends WidgetType {
   /** `width`/`height` from the Obsidian size param `![[img|300]]` / `![[img|300x200]]`. */
-  constructor(readonly src: string, readonly alt: string, readonly width?: number, readonly height?: number) {
+  constructor(
+    readonly src: string,
+    readonly alt: string,
+    readonly width?: number,
+    readonly height?: number,
+    /** Raw vault reference (null for web URLs) — what the trash icon deletes. */
+    readonly target: string | null = null,
+  ) {
     super();
   }
   eq(o: ImageWidget) {
@@ -261,6 +351,25 @@ class ImageWidget extends WidgetType {
       openLightbox(this.src, this.alt);
     });
     wrap.appendChild(img);
+
+    // Hover trash icon (top-right) — removes the reference and, when nothing else
+    // uses the file, the attachment itself (decided by the delete handler).
+    const del = document.createElement('span');
+    del.className = 'cm-image-delete';
+    del.title = 'Delete image';
+    del.setAttribute('role', 'button');
+    del.innerHTML = TRASH_SVG;
+    del.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    del.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (view.state.readOnly) return;
+      imageDeleteHandler({ target: this.target, view, remove: () => removeImageToken(view, wrap) });
+    });
+    wrap.appendChild(del);
 
     // Drag-to-resize — left/right edge bars; width is written back as `|W`,
     // keeping aspect ratio (height auto), like Obsidian's image resize.
@@ -340,6 +449,69 @@ class MediaWidget extends WidgetType {
       embedNotFound(miss, this.alt);
     };
     wrap.appendChild(el);
+    return wrap;
+  }
+}
+
+/** Inline players are built only for the supported media providers. */
+class ExternalEmbedWidget extends WidgetType {
+  constructor(readonly embed: ExternalEmbed) {
+    super();
+  }
+  eq(o: ExternalEmbedWidget) {
+    return o.embed.src === this.embed.src;
+  }
+  ignoreEvent() {
+    return true;
+  }
+  toDOM() {
+    const wrap = document.createElement('div');
+    wrap.className = 'cm-external-embed-wrap';
+    wrap.appendChild(createEmbedElement(this.embed));
+    return wrap;
+  }
+}
+
+/**
+ * Embedded PDF for `![[doc.pdf]]` (FR-21). The editor cannot inline the bytes, so
+ * the frame is the browser's own viewer, with a header that opens the file in a
+ * tab (the full-pane view in Workspace). Same-origin, so the app's CSP
+ * (`frame-src 'self'`) allows it.
+ */
+class PdfEmbedWidget extends WidgetType {
+  constructor(readonly src: string, readonly path: string, readonly origin: string) {
+    super();
+  }
+  eq(o: PdfEmbedWidget) {
+    return o.src === this.src && o.path === this.path && o.origin === this.origin;
+  }
+  /** Let the frame and the header button receive events instead of CodeMirror. */
+  ignoreEvent() {
+    return true;
+  }
+  toDOM() {
+    const wrap = document.createElement('div');
+    wrap.className = 'cm-embed-pdf pdf-embed';
+    const head = document.createElement('div');
+    head.className = 'pdf-embed-title';
+    const name = this.path.split('/').pop() ?? this.path;
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'pdf-embed-open';
+    open.textContent = name;
+    open.title = 'Open in a tab';
+    open.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void useStore.getState().openAttachment(this.path, this.origin);
+    });
+    head.appendChild(open);
+    const frame = document.createElement('iframe');
+    frame.className = 'pdf-embed-frame';
+    frame.src = this.src;
+    frame.loading = 'lazy';
+    frame.title = name;
+    wrap.append(head, frame);
     return wrap;
   }
 }
@@ -878,8 +1050,12 @@ function scanTables(doc: Text): TableBlock[] {
 
 // Lightweight inline renderer for table cells (code / bold / italic / links).
 // `<br>` is the only inline HTML Obsidian commonly renders inside table cells.
+//
+// The `_…_` branch carries CommonMark's delimiter rules — `_` may not open or
+// close inside a word — or a cell holding `DB_NAME_v2` renders `_NAME_` as italic
+// and swallows the underscores. `*` is legal intraword, so it keeps the loose form.
 const CELL_INLINE_RE =
-  /(<br\s*\/?>)|(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*|_[^_]+_)|(!?\[\[[^\]]+?\]\])|(\[[^\]]+?\]\([^)]+\))/gi;
+  /(<br\s*\/?>)|(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*|(?<![\w\\])_(?!\s)[^_\n]+?(?<!\s)_(?!\w))|(!?\[\[[^\]]+?\]\])|(\[[^\]]+?\]\([^)]+\))/gi;
 
 function appendInline(parent: HTMLElement, text: string) {
   CELL_INLINE_RE.lastIndex = 0;
@@ -971,7 +1147,13 @@ class TableWidget extends WidgetType {
 
     const table = document.createElement('table');
     table.className = 'cm-table';
-    wrap.appendChild(table);
+    // Wide tables scroll inside their own box instead of being squeezed to the
+    // line width (which broke cells mid-word). The scroller is a separate child
+    // so the absolutely-positioned add-column/row controls on `wrap` aren't clipped.
+    const scroll = document.createElement('div');
+    scroll.className = 'cm-table-scroll';
+    scroll.appendChild(table);
+    wrap.appendChild(scroll);
 
     // Read the current (possibly edited) model straight from the DOM so that
     // uncommitted cell edits are never lost when a structural op fires.
@@ -1408,8 +1590,15 @@ class FrontmatterWidget extends WidgetType {
     return true;
   }
   toDOM(view: EditorView) {
+    // `shell` is the box CodeMirror measures, so the widget's vertical spacing lives
+    // on it as PADDING: the height oracle only ever sees border-box rects, and space
+    // contributed by a vertical `margin` here would be invisible to it — every click
+    // below the properties block then resolved one line too low.
+    const shell = document.createElement('div');
+    shell.className = 'cm-properties';
     const box = document.createElement('div');
-    box.className = 'properties cm-properties';
+    box.className = 'properties';
+    shell.appendChild(box);
 
     // Re-find the current frontmatter range and replace it with fresh YAML.
     const commit = (props: Prop[]) => {
@@ -1456,6 +1645,13 @@ class FrontmatterWidget extends WidgetType {
 
     // Change a property's type: persist to .obsidian/types.json, then convert the
     // note's YAML if list-ness changed (else just refresh the icon in place).
+    // A page's own `type` decides which status vocabulary applies (FR-23): a task's statuses are
+    // not an abnormality's. Read from the block's YAML so the rows and setType agree.
+    const pageKind = () => {
+      const rows = parseFrontmatter(this.yaml);
+      return (rows.find((p) => p.key.trim().toLowerCase() === 'type')?.values[0] ?? '').trim();
+    };
+
     const setType = async (key: string, dt: string) => {
       try {
         const types = await persistPropertyType(key, dtToObs(dt, key));
@@ -1488,7 +1684,13 @@ class FrontmatterWidget extends WidgetType {
         }
         const valCell = row.querySelector('.prop-val');
         const oldField = row.querySelector('.prop-val-field') as HTMLElement | null;
-        if (valCell && oldField) valCell.replaceChild(makeScalarField(dt, oldField.dataset.raw ?? ''), oldField);
+        if (valCell && oldField) {
+          // Rebuild the cell's single control rather than swapping the field in place: a
+          // pick-list field (FR-23) sits inside its own wrapper alongside the ▾ button.
+          const fresh = makeScalarField(dt, oldField.dataset.raw ?? '', key, pageKind());
+          valCell.textContent = '';
+          valCell.appendChild(fresh);
+        }
       }
     };
 
@@ -1534,9 +1736,88 @@ class FrontmatterWidget extends WidgetType {
       el.addEventListener('blur', onCommit);
     };
 
+    // The value list for a closed-vocabulary property (FR-23): a ▾ beside the field that opens
+    // the vault's values. Same popup host and classes as the list-item suggester, so the theme
+    // wrapper's palette resolves; picking writes the frontmatter through mutate() like any edit.
+    const pickButton = (key: string, field: HTMLElement, opts: PropOption[]): HTMLElement => {
+      const btn = document.createElement('span');
+      btn.className = 'prop-pick-btn';
+      btn.textContent = '▾';
+      btn.title = `Choose a ${key}`;
+      btn.setAttribute('role', 'button');
+      btn.setAttribute('aria-label', `Choose a ${key} value`);
+      btn.setAttribute('aria-haspopup', 'listbox');
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        openPickList(field, opts);
+      });
+      return btn;
+    };
+
+    const openPickList = (field: HTMLElement, opts: PropOption[]) => {
+      const dd = document.createElement('div');
+      dd.className = 'cm-props-dropdown prop-val-dropdown';
+      dd.setAttribute('role', 'listbox');
+      themedPopupHost().appendChild(dd);
+      // Fixed-position just below the field (viewport coords; rect forces reflow).
+      const r = field.getBoundingClientRect();
+      dd.style.left = `${Math.round(r.left)}px`;
+      dd.style.top = `${Math.round(r.bottom + 2)}px`;
+
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        dd.remove();
+        window.removeEventListener('mousedown', away, true);
+        window.removeEventListener('keydown', escape, true);
+      };
+      const pick = (value: string) => {
+        close();
+        // The DOM field is the source readProps reads: set both, then commit once.
+        field.textContent = value;
+        field.dataset.raw = value;
+        mutate(() => {});
+      };
+      const away = (e: MouseEvent) => {
+        if (!dd.contains(e.target as Node)) close();
+      };
+      const escape = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') close();
+      };
+      window.addEventListener('mousedown', away, true);
+      window.addEventListener('keydown', escape, true);
+
+      for (const o of opts) {
+        const it = document.createElement('div');
+        it.className = 'cm-props-dd-item' + (o.offList ? ' is-offlist' : '');
+        it.dataset.value = o.value;
+        it.setAttribute('role', 'option');
+        it.setAttribute('aria-selected', o.current ? 'true' : 'false');
+        const ic = document.createElement('span');
+        ic.className = 'prop-icon';
+        ic.textContent = o.current ? '✓' : '';
+        const nm = document.createElement('span');
+        nm.textContent = o.value;
+        it.append(ic, nm);
+        if (o.offList) {
+          // In the note but not in SCHEMA: shown, never rewritten, and labelled as such.
+          const hint = document.createElement('span');
+          hint.className = 'prop-val-offlist';
+          hint.textContent = 'in this note';
+          it.appendChild(hint);
+        }
+        it.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          pick(o.value);
+        });
+        dd.appendChild(it);
+      }
+    };
+
     // A value editor whose control matches the property type. `dataset.raw` always
     // holds the canonical YAML value so readProps never rewrites untouched fields.
-    const makeScalarField = (dt: string, value: string): HTMLElement => {
+    const makeScalarField = (dt: string, value: string, key: string, type: string): HTMLElement => {
       const commitChange = () => mutate(() => {});
       if (dt === 'number') {
         const inp = document.createElement('input');
@@ -1591,7 +1872,15 @@ class FrontmatterWidget extends WidgetType {
           mutate(() => {});
         }
       });
-      return span;
+      // Closed-vocabulary keys get the vault's values as a list to pick from (FR-23). The
+      // field stays editable text: SCHEMA owns the vocabulary, the picker only saves typing
+      // an id from memory, and a value it does not know is still shown and still writable.
+      const opts = this.ro ? null : optionsFor(key, value, type);
+      if (!opts) return span;
+      const wrap = document.createElement('span');
+      wrap.className = 'prop-val-wrap';
+      wrap.append(span, pickButton(key, span, opts));
+      return wrap;
     };
 
     // Add an item to a list property via a typed input + suggestion dropdown
@@ -1607,8 +1896,7 @@ class FrontmatterWidget extends WidgetType {
       container.insertBefore(inp, addBtn);
       // Mount inside the theme wrapper (not <body>) so the CSS variables that give
       // the dropdown its background resolve — otherwise it renders transparent.
-      const host = (document.querySelector('.theme-light, .theme-dark') as HTMLElement) ?? document.body;
-      host.appendChild(dd);
+      themedPopupHost().appendChild(dd);
       // Fixed-position just below the input (viewport coords; rect forces reflow).
       const ir = inp.getBoundingClientRect();
       dd.style.left = `${Math.round(ir.left)}px`;
@@ -1677,6 +1965,7 @@ class FrontmatterWidget extends WidgetType {
       );
     };
 
+    const pageType = pageKind();
     props.forEach((p, idx) => {
       const dt = displayTypeOf(p);
       const renderAsList = dt === 'list' || p.list;
@@ -1763,7 +2052,7 @@ class FrontmatterWidget extends WidgetType {
         });
         v.appendChild(add);
       } else {
-        v.appendChild(makeScalarField(dt, p.values[0] ?? ''));
+        v.appendChild(makeScalarField(dt, p.values[0] ?? '', p.key, pageType));
       }
 
       const del = document.createElement('span');
@@ -1874,7 +2163,7 @@ class FrontmatterWidget extends WidgetType {
       for (const el of box.querySelectorAll('[contenteditable]')) el.removeAttribute('contenteditable');
       for (const inp of box.querySelectorAll('input')) (inp as HTMLInputElement).disabled = true;
     }
-    return box;
+    return shell;
   }
 }
 
@@ -1896,7 +2185,23 @@ const EMPHASIS_CLASS: Record<string, string> = {
 const hidden = Decoration.replace({});
 
 function attachmentUrl(target: string): string {
-  return `/api/files/content?path=${encodeURIComponent(target)}`;
+  return `/api/files/content?path=${encodeURIComponent(target)}${
+    notePath ? `&from=${encodeURIComponent(notePath)}` : ''
+  }`;
+}
+
+/**
+ * Markdown link targets are percent-encoded (`![](My%20File.png)`) and
+ * attachmentUrl() encodes again, so decode once or `%20` becomes `%2520`.
+ * try/catch: a lone `%` makes decodeURIComponent throw; the raw name is right then.
+ * Only for `![](…)` — `![[wikilink]]` targets are literal, not encoded.
+ */
+function decodeLinkTarget(target: string): string {
+  try {
+    return decodeURIComponent(target);
+  } catch {
+    return target;
+  }
 }
 
 function buildDecorations(view: EditorView): DecorationSet {
@@ -2086,7 +2391,7 @@ function buildDecorations(view: EditorView): DecorationSet {
         continue;
       }
 
-      // Inline-HTML paragraph line (e.g. `<u>…</u> và <mark>…`): Lezer only marks
+      // Inline-HTML paragraph line (e.g. `<u>…</u> and <mark>…`): Lezer only marks
       // block-level openers as HTMLBlock, so render whole-line inline HTML here.
       if (/^<[a-zA-Z][^>]*>/.test(text) && !lineActive(line.from)) {
         pushReplace(line.from, line.to, Decoration.replace({ widget: new HtmlBlockWidget(text) }));
@@ -2186,12 +2491,25 @@ function buildDecorations(view: EditorView): DecorationSet {
           i = end;
         }
       };
+      // Hanging indent: wrapped lines align with the text after the marker. Indent
+      // units and the marker widget have fixed widths (see .HyperMD-hang in CSS).
+      // Build the prefix by addition because CSS calc multiplication is not supported
+      // by all browsers. `markerW` varies with digit count for ordered lists.
+      const hang = (ws: string, markerW?: string): Record<string, string> => {
+        if (bodyStart) return {};
+        let units = 0;
+        for (let i = 0; i < ws.length; i += ws[i] === '\t' ? 1 : 4) units++;
+        const prefix = [...Array.from({ length: units }, () => 'var(--hang-indent-w)'), 'var(--hang-marker-w)'].join(' + ');
+        // `--hang-marker-w` must be set on the line itself: the ordered-list marker box
+        // (.cm-ol-marker) reads it for its width, so it has to match what the prefix uses.
+        return { style: `${markerW ? `--hang-marker-w:${markerW};` : ''}--hang-prefix:calc(${prefix})` };
+      };
       const task = body.match(/^(\s*)([-*+])\s+\[(.)\]\s/);
       if (task) {
         all.push(
           Decoration.line({
-            class: 'HyperMD-list-line HyperMD-task-line',
-            attributes: { 'data-task': task[3] },
+            class: bodyStart ? 'HyperMD-list-line HyperMD-task-line' : 'HyperMD-list-line HyperMD-task-line HyperMD-hang',
+            attributes: { 'data-task': task[3], ...hang(task[1]) },
           }).range(line.from, line.from),
         );
         indentGuides(task[1]);
@@ -2202,7 +2520,12 @@ function buildDecorations(view: EditorView): DecorationSet {
       } else {
         const bullet = body.match(/^(\s*)([-*+])(\s+)/);
         if (bullet) {
-          all.push(Decoration.line({ class: 'HyperMD-list-line' }).range(line.from, line.from));
+          all.push(
+            Decoration.line({
+              class: bodyStart ? 'HyperMD-list-line' : 'HyperMD-list-line HyperMD-hang',
+              attributes: hang(bullet[1]),
+            }).range(line.from, line.from),
+          );
           indentGuides(bullet[1]);
           // Replace the `-`/`*`/`+` marker with a bullet and collapse its trailing
           // whitespace to a single space, so `-   Item` reads `• Item` like Obsidian.
@@ -2210,19 +2533,35 @@ function buildDecorations(view: EditorView): DecorationSet {
           const markerEnd = start + 1;
           const spaceEnd = markerEnd + bullet[3].length;
           if (!touches(start, spaceEnd)) {
-            pushReplace(start, markerEnd, Decoration.replace({ widget: new BulletWidget() }));
+            pushReplace(start, markerEnd + 1, Decoration.replace({ widget: new BulletWidget() }));
             if (bullet[3].length > 1) pushReplace(markerEnd + 1, spaceEnd, hidden);
           }
         } else {
-          // Ordered list: keep the `1.` but collapse extra spaces after it.
+          // Ordered list: keep the `1.` but collapse extra spaces after it. The marker
+          // is drawn in a fixed-width box (width grows with digit count) so wrapped
+          // lines can hang under the text, like bullets.
           const ol = body.match(/^(\s*)(\d{1,9}[.)])(\s+)/);
           if (ol) {
-            all.push(Decoration.line({ class: 'HyperMD-list-line' }).range(line.from, line.from));
+            const digits = ol[2].length - 1;
+            const markerW = `${(1.6 + (digits - 1) * 0.6).toFixed(2)}em`;
+            all.push(
+              Decoration.line({
+                class: bodyStart ? 'HyperMD-list-line' : 'HyperMD-list-line HyperMD-hang',
+                attributes: hang(ol[1], markerW),
+              }).range(line.from, line.from),
+            );
             indentGuides(ol[1]);
-            if (ol[3].length > 1) {
-              const markerEnd = bodyFrom + ol[1].length + ol[2].length;
-              const spaceEnd = markerEnd + ol[3].length;
-              if (!touches(bodyFrom + ol[1].length, spaceEnd)) pushReplace(markerEnd + 1, spaceEnd, hidden);
+            const start = bodyFrom + ol[1].length;
+            const markerEnd = start + ol[2].length;
+            const spaceEnd = markerEnd + ol[3].length;
+            if (!touches(start, spaceEnd)) {
+              if (bodyStart) {
+                // In quotes/callouts there is no hanging box: keep one space after the marker.
+                if (ol[3].length > 1) pushReplace(markerEnd + 1, spaceEnd, hidden);
+              } else {
+                all.push(Decoration.mark({ class: 'cm-ol-marker' }).range(start, markerEnd));
+                pushReplace(markerEnd, spaceEnd, hidden);
+              }
             }
           }
         }
@@ -2363,7 +2702,7 @@ function buildDecorations(view: EditorView): DecorationSet {
               h = sm[2] ? Number(sm[2]) : undefined;
             }
           }
-          pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(attachmentUrl(href), href, w, h) }));
+          pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(attachmentUrl(href), href, w, h, href) }));
         } else if (isEmbed && (VIDEO_EXT_RE.test(href) || AUDIO_EXT_RE.test(href))) {
           // `![[clip.mp4]]` / `![[song.mp3]]` → native HTML5 player like Obsidian.
           const kind = VIDEO_EXT_RE.test(href) ? 'video' : 'audio';
@@ -2375,6 +2714,10 @@ function buildDecorations(view: EditorView): DecorationSet {
             if (sm) w = Number(sm[1]);
           }
           pushReplace(s, e, Decoration.replace({ widget: new MediaWidget(attachmentUrl(href), href, kind, w) }));
+        } else if (isEmbed && PDF_EXT_RE.test(href.split('#')[0])) {
+          // FR-21: `![[doc.pdf]]` → the browser's viewer inline, like Obsidian.
+          // The `#page=…` fragment (if any) addresses the viewer, not the file API.
+          pushReplace(s, e, Decoration.replace({ widget: new PdfEmbedWidget(attachmentUrl(href.split('#')[0]), href.split('#')[0], notePath) }));
         } else if (isEmbed && !/\.[a-z0-9]{1,5}$/i.test(href.split('#')[0])) {
           // `![[note]]` (no binary extension) → real transclusion like Obsidian.
           pushReplace(s, e, Decoration.replace({ widget: new NoteEmbedWidget(href) }));
@@ -2388,6 +2731,15 @@ function buildDecorations(view: EditorView): DecorationSet {
             Decoration.replace({ widget: new WikilinkWidget(href, label, isEmbed, defaultDisplay !== label ? defaultDisplay : undefined) }),
           );
         }
+      }
+
+      // Standalone media URL → inline player (raw URL shows while the caret is on it)
+      const embedM = text.match(/^\s*(https?:\/\/\S+)\s*$/);
+      if (embedM) {
+        const s = line.from + text.indexOf(embedM[1]);
+        const e = s + embedM[1].length;
+        const emb = !touches(s, e) && !inCode(s, e) ? resolveExternalEmbed(embedM[1]) : null;
+        if (emb) pushReplace(s, e, Decoration.replace({ widget: new ExternalEmbedWidget(emb) }));
       }
 
       // Markdown images ![alt](url) — URL may contain spaces (real-world vaults)
@@ -2413,8 +2765,17 @@ function buildDecorations(view: EditorView): DecorationSet {
         // Browser-loadable URLs load directly; anything else (a relative path or
         // any custom scheme) is resolved by basename via the vault file index.
         const webLoadable = /^(https?|data|blob|file):/i.test(url);
-        const src = webLoadable ? url : attachmentUrl(url.split('/').pop() || url);
-        pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(src, alt, w, h) }));
+        let vaultRef: string | null = null;
+        if (!webLoadable) {
+          vaultRef = url.replace(/^<|>$/g, '');
+          try {
+            vaultRef = decodeURIComponent(vaultRef);
+          } catch {
+            /* keep raw */
+          }
+        }
+        const src = vaultRef === null ? url : attachmentUrl(vaultRef);
+        pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(src, alt, w, h, vaultRef) }));
       }
 
       // Markdown links [text](url) — not preceded by ! (those are images)
@@ -2425,6 +2786,11 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (touches(s, e) || inCode(s, e)) continue;
         const url = m[2].replace(/\s+"[^"]*"$/, '').trim();
         pushReplace(s, e, Decoration.replace({ widget: new MdLinkWidget(m[1], url) }));
+      }
+
+      // Standalone bare URL line → rich preview card (raw text shown while editing).
+      if (/^https?:\/\/\S+$/i.test(text) && !lineActive(line.from) && !inCode(line.from, line.to)) {
+        pushReplace(line.from, line.to, Decoration.replace({ widget: new LinkPreviewWidget(text) }));
       }
 
       // Markdown escapes `\.` `\*` … — conceal the backslash like Obsidian LP
@@ -2516,8 +2882,9 @@ export const noteTitleField = StateField.define<string>({
 
 function buildInlineTitle(state: EditorState): DecorationSet {
   if (!state.field(livePreviewState, false)) return Decoration.none;
-  const title = state.field(noteTitleField, false) ?? '';
-  if (!title) return Decoration.none;
+  const baseTitle = state.field(noteTitleField, false) ?? '';
+  if (!baseTitle) return Decoration.none;
+  const title = frontmatterTitle(state.doc.sliceString(0, Math.min(state.doc.length, 2000))) ?? baseTitle;
   // Skip when the note already opens with an H1 equal to the title — the Trilium
   // export repeats the title as a heading, and Obsidian would otherwise show it twice.
   const head = state.doc.sliceString(0, Math.min(state.doc.length, 2000));
@@ -2637,10 +3004,27 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
  * otherwise swallow the first click, which is why editing a heading "took
  * several clicks". We only act on a plain click (no shift = not range-extending)
  * and let CodeMirror still handle drag-select normally.
+ *
+ * Two things can still move the caret away from the clicked row, and both are
+ * handled here: CodeMirror leaves it put when `posAtCoords` has no precise answer
+ * (the padding of a tall heading line-box — fixed on mousedown), and the browser's
+ * own contenteditable caret placement picks a *neighbouring* line when the click
+ * lands in the blank part of a line whose only content is a widget, an image line
+ * say (re-asserted on mouseup, once the native handling has run). Widgets that own
+ * their interaction are left untouched.
  */
+const INTERACTIVE_WIDGET =
+  'input, textarea, select, audio, video, iframe, [contenteditable="true"]:not(.cm-content), ' +
+  '.cm-table-wrap, .cm-properties, .cm-media-wrap, .cm-note-embed';
+let plainClickAt: { x: number; y: number } | null = null;
+
 export const editorClickFix = EditorView.domEventHandlers({
   mousedown(event, view) {
-    if (event.button !== 0 || event.shiftKey || event.detail > 1) return false;
+    if (event.button !== 0 || event.shiftKey || event.altKey || event.detail > 1) {
+      plainClickAt = null;
+      return false;
+    }
+    plainClickAt = { x: event.clientX, y: event.clientY };
     // `precise: false` returns the CLOSEST position and never null, so clicking
     // anywhere on a tall heading line-box (incl. its padding, where the default
     // posAtCoords returns null and CM leaves the caret put) still moves the caret
@@ -2649,7 +3033,88 @@ export const editorClickFix = EditorView.domEventHandlers({
     view.dispatch({ selection: { anchor: pos } });
     return false; // let CodeMirror handle focus/drag normally too
   },
+  mouseup(event, view) {
+    const start = plainClickAt;
+    plainClickAt = null;
+    if (!start || event.button !== 0 || event.shiftKey || event.detail > 1) return false;
+    // A drag: keep the selection CodeMirror built.
+    if (Math.abs(event.clientX - start.x) > 3 || Math.abs(event.clientY - start.y) > 3) return false;
+    const target = event.target as HTMLElement | null;
+    if (target && typeof target.closest === 'function' && target.closest(INTERACTIVE_WIDGET)) return false;
+    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
+    if (pos != null && pos !== view.state.selection.main.head) view.dispatch({ selection: { anchor: pos } });
+    return false;
+  },
 });
+
+/**
+ * Re-measure when media inside the editor finishes loading. CodeMirror's height
+ * oracle only sees the DOM as it is during a measure pass and it does not listen for
+ * `load`/`error` events, so an attachment that arrives afterwards leaves the height
+ * map short by its own height — every click below it then resolves one or two lines
+ * too low until something else forces a re-measure (a keystroke, or a scroll).
+ */
+export const mediaLoadRemeasure = ViewPlugin.fromClass(
+  class {
+    private readonly onLoad = () => this.view.requestMeasure();
+    constructor(private readonly view: EditorView) {
+      view.dom.addEventListener('load', this.onLoad, true);
+      view.dom.addEventListener('error', this.onLoad, true);
+    }
+    destroy() {
+      this.view.dom.removeEventListener('load', this.onLoad, true);
+      this.view.dom.removeEventListener('error', this.onLoad, true);
+    }
+  },
+);
+
+/**
+ * Dev-only guard for exactly the bug above: CodeMirror's height map must describe what
+ * the editor actually rendered. When the map is short, some CSS inside the editor
+ * contributes vertical space the oracle cannot see — a `margin` on an editor block is
+ * the usual cause — and every click below the gap lands a line or two low. Silence in
+ * a production build.
+ */
+export const livePreviewGeometryGuard = import.meta.env.DEV
+  ? ViewPlugin.fromClass(
+      class {
+        private timer: ReturnType<typeof setTimeout> | null = null;
+        private warned = 0;
+        constructor(private readonly view: EditorView) {
+          this.schedule();
+        }
+        update() {
+          this.schedule();
+        }
+        destroy() {
+          if (this.timer) clearTimeout(this.timer);
+        }
+        private schedule() {
+          if (this.timer) clearTimeout(this.timer);
+          this.timer = setTimeout(() => this.verify(), 400);
+        }
+        private verify() {
+          this.timer = null;
+          const view = this.view;
+          // An attachment still in flight legitimately changes the height afterwards.
+          if ([...view.contentDOM.querySelectorAll('img')].some((img) => !img.complete)) {
+            this.schedule();
+            return;
+          }
+          // Both include the content padding, so the difference is the unmeasured space.
+          const drift = view.contentDOM.scrollHeight - view.contentHeight;
+          if (drift > 4 && Math.abs(drift - this.warned) > 1) {
+            this.warned = drift;
+            console.warn(
+              `[webobsidian] the editor's height map is ${drift.toFixed(1)}px short of the rendered ` +
+                'content, so clicks below that gap land on the wrong line. Vertical margins inside ' +
+                '.cm-content are invisible to CodeMirror — use padding (README › Live Preview geometry).',
+            );
+          }
+        }
+      },
+    )
+  : [];
 
 export const livePreviewTheme = EditorView.baseTheme({
   // Heading sizes/weights come from the stylesheet (.cm-s-obsidian .HyperMD-header-N,
@@ -2665,8 +3130,11 @@ export const livePreviewTheme = EditorView.baseTheme({
     lineHeight: 'var(--line-height-tight)',
     letterSpacing: '-0.015em',
     color: 'var(--text-normal)',
-    margin: '0 0 0.5em',
-    padding: '0',
+    // Space below the title is PADDING, not a margin: CodeMirror's height oracle
+    // measures border-box rects only, so margins between blocks are invisible to it
+    // and every click lands ~1 line too low (see README › Live Preview geometry).
+    margin: '0',
+    padding: '0 0 0.5em',
   },
   '.cm-em': { fontStyle: 'italic' },
   '.cm-strike': { textDecoration: 'line-through' },
@@ -2703,7 +3171,10 @@ export const livePreviewTheme = EditorView.baseTheme({
   },
   '.cm-task-checkbox': { verticalAlign: 'middle', marginRight: '4px', cursor: 'pointer' },
   '.cm-embed-image': { maxWidth: '100%', borderRadius: '6px', display: 'block', margin: '6px 0' },
-  '.cm-properties': { margin: '4px 0 18px' },
+  '.cm-properties': { padding: '0 0 18px' },
+  // The measured shell above owns the block's vertical spacing (padding); the visual
+  // box inside it keeps its own border-bottom/padding but must not re-add a margin.
+  '.cm-properties > .properties': { margin: '0' },
   // Compound `.cm-line.cm-blockquote` selector beats CodeMirror's own `.cm-line`
   // padding rule (equal specificity, declared later) so the gap actually applies —
   // otherwise text sits flush against the bar. Blockquote: 2px accent bar +
@@ -2716,7 +3187,15 @@ export const livePreviewTheme = EditorView.baseTheme({
   // Markdown tables — mirror Obsidian's table CSS variables
   // (https://docs.obsidian.md/Reference/CSS+variables/Editor/Table): 1px border,
   // left-aligned + top-valigned cells, semibold header with a subtle background.
-  '.cm-table': { borderCollapse: 'collapse', margin: '0', width: 'auto' },
+  // `.cm-lineWrapping` sets `overflow-wrap: anywhere`, which lets the table's
+  // auto layout shrink columns below word width ("Own|er", "hun|g"). Restore
+  // normal wrapping so columns are at least one word wide; overflow scrolls.
+  '.cm-table': { borderCollapse: 'collapse', margin: '0', width: 'auto', overflowWrap: 'normal', wordBreak: 'normal' },
+  '.cm-table-scroll': { overflowX: 'auto', maxWidth: '100%' },
+  // .cm-content is a flex item of .cm-scroller, so by default it can't shrink
+  // below its min-content width — a wide table would widen the whole column
+  // (clipping every paragraph on a phone) instead of scrolling in its own box.
+  '.cm-content.cm-lineWrapping': { minWidth: '0' },
   '.cm-table th, .cm-table td': {
     border: '1px solid var(--bg-modifier-border)',
     padding: '4px 10px',
@@ -2727,7 +3206,17 @@ export const livePreviewTheme = EditorView.baseTheme({
   },
   '.cm-table th': { fontWeight: '600', background: 'var(--bg-secondary)' },
   // Interactive table editor (Obsidian-style): click-to-edit cells + hover controls.
-  '.cm-table-wrap': { position: 'relative', display: 'inline-block', margin: '8px 18px 18px 0' },
+  // `display: block` + `width: fit-content` shrink-wraps the table like the old
+  // `inline-block` did, but without the anonymous line box that added ~7px of
+  // unmeasurable space below the widget (inline-blocks sit on the text baseline).
+  '.cm-table-wrap': {
+    position: 'relative',
+    display: 'block',
+    width: 'fit-content',
+    maxWidth: '100%',
+    margin: '0 18px 0 0',
+    padding: '8px 0 18px',
+  },
   '.cm-cell-edit': { outline: 'none', cursor: 'text', minWidth: '1em' },
   '.cm-cell-edit:focus': { boxShadow: 'inset 0 0 0 2px var(--interactive-accent)', background: 'var(--bg-primary)' },
   '.cm-table-addcol, .cm-table-addrow': {
@@ -2747,7 +3236,7 @@ export const livePreviewTheme = EditorView.baseTheme({
     transition: 'opacity 0.1s',
   },
   '.cm-table-addcol': { top: '0', right: '-16px', width: '14px', height: '100%' },
-  '.cm-table-addrow': { left: '0', bottom: '-16px', height: '14px', width: '100%' },
+  '.cm-table-addrow': { left: '0', bottom: '2px', height: '14px', width: '100%' },
   '.cm-table-wrap:hover .cm-table-addcol, .cm-table-wrap:hover .cm-table-addrow': { opacity: '1' },
   // Column handle (top strip of each header cell) + row handle (left strip of first cell).
   '.cm-col-handle': { position: 'absolute', top: '0', left: '0', right: '0', height: '5px', cursor: 'pointer' },
@@ -2761,7 +3250,7 @@ export const livePreviewTheme = EditorView.baseTheme({
   },
   // Raw embedded HTML (e.g. CKEditor/Trilium tables) — table metrics match the
   // reading view (4px 10px cells, semibold header) so both modes look alike.
-  '.cm-html-block': { margin: '6px 0' },
+  '.cm-html-block': { margin: '0', padding: '6px 0' },
   '.cm-html-block table': { borderCollapse: 'collapse', margin: '4px 0', width: 'auto' },
   '.cm-html-block th, .cm-html-block td': {
     border: '1px solid var(--bg-modifier-border)',

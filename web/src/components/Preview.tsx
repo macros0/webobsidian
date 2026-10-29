@@ -4,9 +4,11 @@ import { LanguageDescription } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
 import { useStore } from '../lib/store';
 import { renderMarkdown } from '../lib/markdown';
+import { enhanceLinkPreviews } from '../lib/linkPreview';
 import { calloutIconSvg } from '../lib/callouts';
 import { openLightbox } from '../lib/imageLightbox';
 import { api } from '../lib/api';
+import { displayTitle } from '../lib/title';
 
 /** Syntax-highlight a `<code class="language-x">` block with the SAME CodeMirror
  *  grammars Live Preview uses (token classes styled by the Obsidian palette). */
@@ -93,6 +95,7 @@ export default function Preview({ source }: { source?: string }) {
   const storeContent = useStore((s) => s.content);
   const content = source ?? storeContent;
   const activePath = useStore((s) => s.activePath);
+  const showInlineTitle = useStore((s) => s.showInlineTitle);
   const openWikilink = useStore((s) => s.openWikilink);
   const openContextMenu = useStore((s) => s.openContextMenu);
   const setLeftPanel = useStore((s) => s.setLeftPanel);
@@ -130,6 +133,26 @@ export default function Preview({ source }: { source?: string }) {
     for (const el of root.querySelectorAll<HTMLElement>('.callout-icon[data-callout-icon]')) {
       el.innerHTML = calloutIconSvg(el.dataset.calloutIcon ?? 'default');
     }
+    // `![[doc.pdf]]` embeds: the renderer emits an inert link (rehype-sanitize drops
+    // iframes and the schema must not be widened for raw note HTML), so the frame is
+    // created here — the same pass that decorates callout icons (FR-21).
+    for (const a of root.querySelectorAll<HTMLAnchorElement>('a.pdf-embed[data-href]')) {
+      const target = a.dataset.href ?? '';
+      if (!target) continue;
+      const name = target.split('/').pop() ?? target;
+      const wrap = document.createElement('div');
+      wrap.className = 'pdf-embed-wrap';
+      const caption = document.createElement('div');
+      caption.className = 'pdf-embed-title';
+      caption.textContent = name;
+      const frame = document.createElement('iframe');
+      frame.className = 'pdf-embed-frame';
+      frame.src = api.rawUrl(target);
+      frame.loading = 'lazy';
+      frame.title = name;
+      wrap.append(caption, frame);
+      a.replaceWith(wrap);
+    }
     // Fold chevron on collapsible callouts (rotates via .is-collapsed CSS).
     for (const title of root.querySelectorAll<HTMLElement>(
       '.callout[data-callout-fold="-"] > .callout-title, .callout[data-callout-fold="+"] > .callout-title',
@@ -141,6 +164,7 @@ export default function Preview({ source }: { source?: string }) {
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
       title.appendChild(ch);
     }
+    enhanceLinkPreviews(root, () => cancelled);
     if (root.querySelector('[data-tex]')) {
       void loadKatex().then((katex) => {
         if (cancelled) return;
@@ -233,13 +257,13 @@ export default function Preview({ source }: { source?: string }) {
 
   // Inline title (note filename), Obsidian-style — skipped when the note already
   // opens with an H1 equal to the title (avoids duplicating the Trilium heading).
-  const title = !source && activePath ? (activePath.split('/').pop() ?? '').replace(/\.(md|markdown)$/i, '') : '';
+  const title = !source && activePath ? displayTitle(activePath, content) : '';
   const firstLine = content
     .replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/, '')
     .split(/\r?\n/)
     .find((l) => l.trim() !== '');
   const h1 = firstLine?.match(/^#\s+(.+?)\s*$/);
-  const showTitle = !!title && !(h1 && h1[1].trim().toLowerCase() === title.trim().toLowerCase());
+  const showTitle = showInlineTitle && !!title && !(h1 && h1[1].trim().toLowerCase() === title.trim().toLowerCase());
 
   return (
     <div className="markdown-preview" onClick={onClick} onContextMenu={onContextMenu}>

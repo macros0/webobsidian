@@ -1,15 +1,18 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import DocOutline from './DocOutline';
 import { Compartment, EditorState, Prec } from '@codemirror/state';
-import { EditorView, keymap, highlightActiveLine, drawSelection } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { EditorView, keymap, highlightActiveLine, drawSelection, rectangularSelection, crosshairCursor } from '@codemirror/view';
+import { defaultKeymap, simplifySelection, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { search, searchKeymap } from '@codemirror/search';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { yamlFrontmatter } from '@codemirror/lang-yaml';
 import { languages } from '@codemirror/language-data';
 import { syntaxHighlighting } from '@codemirror/language';
 import { obsidianHighlightStyle } from '../lib/highlight';
 import { useStore } from '../lib/store';
 import type { TreeNode } from '../lib/api';
 import { obsidianKeymap } from '../lib/editorCommands';
+import Icon from './Icon';
 import { suggesterPlugin, setLinkSuggestFiles, setTagSuggestTags } from '../lib/suggest';
 import {
   livePreviewPlugin,
@@ -26,11 +29,15 @@ import {
   noteTitleField,
   inlineTitleField,
   editorClickFix,
+  mediaLoadRemeasure,
+  livePreviewGeometryGuard,
   livePreviewReadonly,
   setLivePreviewReadonly,
   setLivePreviewEnabled,
   setLivePreviewLinkHandler,
   setLivePreviewMenuHandler,
+  setLivePreviewImageDeleteHandler,
+  setLivePreviewNotePath,
   setLivePreviewNoteEmbedProvider,
   setLivePreviewPropertyProvider,
   setLivePreviewPropertyTypes,
@@ -41,17 +48,22 @@ import {
 import { renderMarkdown } from '../lib/markdown';
 import { setActiveEditor } from '../lib/activeEditor';
 import { api } from '../lib/api';
+import { humanizeTitle } from '../lib/title';
+import { deleteEmbeddedImage } from '../lib/imageDelete';
 
-const titleOf = (path: string | null) =>
-  path ? (path.split('/').pop() ?? path).replace(/\.(md|markdown)$/i, '') : '';
+const titleOf = (path: string | null) => (path ? humanizeTitle(path) : '');
 
 // Reading mode = the same Live Preview editor, made read-only via this compartment.
 const readonlyExt = (reading: boolean) =>
   reading ? [EditorView.editable.of(false), EditorState.readOnly.of(true)] : [];
 
+/** A locked note is read-only for the same reason a reading pane is: no keystrokes land in it. */
+const isReadonly = (viewMode: string, locked: boolean) => viewMode === 'reading' || locked;
+
 export default function Editor() {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
+  const [editorView, setEditorView] = useState<EditorView | null>(null);
   const readonlyComp = useRef(new Compartment()).current;
   const applyingExternal = useRef(false);
   const activePath = useStore((s) => s.activePath);
@@ -59,6 +71,11 @@ export default function Editor() {
   const setContent = useStore((s) => s.setContent);
   const save = useStore((s) => s.save);
   const viewMode = useStore((s) => s.viewMode);
+  const locked = useStore((s) => s.locked);
+  const lockReason = useStore((s) => s.lockReason);
+  const unlockMode = useStore((s) => s.unlockMode);
+  const unlockLocked = useStore((s) => s.unlockLocked);
+  const showInlineTitle = useStore((s) => s.showInlineTitle);
   const openWikilink = useStore((s) => s.openWikilink);
   const openContextMenu = useStore((s) => s.openContextMenu);
   const setLeftPanel = useStore((s) => s.setLeftPanel);
@@ -67,6 +84,13 @@ export default function Editor() {
   useEffect(() => {
     setLivePreviewLinkHandler(openWikilink);
   }, [openWikilink]);
+
+  // Trash icon on a rendered image: drop the reference from the note and delete
+  // the attachment file too — unless another note (or another spot in this one)
+  // still uses it, in which case the user may remove just this reference.
+  useEffect(() => {
+    setLivePreviewImageDeleteHandler(deleteEmbeddedImage);
+  }, []);
 
   useEffect(() => {
     setLivePreviewMenuHandler(openContextMenu);
@@ -238,6 +262,7 @@ export default function Editor() {
   useEffect(() => {
     if (!host.current) return;
     view.current?.destroy();
+    setLivePreviewNotePath(activePath);
 
     const isMd = activePath ? /\.(md|markdown)$/i.test(activePath) : false;
     // Place the caret after the frontmatter so Properties render immediately.
@@ -249,6 +274,11 @@ export default function Editor() {
       extensions: [
         history(),
         drawSelection(),
+        // VS Code-style multi-cursor: Alt+Click adds a cursor, Shift+Alt+Drag = column selection.
+        EditorState.allowMultipleSelections.of(true),
+        EditorView.clickAddsSelectionRange.of((e) => e.altKey && !e.shiftKey),
+        rectangularSelection({ eventFilter: (e) => e.altKey && e.shiftKey && e.button === 0 }),
+        crosshairCursor({ key: 'Alt' }),
         highlightActiveLine(),
         // Obsidian default hotkeys (§4) win over CodeMirror's defaults.
         Prec.high(
@@ -263,10 +293,11 @@ export default function Editor() {
         ),
         // In-document Find/Replace (⌘F / ⌘⇧F open the panel; ⌘G next).
         search({ top: true }),
-        keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+        keymap.of([{ key: 'Escape', run: simplifySelection }, ...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
         // GFM base so Strikethrough/Table/TaskList nodes exist (Obsidian dialect);
         // codeLanguages lazy-loads grammars for fenced blocks (Obsidian: Prism).
-        markdown({ base: markdownLanguage, codeLanguages: languages }),
+        // YAML front matter (--- … ---) is parsed as YAML; the rest stays Markdown.
+        yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: languages }) }),
         suggesterPlugin,
         // Obsidian token palette via CSS vars (works in both themes); markdown
         // structure styling is owned by the Live Preview decorations.
@@ -275,7 +306,7 @@ export default function Editor() {
         // Live Preview drives BOTH live and reading; reading is just read-only.
         livePreviewState.init(() => isMd && viewMode !== 'source'),
         livePreviewReadonly.init(() => viewMode === 'reading'),
-        readonlyComp.of(readonlyExt(viewMode === 'reading')),
+        readonlyComp.of(readonlyExt(isReadonly(viewMode, locked))),
         noteTitleField.init(() => titleOf(activePath)),
         inlineTitleField,
         frontmatterField,
@@ -289,6 +320,8 @@ export default function Editor() {
         livePreviewPlugin,
         livePreviewTheme,
         editorClickFix,
+        mediaLoadRemeasure,
+        livePreviewGeometryGuard,
         EditorView.updateListener.of((u) => {
           // Ignore doc changes we applied programmatically (external content sync)
           if (u.docChanged && !applyingExternal.current) setContent(u.state.doc.toString());
@@ -297,8 +330,11 @@ export default function Editor() {
     });
     const v = new EditorView({ state, parent: host.current });
     view.current = v;
+    setEditorView(v);
     setActiveEditor(v);
-    v.focus();
+    // Don't steal focus from the file tree's inline rename box (double-click on a
+    // note that isn't open yet opens it, then enters rename).
+    if (!useStore.getState().renamingPath) v.focus();
     return () => {
       setActiveEditor(null);
       v.destroy();
@@ -331,12 +367,12 @@ export default function Editor() {
     view.current?.dispatch({
       effects: [
         setLivePreviewEnabled.of(isMd && viewMode !== 'source'),
-        setLivePreviewReadonly.of(viewMode === 'reading'),
-        readonlyComp.reconfigure(readonlyExt(viewMode === 'reading')),
-        setNoteTitle.of(titleOf(activePath)),
+        setLivePreviewReadonly.of(isReadonly(viewMode, locked)),
+        readonlyComp.reconfigure(readonlyExt(isReadonly(viewMode, locked))),
+        setNoteTitle.of(showInlineTitle ? titleOf(activePath) : ''),
       ],
     });
-  }, [viewMode, activePath]);
+  }, [viewMode, activePath, showInlineTitle]);
 
   // Debounced autosave.
   useEffect(() => {
@@ -354,6 +390,75 @@ export default function Editor() {
     'is-readable-line-width',
     viewMode !== 'source' ? 'is-live-preview live-preview' : '',
     viewMode === 'reading' ? 'is-reading-mode' : '',
+    locked ? 'is-locked-note' : '',
   ].join(' ');
-  return <div className={cls} ref={host} onContextMenu={onContextMenu} />;
+  return (
+    <>
+      {locked && activePath && (
+        <LockBanner reason={lockReason} mode={unlockMode} onUnlock={unlockLocked} />
+      )}
+      <div className="cm-outline-wrap">
+        <div className={cls} ref={host} onContextMenu={onContextMenu} />
+        {viewMode !== 'source' && activePath && /\.(md|markdown)$/i.test(activePath) && (
+          <DocOutline view={editorView} content={content} />
+        )}
+      </div>
+    </>
+  );
+}
+
+/**
+ * The read-only banner: a locked note says who owns it, why, and how to get a change made.
+ * The unlock affordance appears only when `_system/locks.json` allows one at all.
+ */
+function LockBanner({
+  reason,
+  mode,
+  onUnlock,
+}: {
+  reason: string | null;
+  mode: 'off' | 'confirm' | 'password';
+  onUnlock: (password?: string) => void;
+}) {
+  const [pw, setPw] = useState('');
+  return (
+    <div className="lock-banner" role="status">
+      <Icon name="lock" size={13} />
+      <span className="lock-msg">
+        <strong>Read-only.</strong> {reason ?? 'This note is maintained by the agent.'}
+      </span>
+      {mode !== 'off' && (
+        <span className="lock-actions">
+          {mode === 'password' ? (
+            <>
+              <input
+                type="password"
+                value={pw}
+                placeholder="password"
+                aria-label="unlock password"
+                onChange={(e) => setPw(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') onUnlock(pw); }}
+              />
+              <button type="button" onClick={() => onUnlock(pw)}>Unlock</button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                if (
+                  confirm(
+                    'Edit this note anyway? The agent maintains it and will keep writing to it — your change can be overwritten.',
+                  )
+                ) {
+                  onUnlock();
+                }
+              }}
+            >
+              Edit anyway
+            </button>
+          )}
+        </span>
+      )}
+    </div>
+  );
 }

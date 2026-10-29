@@ -1,10 +1,10 @@
 {
   "name": "@webobsidian/desktop",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "private": true,
   "description": "WebObsidian desktop app (Electron shell around the self-hosted server)",
   "author": "xnohat <xnohat@gmail.com>",
-  "homepage": "https://github.com/xnohat/webobsidian",
+  "homepage": "https://github.com/macros0/webobsidian",
   "license": "MIT",
   "main": "dist/main.js",
   "scripts": {
@@ -82,7 +82,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "xnohat",
+        "owner": "macros0",
         "repo": "webobsidian"
       }
     ]

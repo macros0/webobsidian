@@ -1,10 +1,12 @@
-import { useStore, GRAPH_PATH, type ContextMenuItem } from '../lib/store';
+import { useStore, GRAPH_PATH, TASKS_PATH, isViewPath, type ContextMenuItem } from '../lib/store';
 import { api } from '../lib/api';
+import { ATTACHMENT_DIR_NAME } from '../lib/attachments';
 import Editor from './Editor';
 import Preview from './Preview';
 import GraphView from './GraphView';
 import CanvasView from './CanvasView';
 import FolderView from './FolderView';
+import TasksView from './TasksView';
 import { isFolderPath } from '../lib/tree';
 import Icon from './Icon';
 import StatusBar from './StatusBar';
@@ -13,21 +15,17 @@ import { useIsMobile } from '../lib/useIsMobile';
 import { editorFind, getActiveEditor } from '../lib/activeEditor';
 import { triggerAddProperty } from '../lib/livePreview';
 import { pathToUrl } from '../lib/urlsync';
-import { VIDEO_EXT_RE, AUDIO_EXT_RE } from '../lib/media';
+import { fileViewKind, extLabel } from '../lib/media';
 
 function EditorPane() {
   const activePath = useStore((s) => s.activePath);
   const viewMode = useStore((s) => s.viewMode);
-  const isMd = activePath ? /\.(md|markdown)$/i.test(activePath) : false;
-  const isImage = activePath ? /\.(png|jpe?g|gif|svg|webp)$/i.test(activePath) : false;
-  const isCanvas = activePath ? /\.canvas$/i.test(activePath) : false;
-  const isVideo = activePath ? VIDEO_EXT_RE.test(activePath) : false;
-  const isAudio = activePath ? AUDIO_EXT_RE.test(activePath) : false;
+  const kind = activePath ? fileViewKind(activePath) : 'text';
 
-  if (activePath && isCanvas) {
+  if (activePath && kind === 'canvas') {
     return <CanvasView />;
   }
-  if (activePath && isImage) {
+  if (activePath && kind === 'image') {
     return (
       <div className="markdown-preview">
         <div className="preview-inner">
@@ -36,11 +34,11 @@ function EditorPane() {
       </div>
     );
   }
-  if (activePath && (isVideo || isAudio)) {
+  if (activePath && (kind === 'video' || kind === 'audio')) {
     return (
       <div className="markdown-preview">
         <div className="preview-inner">
-          {isVideo ? (
+          {kind === 'video' ? (
             <video className="media-embed media-fileview" src={api.rawUrl(activePath)} controls preload="metadata" />
           ) : (
             <audio className="media-embed media-fileview" src={api.rawUrl(activePath)} controls preload="metadata" />
@@ -49,8 +47,40 @@ function EditorPane() {
       </div>
     );
   }
+  if (activePath && kind === 'pdf') {
+    // FR-21: a PDF has no text body to edit, so it opens in the browser's own
+    // viewer instead of an empty markdown pane. Same-origin, so the app's CSP
+    // (`frame-src 'self'`) already allows the frame.
+    const name = activePath.split('/').pop() ?? activePath;
+    return (
+      <div className="pdf-view">
+        <iframe className="pdf-fileview" src={api.rawUrl(activePath)} title={name} />
+      </div>
+    );
+  }
+  if (activePath && kind === 'attachment') {
+    // FR-22: no viewer exists for this type, and the editor would render its
+    // bytes as noise. Offer the file itself — the server sends it with a real
+    // Content-Disposition, so it saves under its own name, extension included.
+    const name = activePath.split('/').pop() ?? activePath;
+    return (
+      <div className="attachment-view">
+        <div className="attachment-card">
+          <Icon name="download" size={26} />
+          <div className="attachment-name">{name}</div>
+          <p className="attachment-hint">
+            {extLabel(name)} files open outside the vault. Download it and open it in the
+            application that made it — the vault keeps reading it where it already sits.
+          </p>
+          <a className="attachment-download" href={api.downloadUrl(activePath)}>
+            <Icon name="download" size={15} />
+            Download
+          </a>
+        </div>
+      </div>
+    );
+  }
   // Reading mode = the same Live Preview editor in read-only (identical render).
-  void isMd;
   void viewMode;
   return <Editor />;
 }
@@ -60,6 +90,7 @@ export default function Workspace() {
   const activePath = useStore((s) => s.activePath);
   const openFile = useStore((s) => s.openFile);
   const closeTab = useStore((s) => s.closeTab);
+  const keepTab = useStore((s) => s.keepTab);
   const dirty = useStore((s) => s.dirty);
   const viewMode = useStore((s) => s.viewMode);
   const setViewMode = useStore((s) => s.setViewMode);
@@ -144,6 +175,9 @@ export default function Workspace() {
         { label: '', separator: true },
         ...tabItems,
       ];
+    } else if (path === TASKS_PATH) {
+      // Virtual view, not a file — no rename/move/copy/delete/share.
+      items = [...tabItems];
     } else {
       const sep: ContextMenuItem = { label: '', separator: true };
       const renameItem: ContextMenuItem = {
@@ -259,19 +293,38 @@ export default function Workspace() {
     openContextMenu({ x: Math.round(rect.right) - 220, y: Math.round(rect.bottom) + 6, items });
   };
 
-  // Paste / drop image → upload to attachments and insert an embed.
+  // Paste / drop image → upload to an `attachments/` folder next to the note and
+  // insert a relative embed (`![](attachments/x.png)`) at the caret.
   const handleFiles = async (files: FileList | File[]) => {
+    const isNote = !!activePath && /\.(md|markdown)$/i.test(activePath);
+    const noteDir = activePath && isNote ? activePath.split('/').slice(0, -1).join('/') : '';
+    const dir = isNote && noteDir ? `${noteDir}/${ATTACHMENT_DIR_NAME}` : ATTACHMENT_DIR_NAME;
+    let text = content;
     for (const file of Array.from(files)) {
       if (!file.type.startsWith('image/')) continue;
       try {
-        const { path } = await api.upload(file);
-        setContent(`${content}\n![[${path}]]\n`);
+        const { path } = await api.upload(file, dir);
+        const parts = path.split('/');
+        // the server may reuse a differently-cased existing folder → take the real name
+        const rel = parts.slice(-2).join('/');
+        const md = isNote
+          ? `![](${rel.replace(/ /g, '%20').replace(/\(/g, '%28').replace(/\)/g, '%29')})`
+          : `![[${path}]]`;
+        const ed = isNote ? getActiveEditor() : null;
+        if (ed) {
+          const { from, to } = ed.state.selection.main;
+          ed.dispatch({ changes: { from, to, insert: `${md}\n` }, selection: { anchor: from + md.length + 1 }, userEvent: 'input.paste' });
+        } else {
+          text += `\n${md}\n`;
+          setContent(text);
+        }
         notify(`Inserted ${path}`);
       } catch (e: any) {
         notify(e.message);
       }
     }
   };
+
   const onPaste = (e: React.ClipboardEvent) => {
     const imgs = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'));
     if (imgs.length) {
@@ -300,13 +353,17 @@ export default function Workspace() {
           {tabs.map((t) => (
             <div
               key={t.path}
-              className={`tab ${activePath === t.path ? 'active' : ''}`}
+              className={`tab ${activePath === t.path ? 'active' : ''} ${t.preview ? 'preview' : ''}`}
               onClick={() => openFile(t.path)}
+              onDoubleClick={() => keepTab(t.path)}
               onAuxClick={(e) => e.button === 1 && closeTab(t.path)}
-              title={t.path}
+              title={t.preview ? `${t.path} (preview — double-click to keep open)` : t.path}
             >
               {t.path === GRAPH_PATH && (
                 <Icon name="graph" size={13} style={{ marginRight: 4, flexShrink: 0 }} />
+              )}
+              {t.path === TASKS_PATH && (
+                <Icon name="check-square" size={13} style={{ marginRight: 4, flexShrink: 0 }} />
               )}
               <span className="title">{t.title.replace(/\.(md|markdown)$/, '')}</span>
               {dirty && activePath === t.path ? (
@@ -354,6 +411,8 @@ export default function Workspace() {
           <span className="crumbs">
             {activePath === GRAPH_PATH
               ? 'Graph view'
+              : activePath === TASKS_PATH
+              ? 'Tasks'
               : activePath.split('/').map((seg, i) => (
                   <span key={i}>
                     {i > 0 && <span className="sep">/</span>}
@@ -393,7 +452,7 @@ export default function Workspace() {
         </div>
       )}
 
-      {!isMobile && activePath && activePath !== GRAPH_PATH && isMd && viewMode !== 'reading' && (
+      {!isMobile && activePath && !isViewPath(activePath) && isMd && viewMode !== 'reading' && (
         <FormatToolbar />
       )}
 
@@ -413,12 +472,17 @@ export default function Workspace() {
             <GraphView />
           </div>
         )}
-        {activePath && activePath !== GRAPH_PATH && activeIsFolder && (
+        {activePath === TASKS_PATH && (
+          <div className="pane main-pane">
+            <TasksView />
+          </div>
+        )}
+        {activePath && !isViewPath(activePath) && activeIsFolder && (
           <div className="pane main-pane">
             <FolderView path={activePath} />
           </div>
         )}
-        {activePath && activePath !== GRAPH_PATH && !activeIsFolder && (
+        {activePath && !isViewPath(activePath) && !activeIsFolder && (
           <div className="pane main-pane">
             <EditorPane />
           </div>
@@ -436,7 +500,7 @@ export default function Workspace() {
           </div>
         )}
       </div>
-      {isMobile && activePath && activePath !== GRAPH_PATH && isMd && viewMode !== 'reading' && (
+      {isMobile && activePath && !isViewPath(activePath) && isMd && viewMode !== 'reading' && (
         <FormatToolbar mobile />
       )}
       <StatusBar />

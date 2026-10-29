@@ -14,9 +14,12 @@ import VersionHistory from './components/VersionHistory';
 import TrashView from './components/TrashView';
 import ContextMenu from './components/ContextMenu';
 import FolderPicker from './components/FolderPicker';
+import TemplatePicker from './components/TemplatePicker';
+import ConfirmDialog from './components/ConfirmDialog';
 import { loadPlugins } from './lib/plugins';
 import { initUrlSync } from './lib/urlsync';
 import { useIsMobile } from './lib/useIsMobile';
+import { themeClass } from './lib/theme';
 
 export default function App() {
   const authed = useStore((s) => s.authed);
@@ -34,7 +37,8 @@ export default function App() {
   const save = useStore((s) => s.save);
   const toast = useStore((s) => s.toast);
   const [checking, setChecking] = useState(true);
-  const [theme, setTheme] = useState<'theme-dark' | 'theme-light'>('theme-light');
+  const theme = useStore((s) => s.theme);
+  const setTheme = useStore((s) => s.setTheme);
 
   useEffect(() => {
     api
@@ -65,21 +69,33 @@ export default function App() {
       .catch(() => {});
     api
       .getSettings()
-      .then((s) => setTheme(s?.ui?.theme === 'obsidian-dark' ? 'theme-dark' : 'theme-light'))
+      .then((s) => {
+        setTheme(themeClass(s?.ui?.theme));
+        useStore.getState().setShowInlineTitle(s?.ui?.showInlineTitle !== false);
+      })
       .catch(() => {});
     useStore.getState().loadShares(); // badge shared notes in the file tree
     loadPlugins().catch(() => {});
-    // websocket live updates
+    // websocket live updates. Reconnects with backoff: the socket drops on every
+    // redeploy, laptop sleep or proxy idle-timeout, and without this live updates
+    // silently stopped until a full reload. After a reconnect the tree is reloaded
+    // once, since fs events may have been missed while disconnected.
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/ws`);
+    let ws: WebSocket | undefined;
     let treeTimer: number | undefined;
-    ws.onmessage = (ev) => {
+    let retryTimer: number | undefined;
+    let retryDelay = 1000;
+    let hadConnection = false;
+    let closed = false;
+    const onMessage = (ev: MessageEvent) => {
       try {
         const msg = JSON.parse(ev.data);
         if (msg.type === 'fs') {
           // coalesce bursts of fs events into a single tree refresh
           window.clearTimeout(treeTimer);
           treeTimer = window.setTimeout(() => loadTree(), 800);
+          // let other views (e.g. the Tasks board) react to the raw event themselves
+          window.dispatchEvent(new CustomEvent('wo-fs', { detail: msg }));
         } else if (msg.type === 'uistate') {
           // another tab/device changed the workspace → sync live
           useStore.getState().applyRemoteState(msg.state, msg.originId);
@@ -88,9 +104,27 @@ export default function App() {
         /* ignore */
       }
     };
+    const connect = () => {
+      if (closed) return;
+      ws = new WebSocket(`${proto}://${location.host}/ws`);
+      ws.onopen = () => {
+        retryDelay = 1000;
+        if (hadConnection) loadTree();
+        hadConnection = true;
+      };
+      ws.onmessage = onMessage;
+      ws.onclose = () => {
+        if (closed) return;
+        retryTimer = window.setTimeout(connect, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 30_000);
+      };
+    };
+    connect();
     return () => {
+      closed = true;
       window.clearTimeout(treeTimer);
-      ws.close();
+      window.clearTimeout(retryTimer);
+      ws?.close();
     };
   }, [authed, loadTree]);
 
@@ -174,7 +208,7 @@ export default function App() {
   return (
     <div className={theme}>
       <div className={appCls}>
-        <Ribbon onTheme={() => setTheme((t) => (t === 'theme-dark' ? 'theme-light' : 'theme-dark'))} />
+        <Ribbon onTheme={() => setTheme(theme === 'theme-dark' ? 'theme-light' : 'theme-dark')} />
         {showLeft && <Sidebar />}
         <Workspace />
         {showRight && <RightSidebar />}
@@ -189,6 +223,8 @@ export default function App() {
       <TrashView />
       <ContextMenu />
       <FolderPicker />
+      <TemplatePicker />
+      <ConfirmDialog />
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
