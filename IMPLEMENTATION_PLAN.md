@@ -7,7 +7,9 @@
 - [x] Upgrade supported dependency parents/transitive patches; audit critical entries reduced 9 to 0.
 - [x] Verify types, regressions, Git clone/sync, all builds, Windows packaging and bundled-server startup.
 - [x] Review candidate independently; reproduce and fix test Git config isolation without unsafe allowances.
-- [~] Obtain green Linux/Docker CI before adopting.
+- [x] Linux/Docker CI passed at `9aa361a`: 180 server + 168 web tests, 31 inherited smoke assertions,
+  critical audit gate, lockfile guard, integration smoke and desktop directory packaging.
+  Evidence: https://github.com/macros0/webobsidian/actions/runs/40837364949 (PR #2).
 
 Scope excludes production installation and unrelated high/moderate dependency upgrades.
 
