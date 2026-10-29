@@ -8,7 +8,9 @@
 - [x] Independent candidate review found no confirmed surviving bypass or compatibility regression.
 - [x] Hidden Electron fixture verifies inline/display math, math-labelled flowchart and sequence diagram
   in live, reading and separate Preview; unsafe links/images blocked, no external requests.
-- [ ] Complete Linux/Docker/MCP CI and record results.
+- [x] Linux/Docker/MCP CI passed at `6c21cdb`: 193 server +178 web tests, 31 smoke assertions,
+  zero-vulnerability audit, all builds and Linux desktop directory packaging.
+  Evidence: https://github.com/macros0/webobsidian/actions/runs/40849754338 (PR #5).
 
 Use disposable fixtures only; the production installation and real vault remain untouched.
 
