@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { simpleGit } from 'simple-git';
 
 const exec = promisify(execFile);
 const T = 20_000; // generous per-test timeout — these shell out to real git
@@ -32,28 +33,33 @@ const git = await import('./git.js');
 
 const gitOnPath = await exec('git', ['--version']).then(() => true).catch(() => false);
 
-// Isolate from the developer's ~/.gitconfig: pin the default branch + a fallback
-// identity + non-interactive merges for every git process this suite spawns.
+// simple-git 4 removes ambient GIT_* variables. Isolate HOME/XDG as well as the
+// direct Git CLI's config path so neither can read the developer's global config.
 let cfgHome: string;
 let prevGlobal: string | undefined;
-let prevAutoEdit: string | undefined;
+let prevHome: string | undefined;
+let prevXdg: string | undefined;
 beforeAll(async () => {
   cfgHome = await fs.mkdtemp(path.join(os.tmpdir(), 'wo-gitcfg-'));
-  const cfg = path.join(cfgHome, 'gitconfig');
+  const cfg = path.join(cfgHome, '.gitconfig');
   await fs.writeFile(
     cfg,
-    '[init]\n  defaultBranch = main\n[user]\n  name = CI\n  email = ci@example.com\n',
+    '[init]\n  defaultBranch = main\n[user]\n  name = CI\n  email = ci@example.com\n[core]\n  editor = false\n',
   );
   prevGlobal = process.env.GIT_CONFIG_GLOBAL;
-  prevAutoEdit = process.env.GIT_MERGE_AUTOEDIT;
+  prevHome = process.env.HOME;
+  prevXdg = process.env.XDG_CONFIG_HOME;
   process.env.GIT_CONFIG_GLOBAL = cfg;
-  process.env.GIT_MERGE_AUTOEDIT = 'no';
+  process.env.HOME = cfgHome;
+  process.env.XDG_CONFIG_HOME = path.join(cfgHome, 'xdg');
 });
 afterAll(async () => {
   if (prevGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
   else process.env.GIT_CONFIG_GLOBAL = prevGlobal;
-  if (prevAutoEdit === undefined) delete process.env.GIT_MERGE_AUTOEDIT;
-  else process.env.GIT_MERGE_AUTOEDIT = prevAutoEdit;
+  if (prevHome === undefined) delete process.env.HOME;
+  else process.env.HOME = prevHome;
+  if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = prevXdg;
   await fs.rm(cfgHome, { recursive: true, force: true });
 });
 
@@ -80,6 +86,29 @@ afterEach(async () => {
 });
 
 describe.skipIf(!gitOnPath)('git integration (real repo)', () => {
+  it('uses the temporary global Git configuration for simple-git child processes', async () => {
+    const origin = await simpleGit({ baseDir: work }).raw(['config', '--global', '--show-origin', '--get', 'user.name']);
+    expect(origin.replace(/\\/g, '/').includes(cfgHome.replace(/\\/g, '/'))).toBe(true);
+  }, T);
+
+  it('clones a local remote into an empty vault and configures its identity', async () => {
+    const seed = await fs.mkdtemp(path.join(os.tmpdir(), 'wo-gitseed-'));
+    try {
+      await exec('git', ['init', '-b', 'main', seed]);
+      await fs.writeFile(path.join(seed, 'cloned.md'), '# local fixture');
+      await exec('git', ['-C', seed, 'add', 'cloned.md']);
+      await exec('git', ['-C', seed, 'commit', '-m', 'seed']);
+      await exec('git', ['-C', seed, 'push', bare, 'main']);
+      await git.clone();
+      expect(await fs.readFile(path.join(work, 'cloned.md'), 'utf8')).toBe('# local fixture');
+      const { stdout } = await exec('git', ['-C', work, 'config', 'user.name']);
+      expect(stdout.trim()).toBe('Tester');
+      expect((await git.status()).clean).toBe(true);
+    } finally {
+      await fs.rm(seed, { recursive: true, force: true });
+    }
+  }, T);
+
   it(
     'init creates a repo, configures identity, and sets origin',
     async () => {

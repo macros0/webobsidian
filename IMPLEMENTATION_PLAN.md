@@ -1,5 +1,16 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Critical dependency remediation — 2026-10-29
+
+- [x] Capture npm audit baseline and investigate runtime/tooling boundaries independently.
+- [x] Reproduce proxy trust and VISUAL parser defects with legitimate controls.
+- [x] Upgrade supported dependency parents/transitive patches; audit critical entries reduced 9 to 0.
+- [x] Verify types, regressions, Git clone/sync, all builds, Windows packaging and bundled-server startup.
+- [x] Review candidate independently; reproduce and fix test Git config isolation without unsafe allowances.
+- [~] Obtain green Linux/Docker CI before adopting.
+
+Scope excludes production installation and unrelated high/moderate dependency upgrades.
+
 ## Community integration — 2026-10-29
 
 - [x] Create `macros0/webobsidian` and dedicated local checkout.

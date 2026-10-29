@@ -1,5 +1,15 @@
 # Changelog
 
+## Security dependency maintenance — 2026-10-29
+
+- Upgrade simple-git/argv-parser, Vitest, concurrently/shell-quote and electron-builder/tar;
+  refresh compatible DOMPurify and proxy-addr patches. Remove the vulnerable tinypool path.
+- Require Node ≥22.12 for supported desktop build tooling; align CI/release runners and use
+  reproducible Docker installs from the checked lockfile.
+- Cover mapped-proxy trust, VISUAL editor guards, Git clone/sync and isolated Git configuration;
+  reject the remediated critical lockfile versions in CI and exercise desktop directory packaging.
+- Keep automatic Git merge noninteractive without weakening simple-git's environment guards.
+
 ## Community integration — 2026-10-29
 
 - Combine Pham and Lakyle improvements with source histories and attribution preserved.

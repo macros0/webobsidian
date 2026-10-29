@@ -6,12 +6,13 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 COPY server/package.json ./server/
 COPY web/package.json ./web/
+COPY desktop/package.json ./desktop/
 # Every workspace in the lockfile needs its package.json present before `npm install`,
 # otherwise its dependencies are never installed and the workspace build fails (mcp-server
 # needs @modelcontextprotocol/sdk + zod at build time).
 COPY mcp-server/package.json ./mcp-server/
 COPY packages/webo/package.json ./packages/webo/
-RUN npm install
+RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
 COPY . .
 RUN npm run build
 
@@ -31,9 +32,11 @@ RUN apk add --no-cache git git-lfs && git lfs install --system
 # Install production deps for the server workspace only
 COPY package.json package-lock.json* ./
 COPY server/package.json ./server/
+COPY web/package.json ./web/
+COPY desktop/package.json ./desktop/
 COPY mcp-server/package.json ./mcp-server/
 COPY packages/webo/package.json ./packages/webo/
-RUN npm install --omit=dev --workspace server
+RUN npm ci --omit=dev --workspace server
 
 # Copy built artifacts
 COPY --from=build /app/server/dist ./server/dist

@@ -16,7 +16,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -24,6 +24,12 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Reject remediated critical dependency versions
+        run: npm run check:critical-deps
+
+      - name: Audit critical dependency advisories
+        run: npm audit --audit-level=critical --fetch-timeout=30000 --fetch-retries=1
 
       - name: Typecheck desktop
         run: npm --workspace desktop run typecheck
@@ -42,6 +48,11 @@ jobs:
 
       - name: Build desktop bundle
         run: npm --workspace desktop run build
+
+      - name: Package desktop directory without publishing
+        run: npm exec --workspace desktop -- electron-builder --dir --linux --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
   docker:
     name: Docker image builds
