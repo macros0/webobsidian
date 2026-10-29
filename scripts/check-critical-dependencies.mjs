@@ -1,4 +1,4 @@
-// Guard every nested lockfile copy against the critical/high advisories remediated in October 2026.
+// Guard every nested lockfile copy against the critical/high/moderate advisories remediated in October 2026.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
@@ -9,6 +9,8 @@ const floors = {
   '@modelcontextprotocol/sdk': '1.32.0', 'body-parser': '1.20.9',
   browserslist: '4.29.5', electron: '42.11.16', 'extract-zip': null,
   multer: '2.5.0', vite: '6.4.5', zod: '4.6.6',
+  '@hono/node-server': '2.1.3', hono: '4.13.11', 'fast-uri': '3.1.9',
+  'ip-address': '10.7.4', qs: '6.16.1', esbuild: '0.25.0',
 };
 const compare = (actual, minimum) => {
   assert.match(actual, /^\d+\.\d+\.\d+$/, `Unexpected dependency version: ${actual}`);
@@ -32,14 +34,16 @@ for (const [location, entry] of Object.entries(lock.packages)) {
       && compare(entry.version, '10.0.6') < 0;
     const vulnerableBodyParser2 = name === 'body-parser' && entry.version.startsWith('2.')
       && compare(entry.version, '2.4.0') < 0;
-    if (compare(entry.version, minimum) < 0 || vulnerableNextMajor || vulnerableBodyParser2) {
+    const vulnerableFastUri4 = name === 'fast-uri' && entry.version.startsWith('4.')
+      && compare(entry.version, '4.2.3') < 0;
+    if (compare(entry.version, minimum) < 0 || vulnerableNextMajor || vulnerableBodyParser2 || vulnerableFastUri4) {
       failures.push(`${location}: ${entry.version} (minimum secure baseline ${minimum})`);
     }
   }
 }
 assert.ok(checked > 0, 'No protected dependencies found; check the lockfile format');
-assert.deepEqual(failures, [], 'Known critical/high dependency versions remain in the lockfile');
+assert.deepEqual(failures, [], 'Known critical/high/moderate dependency versions remain in the lockfile');
 const desktop = JSON.parse(await readFile(new URL('../desktop/package.json', import.meta.url), 'utf8'));
 assert.equal(desktop.devDependencies.electron, desktop.build.electronVersion, 'Electron install and packaging pins must match');
 assert.equal(lock.packages['node_modules/electron'].version, desktop.build.electronVersion);
-console.log(`PASS: ${checked} dependency copies satisfy the remediated critical/high-advisory baselines`);
+console.log(`PASS: ${checked} dependency copies satisfy the remediated critical/high/moderate-advisory baselines`);

@@ -1,5 +1,12 @@
 # Changelog
 
+## Moderate dependency maintenance — 2026-10-29
+
+- Refresh compatible Hono/node-server, fast-uri, ip-address and qs versions; update desktop
+  esbuild without forcing Vite's separate compiler version outside its supported range.
+- Cover encoded URI schemes, comma-array coercion, IPv6 link-local ranges and compiler CORS.
+- Extend dependency and CI audit guards to moderate severity; KaTeX and Mermaid are deferred.
+
 ## High dependency maintenance — 2026-10-29
 
 - Update Electron to maintained 43.8.4 in install and packaging pins, retaining Windows ia32;

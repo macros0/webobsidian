@@ -25,11 +25,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Reject remediated critical and high dependency versions
+      - name: Reject remediated critical, high and moderate dependency versions
         run: npm run check:secure-deps
 
-      - name: Audit critical and high dependency advisories
-        run: npm audit --audit-level=high --fetch-timeout=30000 --fetch-retries=1
+      - name: Audit critical, high and moderate dependency advisories
+        run: npm audit --audit-level=moderate --fetch-timeout=30000 --fetch-retries=1
 
       - name: Typecheck desktop
         run: npm --workspace desktop run typecheck

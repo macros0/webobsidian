@@ -19,7 +19,7 @@
   "devDependencies": {
     "electron": "43.8.4",
     "electron-builder": "^26.18.0",
-    "esbuild": "^0.24.0"
+    "esbuild": "^0.28.2"
   },
   "build": {
     "appId": "com.xnohat.webobsidian",

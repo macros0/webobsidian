@@ -1,5 +1,16 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Moderate dependency remediation — 2026-10-29
+
+- [x] Confirm baseline6 moderate /0 high /0 critical and investigate boundaries independently.
+- [x] Reproduce encoded-scheme, query coercion, IPv6 classification and compiler CORS regressions.
+- [x] Upgrade all six targets; audit moderate6 ->0 and complete KaTeX/Mermaid entries/declarations unchanged.
+- [x] Types, 186 server/168 web tests locally, all builds, temporary HTTP, Windows packaging/runtime/renderer pass.
+- [x] Independent candidate review found no confirmed surviving bypass or compatibility regression.
+- [~] Complete Linux/Docker/MCP CI before adopting.
+
+Only disposable test services are started; the installed server and real vault are untouched.
+
 ## High dependency remediation — 2026-10-29
 
 - [x] Audit baseline: 8 high / 0 critical; independent boundary and compatibility investigation.
