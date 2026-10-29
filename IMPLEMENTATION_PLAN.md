@@ -6,8 +6,8 @@
 - [x] Merge pinned Pham and Lakyle source branches, preserving both histories.
 - [x] Resolve editor, rendering, tree, state, server and documentation conflicts.
 - [x] Default trash retention to zero; test new and legacy settings.
-- [~] Verify build, tests and isolated HTTP integration; independent review.
-- [ ] Publish reviewed integration branch and adopt it after CI.
+- [x] Verify build, tests and isolated HTTP integration; independent review fixes covered by tests.
+- [x] Publish reviewed integration branch in PR #1; Linux CI passed all tests, smoke checks and builds.
 
 The following source-fork records are retained for provenance. Current evidence is in
 `docs/FORK_INTEGRATION.md`; deployment is outside this task.

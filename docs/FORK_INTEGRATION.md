@@ -47,6 +47,7 @@ All local runtime checks use temporary directories and a loopback-only server.
 | `npm run build` | Pass: web production assets, server, CLI and MCP |
 | Desktop bundle build | Pass; installer packaging/signing not requested |
 | `node scripts/integration-smoke.mjs` | Pass: auth, default retention, relative PDF, ranges/downloads, lock-protected mutations, stale-write rejection, SPA |
+| Linux CI at `01e1372` | Pass: 170 server + 168 web tests, 31 inherited smoke assertions, integration smoke, all builds and Docker image |
 
 The same six symlink fixture creations failed on the unmerged Pham baseline because Windows lacks
 symlink privilege. Linux CI runs those tests without the Windows capability skip, plus the inherited
@@ -83,4 +84,10 @@ the main branch. Do not use source-repository GitHub sync for a notes vault.
 - First Linux CI: Docker build passed; unit tests and 30/31 inherited smoke assertions passed.
   The sole failure was the old hardcoded health version `0.1.1` versus imported `0.3.0`.
   The smoke test now reads the expected version from the package manifest.
-- Final Linux CI and full regression results are recorded after the fix commit.
+- Final Linux CI at `01e137207fdd7163756a3e197be71ff4ab0819c6` passed both jobs:
+  [run 40834145242](https://github.com/macros0/webobsidian/actions/runs/40834145242).
+  All 170 server tests (including symlinks) and 168 web tests passed. The inherited smoke test
+  passed 31/31 assertions, including Agent API/MCP/auth/locks/graceful shutdown. Docker and desktop
+  bundle builds passed. Integration was reviewed in [PR #1](https://github.com/macros0/webobsidian/pull/1).
+- Ruling: the user's autonomous fork-integration request authorizes adopting this reviewed result
+  into this new fork's `main` after green CI. Production deployment remains out of scope.
