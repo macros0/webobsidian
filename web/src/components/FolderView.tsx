@@ -1,4 +1,5 @@
 import { useStore } from '../lib/store';
+import { displayChildren } from '../lib/attachments';
 import { findNode } from '../lib/tree';
 import { api, type TreeNode } from '../lib/api';
 import Icon from './Icon';
@@ -23,7 +24,8 @@ export default function FolderView({ path }: { path: string }) {
   const newNote = useStore((s) => s.newNote);
 
   const node = findNode(tree, path);
-  const children = node?.children ?? [];
+  const showAttachmentFolders = useStore((s) => s.showAttachmentFolders);
+  const children = displayChildren(node?.children ?? [], showAttachmentFolders);
   const folders = children.filter((c) => c.type === 'folder');
   const files = children.filter((c) => c.type === 'file');
   const ordered = [...folders, ...files].sort((a, b) =>

@@ -1,4 +1,16 @@
 // Thin fetch wrapper around the WebObsidian server API.
+import type {ToolbarConfigV1} from './toolbar/config';
+
+export interface Settings {
+  version: number;
+  auth: {hasCustomPassword:boolean;hasOverridePassword:boolean};
+  vault: {path:string;allowedRoots:string[];trash:string;deleteMode:'trash'|'permanent';trashRetentionDays:number;attachmentDir:string};
+  git: {enabled:boolean;remote:string;branch:string;token:string;authorName:string;authorEmail:string;autoSync:boolean;autoCommitOnSave:boolean;intervalSec:number;lfsPatterns:string[]};
+  search: {fuzzy:number;prefix:boolean;indexFrontmatter:boolean};
+  api: {rateLimitPerMin:number;keys:unknown[]};
+  ui: {theme:string;defaultView:'live'|'source'|'reading';showInlineTitle:boolean;editingToolbar?:ToolbarConfigV1};
+  plugins:{enabled:string[];installed:string[]};
+}
 
 export interface TreeNode {
   name: string;
@@ -9,6 +21,9 @@ export interface TreeNode {
   mtime?: number;
   ctime?: number;
   children?: TreeNode[];
+  /** Set by the server from `_system/locks.json`: the browser must not edit this path. */
+  locked?: boolean;
+  lockReason?: string;
 }
 
 export interface TrashItem {
@@ -56,6 +71,45 @@ export interface GitCommit {
   author: string;
 }
 
+// Tasks board (FR-15) query params. Keep in sync with server/src/services/tasks.ts's TaskFilter.
+export interface TaskQuery {
+  folder?: string;
+  status?: string;
+  priority?: string;
+  owner?: string;
+  q?: string;
+}
+
+// Tasks board (FR-15). Keep in sync with server/src/services/tasks.ts's TaskRecord.
+export interface TaskRecord {
+  path: string; // vault-relative
+  title: string; // frontmatter title, fallback file name without extension
+  status: string; // canonical id if canonical/alias; else the raw value unchanged; 'open' when missing
+  statusRaw: string | null; // raw frontmatter value as a string; null when the key is absent/empty
+  priority: string | null;
+  owner: string | null;
+  due: string | null; // 'YYYY-MM-DD' | other raw string (e.g. 'none') | null
+  raised: string | null;
+  created: string | null;
+  updated: string | null;
+  tags: string[];
+}
+
+/**
+ * Unlocking a locked note is deliberate and per-session: the editor sets this only after the
+ * human confirms (or types the operator password, when `_system/locks.json` asks for one), and
+ * every write then carries the headers below. The server re-checks them on each request.
+ */
+let unlock: { active: boolean; password?: string } = { active: false };
+
+export function setUnlock(v: { active: boolean; password?: string }): void {
+  unlock = v;
+}
+
+export function isUnlocked(): boolean {
+  return unlock.active;
+}
+
 async function req<T>(url: string, opts: RequestInit = {}): Promise<T> {
   const { headers: optHeaders, ...rest } = opts;
   const res = await fetch(url, {
@@ -63,33 +117,66 @@ async function req<T>(url: string, opts: RequestInit = {}): Promise<T> {
     ...rest,
     // headers MUST be merged last — spreading ...opts after a `headers` literal
     // would drop Content-Type whenever a caller passes its own headers.
-    headers: { 'Content-Type': 'application/json', ...(optHeaders ?? {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(unlock.active
+        ? { 'x-unlock-locked': '1', ...(unlock.password ? { 'x-unlock-password': unlock.password } : {}) }
+        : {}),
+      ...(optHeaders ?? {}),
+    },
   });
   if (res.status === 401) {
     throw new ApiError('Unauthorized', 401);
   }
   if (!res.ok) {
     let msg = res.statusText;
+    let data: unknown;
     try {
-      msg = (await res.json()).error ?? msg;
+      const body = await res.json();
+      msg = body.error ?? msg;
+      data = body;
     } catch {
       /* ignore */
     }
-    throw new ApiError(msg, res.status);
+    throw new ApiError(msg, res.status, data);
   }
   const ct = res.headers.get('content-type') ?? '';
   return (ct.includes('application/json') ? res.json() : (res.text() as unknown)) as Promise<T>;
 }
 
+export interface LinkPreview {
+  url: string;
+  title: string;
+  description: string;
+  image: string | null;
+  domain: string;
+}
+
 export class ApiError extends Error {
-  constructor(message: string, public status: number) {
+  constructor(message: string, public status: number, public data?: unknown) {
     super(message);
   }
 }
 
+/**
+ * Lets the store react to renames/moves (e.g. keep manual sort order) no matter which component
+ * triggered them, without api.ts depending on the store.
+ */
+export interface RenameHook {
+  start(): void;
+  done(from: string, to: string, ok: boolean): void;
+}
+let renameHook: RenameHook | null = null;
+export function setRenameHook(h: RenameHook | null): void {
+  renameHook = h;
+}
+
 export const api = {
   // auth
-  authStatus: () => req<{ passwordSet: boolean; mustChangePassword: boolean }>('/auth/status'),
+  // /auth/status is unauthenticated, so it deliberately reports nothing about
+  // whether the default password is still in use. mustChangePassword comes from
+  // /auth/login and /auth/me instead.
+  authStatus: () => req<{ passwordSet: boolean }>('/auth/status'),
   setup: (password: string) =>
     req<{ ok: true }>('/auth/setup', { method: 'POST', body: JSON.stringify({ password }) }),
   login: (password: string) =>
@@ -105,22 +192,54 @@ export const api = {
     }),
   me: () => req<{ authenticated: boolean; mustChangePassword: boolean }>('/auth/me'),
 
+  linkPreview: (url: string) => req<LinkPreview>(`/api/linkpreview?url=${encodeURIComponent(url)}`),
+
   // files
   tree: () => req<TreeNode>('/api/files/'),
   read: (path: string) =>
-    req<{ path: string; content: string }>(`/api/files/content?path=${encodeURIComponent(path)}`),
-  write: (path: string, content: string) =>
-    req<{ ok: true }>('/api/files/content', { method: 'PUT', body: JSON.stringify({ path, content }) }),
+    req<{
+      path: string;
+      content: string;
+      encoding?: string;
+      version?: string;
+      locked?: boolean;
+      lockReason?: string;
+      unlock?: 'off' | 'confirm' | 'password';
+    }>(`/api/files/content?path=${encodeURIComponent(path)}`),
+  // baseVersion (CAS): when given, the server rejects a stale write with 409 version_conflict.
+  write: (path: string, content: string, baseVersion?: string) =>
+    req<{ ok: true; path: string; version?: string }>('/api/files/content', {
+      method: 'PUT',
+      body: JSON.stringify({ path, content, ...(baseVersion !== undefined ? { baseVersion } : {}) }),
+    }),
   createFolder: (path: string) =>
     req<{ ok: true }>('/api/files/folder', { method: 'POST', body: JSON.stringify({ path }) }),
-  rename: (from: string, to: string) =>
-    req<{ ok: true }>('/api/files/rename', { method: 'PATCH', body: JSON.stringify({ from, to }) }),
+  rename: async (from: string, to: string) => {
+    renameHook?.start();
+    let ok = false;
+    try {
+      const r = await req<{ ok: true }>('/api/files/rename', { method: 'PATCH', body: JSON.stringify({ from, to }) });
+      ok = true;
+      return r;
+    } finally {
+      renameHook?.done(from, to, ok);
+    }
+  },
   copy: (from: string, to: string) =>
     req<{ ok: true }>('/api/files/copy', { method: 'POST', body: JSON.stringify({ from, to }) }),
-  remove: (path: string) =>
+  remove: (path: string, permanent = false) =>
     req<{ ok: true; trashed?: string; deleted?: string }>(
-      `/api/files/?path=${encodeURIComponent(path)}`,
+      `/api/files/?path=${encodeURIComponent(path)}${permanent ? '&permanent=1' : ''}`,
       { method: 'DELETE' },
+    ),
+  resolveAttachment: (path: string, from: string) =>
+    req<{ path: string | null }>(
+      `/api/files/resolve?path=${encodeURIComponent(path)}&from=${encodeURIComponent(from)}`,
+    ),
+  // notes (other than `exclude`) still referencing an attachment
+  references: (path: string, exclude?: string) =>
+    req<{ references: string[] }>(
+      `/api/files/references?path=${encodeURIComponent(path)}${exclude ? `&exclude=${encodeURIComponent(exclude)}` : ''}`,
     ),
   // trash (FR-1)
   listTrash: () => req<{ items: TrashItem[] }>('/api/files/trash'),
@@ -141,7 +260,10 @@ export const api = {
     if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).error ?? 'Upload failed', res.status);
     return res.json() as Promise<{ ok: true; path: string; size: number }>;
   },
-  rawUrl: (path: string) => `/api/files/content?path=${encodeURIComponent(path)}`,
+  rawUrl: (path: string, from?: string) => `/api/files/content?path=${encodeURIComponent(path)}${from ? `&from=${encodeURIComponent(from)}` : ''}`,
+  /** Same route, but the server sends it as an attachment under its own name (FR-22). */
+  downloadUrl: (path: string) =>
+    `/api/files/content?path=${encodeURIComponent(path)}&download=1`,
 
   // search & links
   // limit omitted → server returns every match (panel renders them incrementally)
@@ -167,14 +289,24 @@ export const api = {
     }),
   backlinks: (path: string) =>
     req<{ backlinks: string[] }>(`/api/backlinks?path=${encodeURIComponent(path)}`),
-  resolve: (target: string) =>
-    req<{ path: string | null }>(`/api/resolve?target=${encodeURIComponent(target)}`),
+  resolve: (target: string, from?: string) =>
+    req<{ path: string | null }>(`/api/resolve?target=${encodeURIComponent(target)}${from ? `&from=${encodeURIComponent(from)}` : ''}`),
   graph: () =>
     req<{
       nodes: { id: string; label: string; kind: 'note' | 'attachment' | 'unresolved'; tags: string[] }[];
       edges: { source: string; target: string }[];
     }>('/api/graph'),
   reindex: () => req<{ ok: true }>('/api/reindex', { method: 'POST' }),
+
+  // tasks board (FR-15)
+  tasks: (params?: TaskQuery) => {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(params ?? {})) {
+      if (value) qs.set(key, value);
+    }
+    const s = qs.toString();
+    return req<{ tasks: TaskRecord[] }>(`/api/tasks${s ? `?${s}` : ''}`);
+  },
 
   // ui state (workspace persistence, shared across browsers)
   getUiState: () => req<any>('/api/uistate/'),
@@ -186,7 +318,7 @@ export const api = {
     }),
 
   // settings
-  getSettings: () => req<any>('/api/settings/'),
+  getSettings: () => req<Settings>('/api/settings/'),
   putSettings: (patch: any) => req<any>('/api/settings/', { method: 'PUT', body: JSON.stringify(patch) }),
   browse: (dir?: string) =>
     req<{ dir: string; parent: string; roots: string[]; folders: { name: string; path: string }[] }>(

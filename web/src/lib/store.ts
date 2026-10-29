@@ -1,23 +1,39 @@
 import { create } from 'zustand';
-import { api, type TreeNode, type ShareRecord } from './api';
-import { findNode } from './tree';
+import { ApiError, api, setUnlock, setRenameHook, type TreeNode, type ShareRecord } from './api';
+import { findNode, isFolderPath } from './tree';
+import { isAttachmentTarget } from './media';
+import { dateStamp, slugify, substituteTemplate, timeStamp, uniqueNotePath } from './templates';
+import { isInsideHiddenAttachmentFolder } from './attachments';
 
 /** Per-tab id so we can ignore the echo of our own server-pushed state change. */
 export const CLIENT_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 export type ViewMode = 'live' | 'source' | 'reading';
+/** Board | Timeline mode of the Tasks view (FR-16). Part of the URL, so a
+ *  `/tasks?mode=timeline` deep link survives a reload. */
+export type TasksMode = 'board' | 'timeline';
 export type TreeSort =
   | 'name-asc' | 'name-desc'
   | 'mtime-desc' | 'mtime-asc'
-  | 'ctime-desc' | 'ctime-asc';
-const TREE_SORTS: TreeSort[] = ['name-asc', 'name-desc', 'mtime-desc', 'mtime-asc', 'ctime-desc', 'ctime-asc'];
+  | 'ctime-desc' | 'ctime-asc'
+  | 'manual';
+const TREE_SORTS: TreeSort[] = ['name-asc', 'name-desc', 'mtime-desc', 'mtime-asc', 'ctime-desc', 'ctime-asc', 'manual'];
 
 /** Sentinel tab path for the Graph view (it lives in a tab, like Obsidian). */
 export const GRAPH_PATH = 'graph://view';
+/** Sentinel tab path for the Tasks board (FR-15) — a virtual view, not a file. */
+export const TASKS_PATH = 'tasks://view';
+
+/** True for a sentinel "virtual view, not a file" tab path (Graph, Tasks board). */
+export function isViewPath(path: string | null): boolean {
+  return path === GRAPH_PATH || path === TASKS_PATH;
+}
 
 export interface Tab {
   path: string;
   title: string;
+  /** Reusable until kept open or edited. Missing on older, permanent tabs. */
+  preview?: boolean;
 }
 
 /** A color group in the graph (nodes matching `query` are tinted `color`). */
@@ -86,6 +102,13 @@ interface AppState {
   mustChangePassword: boolean;
   setMustChangePassword: (v: boolean) => void;
 
+  /** Active theme wrapper class (e.g. 'theme-dark', 'theme-ctp-mocha'). */
+  theme: string;
+  setTheme: (t: string) => void;
+  /** Settings → Appearance → "Show inline title" (ui.showInlineTitle). */
+  showInlineTitle: boolean;
+  setShowInlineTitle: (v: boolean) => void;
+
   tree: TreeNode | null;
   loadTree: () => Promise<void>;
 
@@ -97,6 +120,12 @@ interface AppState {
   goBack: () => void;
   goForward: () => void;
   content: string;
+  /** The active note is locked for this browser session — an agent-owned path from
+   *  `_system/locks.json`. Typing is refused and the editor shows why. */
+  locked: boolean;
+  lockReason: string | null;
+  /** How the vault lets a human override a lock (mirrors `_system/locks.json`). */
+  unlockMode: 'off' | 'confirm' | 'password';
   dirty: boolean;
   viewMode: ViewMode;
   setViewMode: (m: ViewMode) => void;
@@ -108,8 +137,15 @@ interface AppState {
   // file tree sort order + auto-reveal active file (both persisted)
   treeSort: TreeSort;
   setTreeSort: (s: TreeSort) => void;
+  /** Per-folder manual order (key: folder path, '' = vault root; value: ordered child paths). */
+  manualOrder: Record<string, string[]>;
+  setManualOrderForParent: (parent: string, order: string[]) => void;
   autoReveal: boolean;
+  setAutoReveal: (v: boolean) => void;
   toggleAutoReveal: () => void;
+  /** Show auto-created `attachments/` folders in the file tree (persisted; hidden by default). */
+  showAttachmentFolders: boolean;
+  setShowAttachmentFolders: (v: boolean) => void;
 
   // split pane (open to the side)
   splitPath: string | null;
@@ -162,12 +198,21 @@ interface AppState {
   /** Open (true) or close (false) the Trash modal. */
   trashOpen: boolean;
   setTrash: (v: boolean) => void;
+  /** Open (true) or close (false) the New-note-from-template modal (FR-17). */
+  templatePicker: boolean;
+  setTemplatePicker: (v: boolean) => void;
   /** Open (true) or close (false) the Graph view tab. */
   setGraph: (v: boolean) => void;
   openGraph: () => Promise<void>;
   graphSettings: GraphSettings;
   setGraphSettings: (patch: Partial<GraphSettings>) => void;
   resetGraphSettings: () => void;
+  /** Open (or focus) the Tasks board tab (FR-15). */
+  openTasks: () => Promise<void>;
+  /** Deliberately NOT in PERSIST_KEYS: the URL owns this on load, so a
+   *  restored workspace can never override `/tasks?mode=timeline`. */
+  tasksMode: TasksMode;
+  setTasksMode: (m: TasksMode) => void;
 
   contextMenu: ContextMenuState | null;
   openContextMenu: (m: ContextMenuState) => void;
@@ -189,10 +234,20 @@ interface AppState {
   /** Show a toast. ms=0 keeps it until another notify() replaces it. */
   notify: (msg: string, ms?: number) => void;
 
-  openFile: (path: string) => Promise<void>;
+  openFile: (path: string, options?: { preview?: boolean }) => Promise<void>;
+  /** Open a media reference using its originating note, then keep the canonical path in tabs. */
+  openAttachment: (target: string, from: string) => Promise<void>;
+  /** Finish inline creation without replacing an existing preview tab. */
+  openCreatedFile: (path: string) => Promise<void>;
+  keepTab: (path: string) => void;
   openWikilink: (target: string) => Promise<void>;
   closeTab: (path: string) => void;
   setContent: (c: string) => void;
+  /** Deliberately open the active locked note for editing — confirm dialog, or the operator
+   *  password when the vault's locks config asks for one. Session-scoped; the agent keeps writing. */
+  unlockLocked: (password?: string) => void;
+  /** Record that the server refused a write with 423, so the banner can explain it. */
+  markLocked: (reason: string | null) => void;
   save: () => Promise<void>;
   createNote: (path: string, body?: string) => Promise<void>;
   /** Obsidian-style: create & open a fresh "Untitled" note (no prompt). `dir` = target folder, '' = vault root. */
@@ -203,8 +258,20 @@ interface AppState {
   newCanvas: (dir?: string) => Promise<void>;
   /** Tree path currently being inline-renamed (null = none); FileTree shows an input for it. */
   renamingPath: string | null;
+  /** Path of a just-created note awaiting its first (inline) rename; opened once that finishes. */
+  newNotePath: string | null;
+  setNewNotePath: (path: string | null) => void;
   setRenamingPath: (path: string | null) => void;
   openDailyNote: () => Promise<void>;
+  /**
+   * Create a note from a vault template (FR-17): `<folder>/<YYYY-MM-DD>-<slug>.md`
+   * with the template's placeholders filled in. Returns the created path.
+   *
+   * Throws — and writes nothing — when the target folder is absent or the title
+   * yields no usable slug. Never overwrites an existing note: the write is
+   * create-only (`baseVersion: ''`) and a conflict moves on to `-2`, `-3` …
+   */
+  newFromTemplate: (templatePath: string, title: string, folder: string) => Promise<string>;
   /** Re-fetch content for the active/split tabs (after reload or remote sync). */
   hydrate: () => Promise<void>;
   /** Load persisted workspace state from the server and apply it. */
@@ -213,13 +280,23 @@ interface AppState {
   applyRemoteState: (state: any, originId: string) => Promise<void>;
 }
 
+const THEME_CACHE_KEY = 'wo-theme';
+function readCachedTheme(): string | null {
+  try {
+    const t = typeof localStorage !== 'undefined' ? localStorage.getItem(THEME_CACHE_KEY) : null;
+    return t && /^theme-[a-z-]+$/.test(t) ? t : null;
+  } catch {
+    return null;
+  }
+}
+
 const TEXT_RE = /\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i;
 
 // ---- server-side workspace persistence (shared across browsers/devices) ----
 const PERSIST_KEYS = [
   'tabs', 'activePath', 'viewMode', 'expanded', 'splitPath', 'splitDirection',
   'recent', 'bookmarks', 'leftPanel', 'rightPanel', 'leftOpen', 'rightOpen', 'graphSettings',
-  'treeSort', 'autoReveal',
+  'treeSort', 'manualOrder', 'autoReveal', 'showAttachmentFolders',
 ] as const;
 
 function pickPersisted(s: any): Record<string, unknown> {
@@ -247,6 +324,82 @@ function migrateGraphSettings(gs: unknown): GraphSettings {
   return merged;
 }
 
+/** Sanitize persisted manual order data (folderPath -> ordered child paths). */
+function parseManualOrder(input: unknown): Record<string, string[]> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (!Array.isArray(v)) continue;
+    const seen = new Set<string>();
+    const arr: string[] = [];
+    for (const p of v) {
+      if (typeof p !== 'string' || !p || seen.has(p)) continue;
+      seen.add(p);
+      arr.push(p);
+    }
+    out[k] = arr;
+  }
+  return out;
+}
+
+const parentOfPath = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+
+/**
+ * Carry manual order across a rename/move so the item keeps its place:
+ *  - same folder (rename): the item keeps its slot in that folder's order;
+ *  - a renamed/moved FOLDER takes its children's order with it (keys and values are re-prefixed);
+ *  - moved to another folder: dropped from the old folder's order and appended to the end of the
+ *    new folder's order (when that folder has a manual order; otherwise it just uses the default).
+ */
+function remapManualOrder(order: Record<string, string[]>, from: string, to: string): Record<string, string[]> {
+  if (!from || from === to) return order;
+  const prefix = `${from}/`;
+  const swap = (p: string) => (p === from ? to : p.startsWith(prefix) ? to + p.slice(from.length) : p);
+  const out: Record<string, string[]> = {};
+  for (const [k, list] of Object.entries(order)) out[swap(k)] = list.map(swap);
+  const fromParent = parentOfPath(from);
+  const toParent = parentOfPath(to);
+  if (fromParent !== toParent) {
+    if (out[fromParent]) out[fromParent] = out[fromParent].filter((p) => p !== to);
+    if (out[toParent]) out[toParent] = [...out[toParent].filter((p) => p !== to), to];
+  }
+  return out;
+}
+
+// Renames/moves currently awaiting the server. While any is pending the tree on screen and the
+// manual order can disagree, so reconciling then would treat the renamed item as "deleted + new".
+let renamesInFlight = 0;
+
+/**
+ * Keep manual-order metadata in sync with the live tree:
+ * - remove deleted paths,
+ * - preserve known order,
+ * - append brand-new children to the end (per-folder).
+ */
+function reconcileManualOrder(tree: TreeNode | null, current: Record<string, string[]>): Record<string, string[]> {
+  if (!tree) return {};
+  const out: Record<string, string[]> = {};
+  const walk = (node: TreeNode) => {
+    const key = node.path || '';
+    const children = node.children ?? [];
+    const childPaths = children.map((c) => c.path);
+    const known = new Set(childPaths);
+    const existing = current[key] ?? [];
+    const kept = existing.filter((p) => known.has(p));
+    const seen = new Set(kept);
+    for (const p of childPaths) {
+      if (!seen.has(p)) {
+        kept.push(p);
+        seen.add(p);
+      }
+    }
+    out[key] = kept;
+    for (const c of children) if (c.type === 'folder') walk(c);
+  };
+  walk(tree);
+  return out;
+}
+
 function applyPersisted(s: any, set: (p: any) => void): void {
   set({
     tabs: Array.isArray(s.tabs) ? s.tabs : [],
@@ -254,7 +407,9 @@ function applyPersisted(s: any, set: (p: any) => void): void {
     viewMode: ['live', 'source', 'reading'].includes(s.viewMode) ? s.viewMode : 'live',
     expanded: Array.isArray(s.expanded) ? s.expanded : [],
     treeSort: TREE_SORTS.includes(s.treeSort) ? s.treeSort : 'name-asc',
+    manualOrder: parseManualOrder(s.manualOrder),
     autoReveal: s.autoReveal === true,
+    showAttachmentFolders: s.showAttachmentFolders === true,
     splitPath: typeof s.splitPath === 'string' ? s.splitPath : null,
     splitDirection: s.splitDirection === 'down' ? 'down' : 'right',
     recent: Array.isArray(s.recent) ? s.recent : [],
@@ -269,6 +424,9 @@ function applyPersisted(s: any, set: (p: any) => void): void {
 
 /** When true, openFile/openGraph won't push a new history entry (we're replaying one). */
 let navByHistory = false;
+
+/** Ignore older reads when notes are selected faster than the server responds. */
+let openRequest = 0;
 
 /** Push `path` onto the back/forward stack (truncating any forward entries). */
 function pushHistory(s: { history: string[]; histIndex: number }, path: string): { history: string[]; histIndex: number } {
@@ -303,11 +461,24 @@ export const useStore = create<AppState>()(
       setAuthed: (v) => set({ authed: v }),
       mustChangePassword: false,
       setMustChangePassword: (v) => set({ mustChangePassword: v }),
+      // Start from the last theme this browser used, so the login screen (shown
+      // before settings can be fetched) matches the app instead of flashing light.
+      theme: readCachedTheme() ?? 'theme-light',
+      setTheme: (t) => {
+        try {
+          localStorage.setItem(THEME_CACHE_KEY, t);
+        } catch {
+          /* storage unavailable — theme just isn't remembered for the login screen */
+        }
+        set({ theme: t });
+      },
+      showInlineTitle: true,
+      setShowInlineTitle: (v) => set({ showInlineTitle: v }),
 
       tree: null,
       loadTree: async () => {
         const tree = await api.tree();
-        set({ tree });
+        set((s) => ({ tree, manualOrder: renamesInFlight > 0 ? s.manualOrder : reconcileManualOrder(tree, s.manualOrder) }));
       },
 
       tabs: [],
@@ -339,9 +510,14 @@ export const useStore = create<AppState>()(
           });
       },
       content: '',
+      locked: false,
+      lockReason: null,
+      unlockMode: 'confirm',
       dirty: false,
       viewMode: 'live',
       setViewMode: (m) => set({ viewMode: m }),
+      tasksMode: 'board',
+      setTasksMode: (m) => set({ tasksMode: m }),
 
       expanded: [],
       toggleFolder: (path) =>
@@ -353,8 +529,19 @@ export const useStore = create<AppState>()(
       setExpanded: (paths) => set({ expanded: paths }),
       treeSort: 'name-asc',
       setTreeSort: (treeSort) => set({ treeSort }),
+      manualOrder: {},
+      setManualOrderForParent: (parent, order) =>
+        set((s) => ({
+          manualOrder: {
+            ...s.manualOrder,
+            [parent]: Array.from(new Set(order.filter(Boolean))),
+          },
+        })),
       autoReveal: false,
+      setAutoReveal: (autoReveal) => set({ autoReveal }),
       toggleAutoReveal: () => set((s) => ({ autoReveal: !s.autoReveal })),
+      showAttachmentFolders: false,
+      setShowAttachmentFolders: (showAttachmentFolders) => set({ showAttachmentFolders }),
 
       splitPath: null,
       splitContent: '',
@@ -409,12 +596,16 @@ export const useStore = create<AppState>()(
       setSettings: (v) => set({ settingsOpen: v }),
       trashOpen: false,
       setTrash: (v) => set({ trashOpen: v }),
+      templatePicker: false,
+      setTemplatePicker: (v) => set({ templatePicker: v }),
       setGraph: (v) => {
         if (v) get().openGraph();
         else get().closeTab(GRAPH_PATH);
       },
       openGraph: async () => {
+        const request = ++openRequest;
         if (get().dirty) await get().save();
+        if (request !== openRequest) return;
         set((s) => ({
           tabs: s.tabs.some((t) => t.path === GRAPH_PATH)
             ? s.tabs
@@ -429,6 +620,21 @@ export const useStore = create<AppState>()(
       setGraphSettings: (patch) =>
         set((s) => ({ graphSettings: { ...s.graphSettings, ...patch } })),
       resetGraphSettings: () => set({ graphSettings: DEFAULT_GRAPH_SETTINGS }),
+
+      openTasks: async () => {
+        const request = ++openRequest;
+        if (get().dirty) await get().save();
+        if (request !== openRequest) return;
+        set((s) => ({
+          tabs: s.tabs.some((t) => t.path === TASKS_PATH)
+            ? s.tabs
+            : [...s.tabs, { path: TASKS_PATH, title: 'Tasks' }],
+          activePath: TASKS_PATH,
+          content: '',
+          dirty: false,
+          ...pushHistory(s, TASKS_PATH),
+        }));
+      },
 
       contextMenu: null,
       openContextMenu: (m) => set({ contextMenu: m }),
@@ -450,6 +656,11 @@ export const useStore = create<AppState>()(
       revealInTree: (path) => {
         // Expand every ancestor folder so the file's row is rendered, open the
         // Files panel, then let FileTree scroll the now-visible row into view.
+        const st0 = get();
+        if (!st0.showAttachmentFolders && isInsideHiddenAttachmentFolder(st0.tree, path)) {
+          st0.notify('That file is in a hidden attachments folder — turn on Settings → Vault & Files → Show attachment folders.', 4500);
+          return;
+        }
         const segs = path.split('/');
         segs.pop();
         const ancestors: string[] = [];
@@ -476,30 +687,79 @@ export const useStore = create<AppState>()(
         }
       },
 
-      openFile: async (path) => {
+      openAttachment: async (target, from) => {
+        try {
+          const { path } = await api.resolveAttachment(target, from);
+          if (path) await get().openFile(path);
+          else get().notify('Attachment not found');
+        } catch (err: any) {
+          get().notify(err?.message ?? 'Could not open attachment');
+        }
+      },
+      openCreatedFile: async (path) => {
+        set({ selected: [path], selectAnchor: path });
+        await get().openFile(path, { preview: false });
+        get().revealInTree(path);
+      },
+
+      openFile: async (path, { preview = true } = {}) => {
         if (path === GRAPH_PATH) return get().openGraph();
+        if (path === TASKS_PATH) return get().openTasks();
+        const request = ++openRequest;
         if (get().dirty) await get().save();
+        if (request !== openRequest) return;
         // A folder path (e.g. deep-link /note/<folder>) opens a folder content
         // view — never read it as a note nor pollute Recent with it.
         const isFolder = findNode(get().tree, path)?.type === 'folder';
         let content = '';
+        let locked = false;
+        let lockReason: string | null = null;
+        let unlockMode: 'off' | 'confirm' | 'password' = 'confirm';
         if (!isFolder && TEXT_RE.test(path)) {
           const r = await api.read(path);
           content = typeof r === 'string' ? r : r.content;
+          if (typeof r !== 'string') {
+            locked = !!r.locked;
+            lockReason = r.lockReason ?? null;
+            unlockMode = r.unlock ?? 'confirm';
+          }
         }
+        if (request !== openRequest) return;
+        // The user may have edited the previous note while this read was pending.
+        if (get().dirty) await get().save();
+        if (request !== openRequest) return;
         const title = path.split('/').pop() ?? path;
         set((s) => {
-          const tabs = s.tabs.find((t) => t.path === path) ? s.tabs : [...s.tabs, { path, title }];
+          const existing = s.tabs.find((t) => t.path === path);
+          let tabs = s.tabs;
+          if (existing) {
+            // Selecting an open tab never turns a permanent tab back into a preview.
+            if (!preview && existing.preview) {
+              tabs = tabs.map((t) => t.path === path ? { ...t, preview: false } : t);
+            }
+          } else {
+            const tab = { path, title, preview };
+            const replace = preview ? tabs.findIndex((t) => t.preview) : -1;
+            tabs = replace < 0 ? [...tabs, tab] : tabs.map((t, i) => i === replace ? tab : t);
+          }
           const recent = isFolder ? s.recent : [path, ...s.recent.filter((p) => p !== path)].slice(0, 20);
-          return { tabs, activePath: path, content, dirty: false, recent, ...pushHistory(s, path) };
+          return { tabs, activePath: path, content, locked, lockReason, unlockMode, dirty: false, recent, ...pushHistory(s, path) };
         });
       },
+
+      keepTab: (path) => set((s) => ({
+        tabs: s.tabs.map((t) => t.path === path && t.preview ? { ...t, preview: false } : t),
+      })),
 
       openWikilink: async (target) => {
         try {
           const { path } = await api.resolve(target);
           if (path) await get().openFile(path);
-          else {
+          else if (isAttachmentTarget(target)) {
+            // FR-21: a picture/media/PDF target the vault does not hold is a broken
+            // link, not a new note — creating `report.pdf` for a typo pollutes the vault.
+            get().notify(`File not found: ${target}`);
+          } else {
             // Only append `.md` when the target has no extension at all — a target
             // like `Foo.canvas` must stay `Foo.canvas`, not become `Foo.canvas.md`.
             const hasExt = /\.[^./]+$/.test(target);
@@ -511,28 +771,56 @@ export const useStore = create<AppState>()(
         }
       },
 
-      closeTab: (path) =>
-        set((s) => {
-          const tabs = s.tabs.filter((t) => t.path !== path);
-          const wasActive = s.activePath === path;
-          const activePath = wasActive ? (tabs.at(-1)?.path ?? null) : s.activePath;
-          return { tabs, activePath, ...(wasActive ? { content: '', dirty: false } : {}) };
-        }),
+      closeTab: (path) => {
+        const s = get();
+        const tabs = s.tabs.filter((t) => t.path !== path);
+        const wasActive = s.activePath === path;
+        const activePath = wasActive ? (tabs.at(-1)?.path ?? null) : s.activePath;
+        set({ tabs, activePath, ...(wasActive ? { content: '', dirty: false } : {}) });
+        // The newly selected tab must load its content, otherwise the editor stays blank.
+        if (wasActive && activePath) void get().openFile(activePath);
+      },
 
-      setContent: (c) => set({ content: c, dirty: true }),
+      setContent: (c) => set((s) => ({
+        content: c,
+        dirty: true,
+        tabs: s.tabs.map((t) => t.path === s.activePath && t.preview ? { ...t, preview: false } : t),
+      })),
 
       save: async () => {
         const { activePath, content, dirty } = get();
         if (!activePath || !dirty) return;
         if (!TEXT_RE.test(activePath)) return;
-        await api.write(activePath, content);
-        set({ dirty: false });
+        try {
+          await api.write(activePath, content);
+        } catch (e) {
+          // 423 = the server's lock guard refused this session. Say so instead of "save failed".
+          if (e instanceof ApiError && e.status === 423) {
+            const reason = (e.data as { reason?: string } | undefined)?.reason ?? null;
+            set({ locked: true, lockReason: reason });
+            get().notify('Read-only note — ask the agent to change it');
+          }
+          throw e;
+        }
+        set((s) => s.activePath === activePath && s.content === content ? { dirty: false } : {});
+      },
+
+      markLocked: (reason) => set({ locked: true, lockReason: reason }),
+
+      unlockLocked: (password) => {
+        const { activePath, locked, unlockMode } = get();
+        if (!activePath || !locked) return;
+        if (unlockMode === 'off') return;
+        if (unlockMode === 'password' && !password) return;
+        setUnlock({ active: true, password: unlockMode === 'password' ? password : undefined });
+        set({ locked: false, lockReason: null });
+        get().notify('Unlocked for this session — the agent still maintains this note');
       },
 
       createNote: async (path, body) => {
         await api.write(path, body ?? '');
         await get().loadTree();
-        await get().openFile(path);
+        await get().openFile(path, { preview: false });
       },
 
       newNote: async (dir) => {
@@ -543,8 +831,20 @@ export const useStore = create<AppState>()(
         let name = 'Untitled.md';
         for (let i = 1; taken.has(name.toLowerCase()); i++) name = `Untitled ${i}.md`;
         const path = base ? `${base}/${name}` : name;
-        await get().createNote(path, '');
-        if (base) get().revealInTree(path);
+        // Create the file, then drop straight into inline rename (like newFolder);
+        // the note is opened once the rename finishes so the editor can't steal focus.
+        await api.write(path, '');
+        await get().loadTree();
+        if (base) {
+          const ancestors: string[] = [];
+          let acc = '';
+          for (const sg of base.split('/')) { acc = acc ? `${acc}/${sg}` : sg; ancestors.push(acc); }
+          set((st) => ({ expanded: Array.from(new Set([...st.expanded, ...ancestors])) }));
+        }
+        set({ leftPanel: 'files', leftOpen: true, newNotePath: path, renamingPath: path, selected: [path], selectAnchor: path });
+        window.setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('wo-reveal-file', { detail: { path } }));
+        }, 60);
       },
 
       newCanvas: async (dir) => {
@@ -554,11 +854,24 @@ export const useStore = create<AppState>()(
         let name = 'Untitled.canvas';
         for (let i = 1; taken.has(name.toLowerCase()); i++) name = `Untitled ${i}.canvas`;
         const path = base ? `${base}/${name}` : name;
-        await get().createNote(path, '{\n\t"nodes":[],\n\t"edges":[]\n}');
-        if (base) get().revealInTree(path);
+        // Same flow as newNote: create, then inline-rename; opened once the rename finishes.
+        await api.write(path, '{\n\t"nodes":[],\n\t"edges":[]\n}');
+        await get().loadTree();
+        if (base) {
+          const ancestors: string[] = [];
+          let acc = '';
+          for (const sg of base.split('/')) { acc = acc ? `${acc}/${sg}` : sg; ancestors.push(acc); }
+          set((st) => ({ expanded: Array.from(new Set([...st.expanded, ...ancestors])) }));
+        }
+        set({ leftPanel: 'files', leftOpen: true, newNotePath: path, renamingPath: path, selected: [path], selectAnchor: path });
+        window.setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('wo-reveal-file', { detail: { path } }));
+        }, 60);
       },
 
       renamingPath: null,
+      newNotePath: null,
+      setNewNotePath: (path) => set({ newNotePath: path }),
       setRenamingPath: (path) => set({ renamingPath: path }),
 
       newFolder: async (dir) => {
@@ -588,7 +901,6 @@ export const useStore = create<AppState>()(
         const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
           d.getDate(),
         ).padStart(2, '0')}`;
-        const path = `Daily/${iso}.md`;
         try {
           const { path: existing } = await api.resolve(iso);
           if (existing) {
@@ -598,8 +910,67 @@ export const useStore = create<AppState>()(
         } catch {
           /* none */
         }
+        // Create the note inside a `daily/` folder when the vault has one, and only fall back to
+        // the conventional root `Daily/` otherwise. Vaults whose daily notes are filed by an agent
+        // (a wiki scope with `relats/daily/`, for instance) are read from that path only, so a note
+        // created at the root fallback would sit there unseen and never be filed.
+        const dailyDir = (() => {
+          const stack: TreeNode[] = [...(get().tree?.children ?? [])];
+          let best = '';
+          while (stack.length) {
+            const n = stack.pop()!;
+            if (n.type === 'folder' && n.path.split('/').pop()?.toLowerCase() === 'daily') {
+              if (!best || n.path.length < best.length) best = n.path;
+            }
+            if (n.children) stack.push(...n.children);
+          }
+          return best;
+        })();
+        const path = `${dailyDir || 'Daily'}/${iso}.md`;
         await get().createNote(path, `# ${iso}\n\n`);
         get().notify(`Daily note ${iso} ready`);
+      },
+
+      newFromTemplate: async (templatePath, title, folder) => {
+        const clean = title.trim();
+        const slug = slugify(clean);
+        if (!slug) throw new Error('A title is required — it names the file.');
+        const dir = folder.replace(/^\/+|\/+$/g, '');
+        // A template note with nowhere to go must not land in the vault root:
+        // the folder is part of the answer, not an optional detail.
+        if (!dir) throw new Error('A target folder is required.');
+        if (!isFolderPath(get().tree, dir)) throw new Error(`Folder not found: ${dir}`);
+
+        const { content } = await api.read(templatePath);
+        const now = new Date();
+        const date = dateStamp(now);
+        const body = substituteTemplate(typeof content === 'string' ? content : '', {
+          title: clean,
+          date,
+          time: timeStamp(now),
+          slug,
+        });
+
+        // Create-only: `baseVersion: ''` asks the server for "this path must not
+        // exist yet", so a note created on another device a second ago is not
+        // overwritten — the conflict moves us to -2, -3 … instead.
+        let path = uniqueNotePath(dir, `${date}-${slug}`, (p) => !!findNode(get().tree, p));
+        for (let attempt = 0; ; attempt++) {
+          try {
+            await api.write(path, body, '');
+            break;
+          } catch (e) {
+            if (!(e instanceof ApiError) || e.status !== 409 || attempt >= 20) throw e;
+            const suffix = /-(\d+)\.md$/.exec(path);
+            path = `${dir ? `${dir}/` : ''}${date}-${slug}-${suffix ? Number(suffix[1]) + 1 : 2}.md`;
+          }
+        }
+
+        await get().loadTree();
+        await get().openFile(path, { preview: false });
+        if (dir) get().revealInTree(path);
+        get().notify(`Created from template: ${path}`);
+        return path;
       },
 
       hydrate: async () => {
@@ -664,4 +1035,17 @@ useStore.subscribe((state, prev) => {
   if (JSON.stringify(pickPersisted(state)) !== JSON.stringify(pickPersisted(prev))) {
     scheduleSave();
   }
+});
+
+// Keep manual sort order attached to items when ANY caller renames or moves them (inline rename,
+// drag-and-drop, "Move to…", cut/paste, inline title). Reconcile (which drops order entries for
+// paths that vanished) runs on the next tree load, by which time the order has been remapped.
+setRenameHook({
+  start: () => {
+    renamesInFlight++;
+  },
+  done: (from, to, ok) => {
+    renamesInFlight = Math.max(0, renamesInFlight - 1);
+    if (ok) useStore.setState((s) => ({ manualOrder: remapManualOrder(s.manualOrder, from, to) }));
+  },
 });

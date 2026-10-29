@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { getSettings } from './settings.js';
+import { TRASH_INDEX_NAME, deletedAtFor, forgetTrashed, readDeletedAt, recordTrashed } from './trashindex.js';
 
 export interface TreeNode {
   name: string;
@@ -11,6 +12,10 @@ export interface TreeNode {
   mtime?: number; // last-modified (ms) — for sort-by-modified-time
   ctime?: number; // created/birth (ms) — for sort-by-created-time
   children?: TreeNode[];
+  /** Set by `services/locks.ts` on tree responses: the browser session must not edit this path. */
+  locked?: boolean;
+  /** Why it is locked — shown to the human in the editor banner. */
+  lockReason?: string;
 }
 
 /**
@@ -44,6 +49,16 @@ const TEXT_EXTS = new Set([
 
 const IGNORED = new Set(['.git', 'node_modules']);
 
+/** Vault roots that file operations may resolve into: the vault root itself plus
+ * any allowedRoots from settings (folders reachable via symlinks may live outside
+ * the root). Falls back to the single vault root when none are configured. */
+export async function getAllowedRoots(): Promise<string[]> {
+  const s = await getSettings();
+  const vault = path.resolve(s.vault.path);
+  const extra = s.vault.allowedRoots.map((r) => path.resolve(r));
+  return extra.length ? [vault, ...extra] : [vault];
+}
+
 export async function getVaultRoot(): Promise<string> {
   const s = await getSettings();
   return path.resolve(s.vault.path);
@@ -66,21 +81,22 @@ export async function resolveInVault(relPath: string): Promise<string> {
   // Symlink guard: a symlink *inside* the vault could point outside it, which the
   // string-prefix check above can't catch. Resolve the real path of the deepest
   // existing ancestor and confirm it still lives under the vault root.
-  await assertRealpathInVault(abs, root);
+  await assertRealpathInVault(abs, await getAllowedRoots());
   return abs;
 }
 
-async function assertRealpathInVault(abs: string, root: string): Promise<void> {
-  const realRoot = await fs.realpath(root).catch(() => root);
-  const realRootSep = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep;
+async function assertRealpathInVault(abs: string, roots: string[]): Promise<void> {
+  const realRoots = await Promise.all(roots.map((r) => fs.realpath(r).catch(() => r)));
+  const realRootSeps = realRoots.map((r) => (r.endsWith(path.sep) ? r : r + path.sep));
   let probe = abs;
   for (;;) {
     try {
       const real = await fs.realpath(probe);
-      if (real !== realRoot && !real.startsWith(realRootSep)) {
+      const inside = realRoots.some((rr, i) => real === rr || real.startsWith(realRootSeps[i]));
+      if (!inside) {
         throw Object.assign(new Error('Path escapes vault'), { status: 400 });
       }
-      return; // deepest existing ancestor is inside the vault; the rest is new
+      return; // deepest existing ancestor is inside an allowed root; the rest is new
     } catch (e: any) {
       if (e?.status === 400) throw e; // our own escape error — propagate
       const parent = path.dirname(probe);
@@ -104,7 +120,11 @@ export async function listTree(): Promise<TreeNode> {
   const root = await getVaultRoot();
   await fs.mkdir(root, { recursive: true });
 
-  async function walk(absDir: string): Promise<TreeNode[]> {
+  async function walk(absDir: string, visited: Set<string>): Promise<TreeNode[]> {
+    // Symlink cycle guard: a link may point back into an ancestor or the root.
+    const key = await fs.realpath(absDir).catch(() => absDir);
+    if (visited.has(key)) return [];
+    visited.add(key);
     const entries = await fs.readdir(absDir, { withFileTypes: true });
     // Stat files concurrently per directory (cached) so the one-time fill is fast;
     // steady state reads from statCache → no syscalls. mtime/ctime power sort-by-time.
@@ -115,11 +135,24 @@ export async function listTree(): Promise<TreeNode> {
           const abs = path.join(absDir, e.name);
           const rel = toRel(root, abs);
           if (e.isDirectory()) {
-            return { name: e.name, path: rel, type: 'folder', children: await walk(abs) };
+            return { name: e.name, path: rel, type: 'folder', children: await walk(abs, visited) };
           }
           if (e.isFile()) {
             const { m, c } = await fileStat(abs, rel);
             return { name: e.name, path: rel, type: 'file', ext: path.extname(e.name).toLowerCase(), mtime: m, ctime: c };
+          }
+          // Symlinked entries: a Dirent is neither dir nor file, but the link may
+          // resolve to either. Broken links are skipped.
+          if (e.isSymbolicLink()) {
+            const st = await fs.stat(abs).catch(() => null);
+            if (!st) return null;
+            if (st.isDirectory()) {
+              return { name: e.name, path: rel, type: 'folder', children: await walk(abs, visited) };
+            }
+            if (st.isFile()) {
+              const { m, c } = await fileStat(abs, rel);
+              return { name: e.name, path: rel, type: 'file', ext: path.extname(e.name).toLowerCase(), mtime: m, ctime: c };
+            }
           }
           return null;
         }),
@@ -133,7 +166,7 @@ export async function listTree(): Promise<TreeNode> {
     return out;
   }
 
-  return { name: path.basename(root), path: '', type: 'folder', children: await walk(root) };
+  return { name: path.basename(root), path: '', type: 'folder', children: await walk(root, new Set()) };
 }
 
 export function isTextFile(rel: string): boolean {
@@ -220,25 +253,53 @@ export async function copy(from: string, to: string): Promise<string[]> {
   const absFrom = await resolveInVault(from);
   const absTo = await resolveInVault(to);
   await fs.mkdir(path.dirname(absTo), { recursive: true });
-  await fs.cp(absFrom, absTo, { recursive: true, errorOnExist: true, force: false });
+  await fs.cp(absFrom, absTo, { recursive: true, errorOnExist: true, force: false, dereference: true });
   const root = await getVaultRoot();
   const out: string[] = [];
   const st = await fs.stat(absTo);
   if (st.isDirectory()) {
-    async function walk(dir: string) {
+    async function walk(dir: string, visited: Set<string>) {
+      const key = await fs.realpath(dir).catch(() => dir);
+      if (visited.has(key)) return;
+      visited.add(key);
       const entries = await fs.readdir(dir, { withFileTypes: true });
       for (const e of entries) {
         if (IGNORED.has(e.name)) continue;
         const abs = path.join(dir, e.name);
-        if (e.isDirectory()) await walk(abs);
+        if (e.isDirectory()) await walk(abs, visited);
         else if (e.isFile()) out.push(toRel(root, abs));
+        else if (e.isSymbolicLink()) {
+          const st = await fs.stat(abs).catch(() => null);
+          if (!st) continue;
+          if (st.isDirectory()) await walk(abs, visited);
+          else if (st.isFile()) out.push(toRel(root, abs));
+        }
       }
     }
-    await walk(absTo);
+    await walk(absTo, new Set());
   } else {
     out.push(toRel(root, absTo));
   }
   return out;
+}
+
+/**
+ * After a file inside an `attachments/` folder was deleted or trashed, remove that folder if it
+ * is now empty (it was auto-created for pasted images, so an empty one is just clutter).
+ * Never touches the vault root, non-attachment folders, or a folder that still has content.
+ * Keep the name in sync with ATTACHMENT_DIR_NAME in web/src/lib/attachments.ts.
+ */
+export async function pruneEmptyAttachmentsDir(relFile: string): Promise<boolean> {
+  const dir = path.posix.dirname(relFile);
+  if (dir === '.' || path.posix.basename(dir).toLowerCase() !== 'attachments') return false;
+  try {
+    const abs = await resolveInVault(dir);
+    if ((await fs.readdir(abs)).length > 0) return false;
+    await fs.rmdir(abs); // rmdir only succeeds on an empty directory
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Permanently delete a file or folder (no trash). */
@@ -262,6 +323,8 @@ export async function trash(rel: string): Promise<string> {
     finalDest = `${dest.slice(0, dest.length - ext.length)}.${Date.now()}${ext}`;
   }
   await fs.rename(absFrom, finalDest);
+  // rename keeps the original mtime, so record when it entered the trash (retention clock).
+  await recordTrashed(trashRoot, path.relative(trashRoot, finalDest));
   return toRel(root, finalDest);
 }
 
@@ -282,10 +345,10 @@ export interface TrashItem {
   original: string; // where it restores to, e.g. "folder/note.md"
   ext: string;
   size: number;
-  mtime: number; // deletion time (file mtime when it landed in trash)
+  mtime: number; // deletion time (from the trash index; file mtime for untracked items)
 }
 
-async function getTrashRoot(): Promise<string> {
+export async function getTrashRoot(): Promise<string> {
   const s = await getSettings();
   const root = await getVaultRoot();
   return path.join(root, s.vault.trash);
@@ -321,6 +384,7 @@ export async function listTrash(): Promise<TrashItem[]> {
   const root = await getVaultRoot();
   const trashRoot = await getTrashRoot();
   const out: TrashItem[] = [];
+  const deletedAt = await readDeletedAt(trashRoot);
   async function walk(dir: string) {
     let entries;
     try {
@@ -329,18 +393,20 @@ export async function listTrash(): Promise<TrashItem[]> {
       return; // trash folder doesn't exist yet
     }
     for (const e of entries) {
+      if (dir === trashRoot && (e.name === TRASH_INDEX_NAME || e.name === `${TRASH_INDEX_NAME}.tmp`)) continue;
       const abs = path.join(dir, e.name);
       if (e.isDirectory()) {
         await walk(abs);
       } else if (e.isFile()) {
         const st = await fs.stat(abs).catch(() => null);
+        const original = path.relative(trashRoot, abs).split(path.sep).join('/');
         out.push({
           name: e.name,
           path: toRel(root, abs),
-          original: path.relative(trashRoot, abs).split(path.sep).join('/'),
+          original,
           ext: path.extname(e.name).toLowerCase(),
           size: st?.size ?? 0,
-          mtime: st ? st.mtimeMs : 0,
+          mtime: deletedAtFor(deletedAt, original) ?? (st ? st.mtimeMs : 0),
         });
       }
     }
@@ -365,6 +431,7 @@ export async function restoreFromTrash(trashRel: string): Promise<string> {
   }
   await fs.mkdir(path.dirname(absTo), { recursive: true });
   await fs.rename(absFrom, absTo);
+  await forgetTrashed(trashRoot, relInTrash);
   await pruneEmptyDirs(path.dirname(absFrom), trashRoot);
   return destRel;
 }
@@ -373,8 +440,19 @@ export async function restoreFromTrash(trashRel: string): Promise<string> {
 export async function deleteFromTrash(trashRel: string): Promise<void> {
   const trashRoot = await getTrashRoot();
   const abs = await resolveInVault(trashRel);
-  assertInTrash(abs, trashRoot);
+  const relInTrash = assertInTrash(abs, trashRoot);
   await fs.rm(abs, { recursive: true, force: true });
+  await forgetTrashed(trashRoot, relInTrash);
+  await pruneEmptyDirs(path.dirname(abs), trashRoot);
+}
+
+/** Permanently remove a trash-relative item (used by the retention purge). */
+export async function purgeTrashEntry(trashRel: string): Promise<void> {
+  const trashRoot = await getTrashRoot();
+  const abs = path.resolve(trashRoot, trashRel);
+  const relInTrash = assertInTrash(abs, trashRoot);
+  await fs.rm(abs, { recursive: true, force: true });
+  await forgetTrashed(trashRoot, relInTrash);
   await pruneEmptyDirs(path.dirname(abs), trashRoot);
 }
 
@@ -396,23 +474,70 @@ export async function emptyTrash(): Promise<void> {
 export async function listMarkdownFiles(): Promise<string[]> {
   const root = await getVaultRoot();
   const out: string[] = [];
-  async function walk(dir: string) {
+  async function walk(dir: string, visited: Set<string>) {
     let entries;
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
+    const key = await fs.realpath(dir).catch(() => dir);
+    if (visited.has(key)) return;
+    visited.add(key);
     for (const e of entries) {
       // Skip dotfiles/dot-dirs (`.trash`, `.obsidian`, …) like the tree view and
       // file index do — a note moved to `.trash` must not stay a live link target
       // (and would otherwise shadow a real file with the same basename).
       if (IGNORED.has(e.name) || e.name.startsWith('.')) continue;
       const abs = path.join(dir, e.name);
-      if (e.isDirectory()) await walk(abs);
+      if (e.isDirectory()) await walk(abs, visited);
       else if (e.isFile() && /\.(md|markdown)$/i.test(e.name)) out.push(toRel(root, abs));
+      else if (e.isSymbolicLink()) {
+        const st = await fs.stat(abs).catch(() => null);
+        if (!st) continue;
+        if (st.isDirectory()) await walk(abs, visited);
+        else if (st.isFile() && /\.(md|markdown)$/i.test(e.name)) out.push(toRel(root, abs));
+      }
     }
   }
-  await walk(root);
+  await walk(root, new Set());
   return out;
+}
+
+export type NoteSort = 'modified' | 'created' | 'name';
+export type SortOrder = 'asc' | 'desc';
+
+/**
+ * Like listMarkdownFiles(), but ordered for the Agent API's `GET /notes?sort=&order=`.
+ * Default is most-recently-modified first, so a freshly touched note never falls past
+ * the caller's `limit` into an unread tail. Time sorts use the same stat cache as
+ * listTree(), so this costs one stat per file at most.
+ *
+ * Adopted from the fork `blueberry6401/webobsidian`; see docs/UPSTREAM_PR_MERGES.md →
+ * "Adopted from other forks".
+ */
+export async function listMarkdownFilesSorted(
+  sort: NoteSort = 'modified',
+  order: SortOrder = 'desc',
+): Promise<string[]> {
+  const files = await listMarkdownFiles();
+  if (sort === 'name') {
+    files.sort((a, b) => a.localeCompare(b));
+  } else {
+    const root = await getVaultRoot();
+    const stats = new Map<string, { m: number; c: number }>();
+    await Promise.all(files.map(async (rel) => {
+      stats.set(rel, await fileStat(path.join(root, rel), rel));
+    }));
+    files.sort((a, b) => {
+      const sa = stats.get(a) ?? { m: 0, c: 0 };
+      const sb = stats.get(b) ?? { m: 0, c: 0 };
+      const va = sort === 'modified' ? sa.m : sa.c;
+      const vb = sort === 'modified' ? sb.m : sb.c;
+      if (va !== vb) return va - vb;
+      return a.localeCompare(b);
+    });
+  }
+  if (order === 'desc') files.reverse();
+  return files;
 }

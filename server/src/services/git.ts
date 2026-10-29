@@ -292,6 +292,8 @@ async function pullImpl(): Promise<string> {
   // never converge. Harmless (no-op) once the histories share a base.
   const res = await g.pull('origin', s.git.branch || 'main', {
     '--no-rebase': null,
+    // Sync is noninteractive; do not rely on ambient GIT_MERGE_AUTOEDIT (filtered by simple-git 4).
+    '--no-edit': null,
     '--allow-unrelated-histories': null,
   });
   if (await lfsAvailable()) await g.raw(['lfs', 'pull']).catch(() => {});
