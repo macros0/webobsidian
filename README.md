@@ -16,7 +16,7 @@ CodeMirror editor, live preview, wikilinks, an interactive graph, full-text sear
 GitHub sync (incl. Git LFS), an API for AI agents, and community-plugin support.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.12-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
 
@@ -289,7 +289,8 @@ raise it to `8192` for very large vaults (e.g. 6k+ notes / multi-GB).
 
 ## 💻 Local development
 
-Requires **Node ≥ 20** and `git` (+ `git-lfs` if you use LFS).
+Requires **Node ≥ 22.12** and `git` (+ `git-lfs` if you use LFS). The desktop build tooling
+requires this baseline; Docker already uses Node 22.
 
 ```bash
 npm install
@@ -477,7 +478,7 @@ webobsidian/
    (JSON config)   (.md+attach) (in-mem/disk) (git + LFS)   (.obsidian/plugins)
 ```
 
-**Tech stack:** Node 20+ · Express · TypeScript · React · Vite · CodeMirror 6 ·
+**Tech stack:** Node 22.12+ · Express · TypeScript · React · Vite · CodeMirror 6 ·
 unified/remark/rehype · MiniSearch (QMD) · simple-git + git-lfs · scrypt + JWT · Docker.
 
 See [PRD.md §2](PRD.md) for the full design.

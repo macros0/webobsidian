@@ -1,5 +1,10 @@
 # PRD — WebObsidian
 
+> Security maintenance 2026-10-29: remove all currently reported critical dependency versions
+> through supported parent-package upgrades and compatible transitive patches. Preserve auth,
+> Markdown/media, Git sync and desktop packaging behavior. Development/CI now requires Node ≥22.12
+> for supported electron-builder tooling; Docker remains on Node 22. No production deployment.
+
 > Fork integration 2026-10-29: combine the pinned `phamtruonghung` and `lakylekidd`
 > revisions from `docs/superpowers/plans/2026-10-29-community-forks.md`. Preserve
 > both feature sets and security boundaries. Automatic trash retention is opt-in

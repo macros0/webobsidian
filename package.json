@@ -11,6 +11,7 @@
     "mcp-server"
   ],
   "scripts": {
+    "check:critical-deps": "node scripts/check-critical-dependencies.mjs",
     "test": "npm --workspace server run test && node --import tsx --test web/tests/*.test.ts",
     "dev": "concurrently -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "npm --workspace server run dev",
@@ -25,9 +26,9 @@
     "desktop:publish": "npm run build && npm --workspace desktop run dist:publish"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "concurrently": "^9.2.5"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12.0"
   }
 }
