@@ -1,3 +1,4 @@
+import {captureContext,executeCommand,commands as toolbarCommands} from '../lib/toolbar/registry';
 import { useEffect, useRef, useState } from 'react';
 import DocOutline from './DocOutline';
 import { Compartment, EditorState, Prec } from '@codemirror/state';
@@ -8,7 +9,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { yamlFrontmatter } from '@codemirror/lang-yaml';
 import { languages } from '@codemirror/language-data';
 import { syntaxHighlighting } from '@codemirror/language';
-import { obsidianHighlightStyle } from '../lib/highlight';
+import { obsidianHighlightStyle, literalAngleColors } from '../lib/highlight';
 import { useStore } from '../lib/store';
 import type { TreeNode } from '../lib/api';
 import { obsidianKeymap } from '../lib/editorCommands';
@@ -45,8 +46,9 @@ import {
   setLivePreviewTagProvider,
   setNoteTitle,
 } from '../lib/livePreview';
-import { renderMarkdown } from '../lib/markdown';
+import { renderNoteEmbed } from '../lib/markdown';
 import { setActiveEditor } from '../lib/activeEditor';
+import { selectionToolbar } from '../lib/selectionToolbar';
 import { api } from '../lib/api';
 import { humanizeTitle } from '../lib/title';
 import { deleteEmbeddedImage } from '../lib/imageDelete';
@@ -97,9 +99,9 @@ export default function Editor() {
     setLivePreviewPropertyProvider(() => api.properties().then((r) => r.properties).catch(() => []));
     setLivePreviewTagProvider(() => api.tags().then((r) => r.tags.map((t) => t.tag)).catch(() => []));
     // ![[note]] transclusion: resolve + render with the same pipeline as Reading.
-    const resolveEmbed = async (target: string) => {
+    const resolveEmbed = async (target: string, from?: string) => {
       try {
-        const { path } = await api.resolve(target);
+        const { path } = await api.resolve(target, from);
         if (!path) return null;
         const r = await api.read(path);
         return { path, content: typeof r === 'string' ? r : r.content };
@@ -107,13 +109,10 @@ export default function Editor() {
         return null;
       }
     };
-    setLivePreviewNoteEmbedProvider(async (target) => {
-      const note = await resolveEmbed(target.split('#')[0].trim());
-      if (!note) return null;
-      const stripped = note.content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
-      const html = await renderMarkdown(stripped, { rawUrl: (p) => api.rawUrl(p), resolveEmbed });
-      return { html };
-    });
+    setLivePreviewNoteEmbedProvider(target => renderNoteEmbed(target, {
+      rawUrl: (p, from) => api.rawUrl(p, from), resolveEmbed,
+      sourcePath: useStore.getState().activePath ?? undefined,
+    }));
   }, [openContextMenu]);
 
   // Feed the `[[` link suggester (vault file paths) and the `#` tag suggester.
@@ -150,112 +149,21 @@ export default function Editor() {
       .catch(() => {});
   }, []);
 
-  // --- editor formatting actions (used by the right-click menu) ---
-  const wrap = (before: string, after = before) => {
-    const v = view.current;
-    if (!v) return;
-    const { from, to } = v.state.selection.main;
-    const sel = v.state.sliceDoc(from, to);
-    v.dispatch({
-      changes: { from, to, insert: before + sel + after },
-      selection: { anchor: from + before.length, head: from + before.length + sel.length },
-    });
-    v.focus();
-  };
-  const prefixLines = (prefix: string) => {
-    const v = view.current;
-    if (!v) return;
-    const { from, to } = v.state.selection.main;
-    const a = v.state.doc.lineAt(from).number;
-    const b = v.state.doc.lineAt(to).number;
-    const changes = [];
-    for (let n = a; n <= b; n++) changes.push({ from: v.state.doc.line(n).from, insert: prefix });
-    v.dispatch({ changes });
-    v.focus();
-  };
-  const insert = (text: string, caretOffset = text.length) => {
-    const v = view.current;
-    if (!v) return;
-    const { from, to } = v.state.selection.main;
-    v.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + caretOffset } });
-    v.focus();
-  };
-  const copy = async () => {
-    const v = view.current;
-    if (!v) return;
-    const { from, to } = v.state.selection.main;
-    await navigator.clipboard.writeText(v.state.sliceDoc(from, to)).catch(() => {});
-  };
-  const cut = async () => {
-    const v = view.current;
-    if (!v) return;
-    const { from, to } = v.state.selection.main;
-    await navigator.clipboard.writeText(v.state.sliceDoc(from, to)).catch(() => {});
-    v.dispatch({ changes: { from, to, insert: '' } });
-    v.focus();
-  };
-  const paste = async () => {
-    const t = await navigator.clipboard.readText().catch(() => '');
-    if (t) insert(t);
-  };
-  const selectAll = () => {
-    const v = view.current;
-    if (v) v.dispatch({ selection: { anchor: 0, head: v.state.doc.length } });
-  };
-
   const onContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
-    const v = view.current;
-    const sel = v ? v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to) : '';
-    openContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      items: [
-        {
-          label: 'Format', icon: 'pencil', submenu: [
-            { label: 'Bold', onClick: () => wrap('**') },
-            { label: 'Italic', onClick: () => wrap('*') },
-            { label: 'Strikethrough', onClick: () => wrap('~~') },
-            { label: 'Highlight', onClick: () => wrap('==') },
-            { label: 'Inline code', onClick: () => wrap('`') },
-          ],
-        },
-        {
-          label: 'Paragraph', icon: 'file-text', submenu: [
-            { label: 'Heading 1', onClick: () => prefixLines('# ') },
-            { label: 'Heading 2', onClick: () => prefixLines('## ') },
-            { label: 'Heading 3', onClick: () => prefixLines('### ') },
-            { label: 'Bullet list', onClick: () => prefixLines('- ') },
-            { label: 'Numbered list', onClick: () => prefixLines('1. ') },
-            { label: 'Task list', onClick: () => prefixLines('- [ ] ') },
-            { label: 'Quote', onClick: () => prefixLines('> ') },
-            { label: 'Code block', onClick: () => wrap('```\n', '\n```') },
-          ],
-        },
-        {
-          label: 'Insert', icon: 'plus', submenu: [
-            { label: 'Internal link', onClick: () => insert('[[]]', 2) },
-            { label: 'External link', onClick: () => wrap('[', '](url)') },
-            { label: 'Embed file', onClick: () => insert('![[]]', 3) },
-            { label: 'Callout', onClick: () => insert('> [!note] Title\n> ', 18) },
-            { label: 'Table', onClick: () => insert('\n| Column 1 | Column 2 |\n| --- | --- |\n|  |  |\n') },
-            { label: 'Horizontal rule', onClick: () => insert('\n---\n') },
-            { label: 'Tag', onClick: () => insert('#') },
-          ],
-        },
-        { label: '', separator: true },
-        { label: 'Cut', onClick: cut },
-        { label: 'Copy', onClick: copy },
-        { label: 'Paste', onClick: paste },
-        { label: 'Select all', onClick: selectAll },
-        ...(sel
-          ? [
-              { label: '', separator: true },
-              { label: `Search for “${sel.slice(0, 24)}”`, icon: 'search', onClick: () => setLeftPanel('search') },
-            ]
-          : []),
-      ],
-    });
+    const v=view.current;if(!v)return;
+    const ctx=captureContext(v);
+    const group=(label:string,ids:string[])=>({label,submenu:ids.map(id=>{
+      const c=toolbarCommands.find(x=>x.id==='editing-toolbar:'+id)!;
+      return {label:c.label,disabled:!c.getState(ctx).enabled,onClick:()=>{void executeCommand(c.id,ctx);}};
+    })});
+    openContextMenu({x:e.clientX,y:e.clientY,items:[
+      group('Format',['toggle-bold','toggle-italics','toggle-strikethrough','toggle-highlight','underline','editor:toggle-code','format-eraser']),
+      group('Paragraph',['header1-text','header2-text','header3-text','header4-text','header5-text','header6-text','header0-text','toggle-bullet-list','toggle-numbered-list','editor:toggle-checklist-status','editor:toggle-blockquote']),
+      group('Insert',['editor:insert-wikilink','insert-link','editor:insert-embed','insert-callout','editor:insert-table','codeblock','hrline','editor:insert-tag','editor:attach-file']),
+      ...['editor-cut','editor-copy','editor-paste'].map(id=>{const c=toolbarCommands.find(x=>x.id==='editing-toolbar:'+id)!;return {label:c.label,disabled:!c.getState(ctx).enabled,onClick:()=>{void executeCommand(c.id,ctx);}};}),
+      {label:'Select all',onClick:()=>v.dispatch({selection:{anchor:0,head:v.state.doc.length}})},
+    ]});
   };
 
   // (Re)create the view when the active file changes.
@@ -302,7 +210,9 @@ export default function Editor() {
         // Obsidian token palette via CSS vars (works in both themes); markdown
         // structure styling is owned by the Live Preview decorations.
         syntaxHighlighting(obsidianHighlightStyle),
+        literalAngleColors,
         EditorView.lineWrapping,
+        ...(isMd ? selectionToolbar : []),
         // Live Preview drives BOTH live and reading; reading is just read-only.
         livePreviewState.init(() => isMd && viewMode !== 'source'),
         livePreviewReadonly.init(() => viewMode === 'reading'),
@@ -372,7 +282,7 @@ export default function Editor() {
         setNoteTitle.of(showInlineTitle ? titleOf(activePath) : ''),
       ],
     });
-  }, [viewMode, activePath, showInlineTitle]);
+  }, [viewMode, activePath, showInlineTitle, locked]);
 
   // Debounced autosave.
   useEffect(() => {

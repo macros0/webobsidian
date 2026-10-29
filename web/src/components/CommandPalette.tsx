@@ -1,3 +1,5 @@
+import {commands as editorToolbarCommands,captureContext,executeCommand} from '../lib/toolbar/registry';
+import {getActiveEditor} from '../lib/activeEditor';
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../lib/store';
 import { api, type TreeNode } from '../lib/api';
@@ -51,6 +53,7 @@ export default function CommandPalette() {
 
   const commands: Cmd[] = useMemo(
     () => [
+      ...editorToolbarCommands.map(c=>({id:c.id,title:c.label,run:()=>{const v=getActiveEditor();if(v)void executeCommand(c.id,captureContext(v));}})),
       { id: 'new', title: 'New note', hint: '⌘N', run: () => newNote() },
       { id: 'new-from-template', title: 'New note from template', run: () => setTemplatePicker(true) },
       { id: 'new-canvas', title: 'New canvas', run: () => newCanvas() },

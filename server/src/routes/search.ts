@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import path from 'node:path';
+import * as vault from '../services/vault.js';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import { qmd } from '../services/search.js';
@@ -83,6 +85,16 @@ searchRouter.get(
   '/resolve',
   asyncHandler(async (req, res) => {
     const target = String(req.query.target ?? '');
+    const from = typeof req.query.from === 'string' ? req.query.from : '';
+    if (from && !target.startsWith('/')) {
+      const relative = path.posix.normalize(path.posix.join(path.posix.dirname(from), target.split('#')[0]));
+      if (!relative.startsWith('..') && !path.posix.isAbsolute(relative)) {
+        const candidates = /\.[^./]+$/.test(relative) ? [relative] : [`${relative}.md`, `${relative}.markdown`];
+        for (const candidate of candidates) {
+          if (await vault.exists(candidate)) { res.json({ target, path: candidate }); return; }
+        }
+      }
+    }
     // The link graph only indexes markdown notes, so a wikilink that points at a
     // non-markdown file with an explicit extension (e.g. `[[Foo.canvas]]`) misses.
     // Fall back to the vault-wide file index for those — but only when an explicit

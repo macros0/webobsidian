@@ -2,9 +2,28 @@
  * Flat line icons (Lucide set — the same icon family Obsidian uses).
  * Stroke-based, 24x24 viewBox, currentColor. Add new glyphs to PATHS as needed.
  */
-import type { CSSProperties } from 'react';
+import React, { type CSSProperties } from 'react';
 
 const PATHS: Record<string, string> = {
+  // Editing toolbar actions, using the same 24px stroke-based glyph convention.
+  paintbrush: '<path d="m14 6 4-4 4 4-4 4z"/><path d="m14 6-8 8 4 4 8-8"/><path d="M9 17c0 4-4 5-7 5 1-1 1-2 1-3a3 3 0 0 1 6-2Z"/>',
+  eraser: '<path d="m16 3 5 5a2 2 0 0 1 0 3L10 22H6l-4-4a2 2 0 0 1 0-3L13 3a2 2 0 0 1 3 0Z"/><path d="m7 10 7 7"/><path d="M10 22h12"/>',
+  type: '<path d="M4 7V4h16v3"/><path d="M12 4v16"/><path d="M8 20h8"/>',
+  strikethrough: '<path d="M16 5a5 5 0 0 0-8 3c0 2 2 3 4 4"/><path d="M8 19a5 5 0 0 0 8-3c0-2-2-3-4-4"/><path d="M3 12h18"/>',
+  underline: '<path d="M6 3v7a6 6 0 0 0 12 0V3"/><path d="M4 21h16"/>',
+  highlighter: '<path d="m9 11 6-8 6 6-8 6z"/><path d="m9 11-3 3 4 4 3-3"/><path d="m6 14-4 6h8l2-4"/><path d="M3 23h7"/>',
+  maximize: '<path d="M8 3H3v5"/><path d="M16 3h5v5"/><path d="M3 16v5h5"/><path d="M21 16v5h-5"/>',
+  table: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/>',
+  copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
+  scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="m8 8 13 13"/><path d="m14 10 7-7"/><path d="m8 16 4-4"/>',
+  clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/>',
+  'arrow-up': '<path d="m5 12 7-7 7 7"/><path d="M12 5v15"/>',
+  'arrow-down': '<path d="m5 12 7 7 7-7"/><path d="M12 4v15"/>',
+  'list-ordered': '<path d="M11 6h10"/><path d="M11 12h10"/><path d="M11 18h10"/><path d="m4 4 1-1v6"/><path d="M3 9h4"/><path d="M3 15a2 2 0 1 1 4 0c0 2-4 3-4 5h4"/>',
+  'message-square': '<path d="M21 15a2 2 0 0 1-2 2H7l-5 5V4a2 2 0 0 1 2-2h15a2 2 0 0 1 2 2z"/>',
+  superscript: '<path d="m4 8 8 12"/><path d="m12 8-8 12"/><path d="M16 5a2 2 0 1 1 4 0c0 2-4 3-4 5h4"/>',
+  subscript: '<path d="m4 4 8 12"/><path d="m12 4-8 12"/><path d="M16 15a2 2 0 1 1 4 0c0 2-4 3-4 5h4"/>',
+  'align-justify': '<path d="M3 6h18"/><path d="M3 10h18"/><path d="M3 14h18"/><path d="M3 18h18"/>',
   // Lucide "lock" / "lock-open" — the read-only badge in the file tree and the editor banner.
   lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   'lock-open': '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',

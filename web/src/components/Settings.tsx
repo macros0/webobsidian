@@ -3,8 +3,9 @@ import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import { themeClass } from '../lib/theme';
 import Icon from './Icon';
+import ToolbarSettings from './toolbar/ToolbarSettings';
 
-type Section = 'vault' | 'git' | 'api' | 'sharing' | 'plugins' | 'appearance' | 'account' | 'about';
+type Section = 'vault' | 'git' | 'api' | 'sharing' | 'plugins' | 'appearance' | 'toolbar' | 'account' | 'about';
 
 export default function Settings() {
   const open = useStore((s) => s.settingsOpen);
@@ -23,7 +24,7 @@ export default function Settings() {
       <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
         <div className="settings-layout">
           <div className="settings-nav">
-            {(['vault', 'git', 'api', 'sharing', 'plugins', 'appearance', 'account', 'about'] as Section[]).map((s) => (
+            {(['vault', 'git', 'api', 'sharing', 'plugins', 'appearance', 'toolbar', 'account', 'about'] as Section[]).map((s) => (
               <button key={s} className={section === s ? 'active' : ''} onClick={() => setSection(s)}>
                 {labels[s]}
               </button>
@@ -36,6 +37,7 @@ export default function Settings() {
             {section === 'sharing' && <Shares />}
             {section === 'plugins' && <Plugins />}
             {settings && section === 'appearance' && <Appearance s={settings} />}
+            {settings && section === 'toolbar' && <ToolbarSettings value={settings.ui.editingToolbar} onSaved={(editingToolbar) => setSettings((current: any) => ({...current, ui:{...current.ui, editingToolbar}}))} />}
             {section === 'account' && <AccountSettings s={settings} reload={() => api.getSettings().then(setSettings)} />}
             {section === 'about' && <About />}
           </div>
@@ -52,6 +54,7 @@ const labels: Record<Section, string> = {
   sharing: 'Sharing',
   plugins: 'Community Plugins',
   appearance: 'Appearance',
+  toolbar: 'Editing toolbar',
   account: 'Account',
   about: 'About',
 };

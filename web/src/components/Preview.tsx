@@ -104,10 +104,11 @@ export default function Preview({ source }: { source?: string }) {
   useEffect(() => {
     let cancelled = false;
     renderMarkdown(content, {
-      rawUrl: (p) => api.rawUrl(p),
-      resolveEmbed: async (target) => {
+      rawUrl: (p, from) => api.rawUrl(p, from),
+      sourcePath: activePath ?? undefined,
+      resolveEmbed: async (target, from) => {
         try {
-          const { path } = await api.resolve(target);
+          const { path } = await api.resolve(target, from);
           if (!path) return null;
           const r = await api.read(path);
           return { path, content: typeof r === 'string' ? r : r.content };
@@ -121,7 +122,7 @@ export default function Preview({ source }: { source?: string }) {
     return () => {
       cancelled = true;
     };
-  }, [content]);
+  }, [content, activePath]);
 
   // Post-render pass — same renderers as Live Preview so both modes match:
   // KaTeX for [data-tex] spans, mermaid for ```mermaid fences, callout icons.

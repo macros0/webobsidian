@@ -27,6 +27,36 @@ afterEach(async () => {
 });
 
 describe('community integration: preserve existing trash by default', () => {
+  it('bounds and sanitizes toolbar schema while recovering only a damaged layout', async () => {
+    const {EditingToolbarSchema}=await import('./settings.js');
+    const good={enabled:true,items:[{type:'command',instanceId:'one',commandId:'editing-toolbar:toggle-bold',icon:'<svg onload="bad()">',script:'bad()'}]};
+    const parsed=EditingToolbarSchema.parse({version:1,layouts:{top:good,mobile:{enabled:true,items:Array.from({length:201},(_,i)=>({type:'separator',instanceId:String(i)}))}},appearance:{iconColor:'#ABCDEF',backgroundColor:'url(javascript:bad)'},css:'bad{}'});
+    expect(parsed.layouts.top?.items[0]).toMatchObject({icon:'command'});expect(parsed.layouts.top?.items[0]).not.toHaveProperty('script');
+    expect(parsed.layouts.mobile).toBeUndefined();expect(parsed.appearance).toMatchObject({iconColor:'#abcdef'});
+    expect(parsed.appearance?.backgroundColor).toBeUndefined();expect(parsed).not.toHaveProperty('css');
+    const commands=Array.from({length:101},(_,i)=>({id:`custom:${i}`,label:'Template',icon:'command',prefix:'${x}',suffix:''}));
+    expect(EditingToolbarSchema.safeParse({version:1,layouts:{},customCommands:commands}).success).toBe(false);
+  });
+  it('persists toolbar data without changing secrets and recovers a malformed toolbar section', async () => {
+    await fs.mkdir(path.dirname(settingsFile), { recursive: true });
+    await fs.writeFile(settingsFile, JSON.stringify({
+      auth: {userPasswordHash:'fixture-password-hash',jwtSecret:'fixture-existing-secret'},
+      git: {token:'fixture-git-token'},vault: {path:path.join(root,'vault')},
+      ui: {theme:'obsidian-dark',editingToolbar:{version:1,layouts:{top:{enabled:true,items:[{type:'command',instanceId:'one',commandId:'editing-toolbar:toggle-bold'}]}},appearance:{iconSize:20},customCommands:[],customColors:['#123456']}},
+    }));
+    const {loadSettings,updateSettings}=await import('./settings.js');
+    const s=await loadSettings();
+    expect(s.ui.editingToolbar).toMatchObject({version:1,layouts:{top:{enabled:true}}});
+    const next=await updateSettings(draft=>{ draft.ui.showInlineTitle=false; });
+    expect(next.auth.userPasswordHash).toBe('fixture-password-hash');expect(next.auth.jwtSecret).toBe('fixture-existing-secret');
+    expect(next.git.token).toBe('fixture-git-token');
+    expect(JSON.parse(await fs.readFile(settingsFile,'utf8')).ui.editingToolbar.layouts.top.items[0].commandId).toBe('editing-toolbar:toggle-bold');
+    await fs.writeFile(settingsFile,JSON.stringify({...next,ui:{...next.ui,editingToolbar:{version:1,layouts:'bad'}}}));
+    vi.resetModules();const reloaded=await (await import('./settings.js')).loadSettings();
+    expect(reloaded.auth.userPasswordHash).toBe('fixture-password-hash');expect(reloaded.auth.jwtSecret).toBe('fixture-existing-secret');
+    expect(reloaded.git.token).toBe('fixture-git-token');expect(reloaded.ui.theme).toBe('obsidian-dark');
+    expect(reloaded.ui.editingToolbar).toBeUndefined();
+  });
   it('fills every settings group when starting with a fresh file', async () => {
     const { loadSettings } = await import('./settings.js');
     const s = await loadSettings();

@@ -1,5 +1,17 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Literal color correction and Live mode verification — 2026-10-29
+
+- [x] Reproduce red `<LS_BEN>` and replace it with body text color across modes/themes.
+- [x] Exercise the real React Editor through Source/Live/Reading and verify unchanged note text.
+- [x] Validate and deploy the corrected snapshot to CT102; verify actual served build/assets.
+
+Progress 2026-10-29: exact multiline-backtick example compared in hidden Obsidian,
+including blank paragraphs. Live now conceals delimiters and retains ordinary literal
+body lines; underscore angle identifiers use body color. 188 server +363 web tests,
+typecheck/build/HTTP smoke passed. CT102 build `cc8b061-worktree-a14ad1ae6b77` verified;
+backup `/opt/webobsidian/backups/20261029T135417Z-literal-live/`.
+
 ## CI and dependency vulnerability audit — 2026-10-29
 
 Cập nhật lần cuối: 2026-10-29.
@@ -10,6 +22,61 @@ Cập nhật lần cuối: 2026-10-29.
 - [x] Local validation: actionlint 1.7.12, 27 protected dependency copies, npm audit (zero vulnerabilities), all workspace/desktop typechecks, 186 server tests +253 web tests, application/desktop builds and disposable HTTP integration smoke pass. Seven Windows symlink tests skipped. Local runtime: Windows/Node 26.3.0; Linux/Node 22, Bash runtime smoke, Docker and Linux desktop packaging require the first hosted run after push (Docker daemon unavailable locally). No hosted run of the edited workflow is claimed.
 
 Progress log 2026-10-29: user requested CI setup and vulnerability auditing, then explicitly authorized committing/pushing only these changes and verifying hosted Actions. Initial hosted run `40871273318` passed Docker and the zero-vulnerability audit but exposed Electron 43's lazy runtime installation: npm ci leaves chrome-sandbox absent. Install the pinned runtime explicitly before configuring the sandbox, then repeat hosted verification. Publish CI and its documentation separately from unrelated editor work; production access remains out of scope.
+
+## Full Editing Toolbar parity — planning 2026-10-29
+
+Cập nhật lần cuối: 2026-10-29.
+
+- [x] Document native architecture, inventory of 64 standard commands, popup subpanels and selection behavior, rendering compatibility, settings/import and release checks.
+- [x] Tasks 1–3: pinned behavior fixtures, shared command registry and all overlay types.
+- [x] Tasks 4–7: basic/block formatting, colors/alignment/rendering, brush/eraser, insert/clipboard.
+- [x] Tasks 8–9: all 15 text tools, layouts, settings/import and focus/fullscreen.
+- [x] Task 10: complete parity matrix, regression checks, review and CT102 release including finished parallel changes.
+
+Design: `docs/superpowers/specs/2026-10-29-full-editing-toolbar-design.md`.
+Plan: `docs/superpowers/plans/2026-10-29-full-editing-toolbar.md`.
+Progress log 2026-10-29: planning requested by user; second screenshot explicitly adds popup subpanels to acceptance. Implementation subsequently completed and deployed: cc8b061-worktree-4b3d33dba0da;188 server+359 web PASS,7 Windows skips; backup20261029T133149Z-toolbar-full. Detailed implementation record: docs/superpowers/plans/2026-10-29-full-editing-toolbar-progress.md.
+
+## Rendering compatibility audit and implementation — 2026-10-29
+
+Cập nhật lần cuối: 2026-10-29.
+
+- [x] Map Live/Reading, Preview, embed, table-cell and public rendering paths; reproduce 14 groups of semantic inconsistencies with synthetic function/browser probes.
+- [x] Record evidence, scope, priorities, reference requirements and an eight-stage plan in `docs/superpowers/plans/2026-10-29-rendering-parity.md`.
+- [x] Implement and verify the first critical batch: code/escaping protection, inline HTML boundaries, literal identifiers, comments, heading embeds and attachment source paths.
+- [x] Compare synthetic fixtures against Obsidian 1.14.5; unify web/public dialect and HTML policy; fix Reading footnotes, table formatting, nested callouts, block embeds, relative note resolution and unsafe YAML editing fallback. Record original UI evidence and source hash.
+- [~] Execute the remaining compatibility plan: complete reference matrix, shared HTML policy, block targets, complex tables/frontmatter and visual parity.
+
+Follow-up 2026-10-29: shared policy and basic block targets are implemented; extended container/heading/cycle cases and full visual acceptance remain open. Original window screenshot capture times out, so the comparison report distinguishes accessibility/semantic evidence from pixel parity. See `docs/rendering-compatibility.md`.
+
+Background follow-up 2026-10-29: a separate hidden Obsidian 1.14.5 now supplies PNG/DOM/computed-style references without OS focus or input. Quoted/list tables (including empty columns and edit/Undo prefixes), compound heading paths and the observed six-level embed limit are implemented. Typography corrections are covered by measured-style assertions. Full visual acceptance across themes/widths and advanced container cases remain open.
+
+Deployment verification 2026-10-29: user requested deployment. CT102 already runs `cc8b061-worktree-4b3d33dba0da` with identical hashes for all 159 current runtime sources/manifests. Runtime checksums, exact image ID, health/build, served index and service/retry timer passed; no redundant restart or vault mutation was needed.
+
+Progress log 2026-10-29: user authorized implementation. Critical fixes include regression fixtures, real CodeMirror browser checks and independent review; note source remains unchanged during rendering. Detailed evidence, scope and remaining work: `docs/superpowers/plans/2026-10-29-rendering-parity-progress.md`. No deployment in this batch.
+
+## CT102 deployment of toolbar and literal-text fix — 2026-10-29
+
+- [x] Package the current source snapshot including both finished FR-2 changes; build a Linux runtime image without copying Windows dependencies.
+- [x] Back up runtime configuration and app data, switch only WebObsidian, verify health/build/assets/auth/settings and resume the retry timer.
+- [x] Record installed snapshot/image and rollback backup in `docs/INSTALLATION_CT102.md`. Installed `ec98d13-worktree-c7914377d6f8`; both toolbar and literal `<LS_BEN>` fixes included. Backup `/opt/webobsidian/backups/20261029T113133Z-toolbar/`; previous image retained. No Git commit/push.
+
+## Color and selection formatting — 2026-10-29
+
+Cập nhật lần cuối: 2026-10-29.
+
+- [x] FR-2: text/background palettes and reset on existing toolbars; Obsidian-compatible source and safe preview rendering.
+- [x] FR-2: floating selection toolbar, selection preservation, viewport placement, Escape and read-only guards.
+- [x] Verify commands, rendering, browser interactions, full tests, typecheck and build. Final run: 186 server + 205 web tests pass (7 Windows symlink skips); 48 browser assertions across desktop/mobile, typecheck, build and disposable HTTP smoke pass. Independent review findings fixed with regressions for nested spans, Markdown block prefixes and inline code. Subsequently deployed with the literal-text fix at the user's request (see CT102 deployment above).
+
+Design/implementation: `docs/superpowers/plans/2026-10-29-color-toolbar.md`.
+
+## Literal angle-bracket text in Live Preview — 2026-10-29
+
+Cập nhật lần cuối: 2026-10-29.
+
+- [x] FR-2: preserve `<LS_BEN>` as literal text in inline and standalone positions (including lists/quotes), without changing note source; retain ordinary HTML rendering.
+- [x] Verify the regression in a hidden browser with the caret inside/outside the line and in Reading mode. Independent review caught nested-container recognition; all 16 browser checks pass. Final verification: 186 server + 194 web tests pass (7 Windows symlink skips), typecheck, build and temporary-vault integration smoke pass.
 
 ## Rendering dependency remediation — 2026-10-29
 
@@ -902,6 +969,8 @@ Cập nhật lần cuối: 2026-10-16 (issue #36 reveal active file in explorer;
       `bash deploy/smoke.sh` trên instance tạm: **17 PASS, 0 FAIL**.
 
 ### Nhật ký tiến độ
+- 2026-10-29: Rendering audit — reproduced mixed HTML/literal loss, code/escaping violations, embed/attachment errors and cross-mode differences. Saved the proposed compatibility plan; production code unchanged during analysis.
+- 2026-10-29: FR-2 — fixed literal `<LS_BEN>` disappearing in Live/Reading HTML replacements, including standalone text, lists and quotes, without changing note source. Strict tag-name recognition retains ordinary HTML; hidden Electron regressions verified before/after the fix. Full tests, typecheck, build and disposable integration smoke pass.
 - 2026-09-30 (Phase 45 — danh sách giá trị cho thuộc tính đóng, FR-23, issue #61): người dùng nói "the
   task will be selection list, to easy select status". Trên trang task, `status:` là text tự do nên đổi
   trạng thái phải gõ đúng id — mà gõ sai thì **không vô hại**: board chỉ map id canonical + vài alias,

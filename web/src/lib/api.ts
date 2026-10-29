@@ -1,4 +1,16 @@
 // Thin fetch wrapper around the WebObsidian server API.
+import type {ToolbarConfigV1} from './toolbar/config';
+
+export interface Settings {
+  version: number;
+  auth: {hasCustomPassword:boolean;hasOverridePassword:boolean};
+  vault: {path:string;allowedRoots:string[];trash:string;deleteMode:'trash'|'permanent';trashRetentionDays:number;attachmentDir:string};
+  git: {enabled:boolean;remote:string;branch:string;token:string;authorName:string;authorEmail:string;autoSync:boolean;autoCommitOnSave:boolean;intervalSec:number;lfsPatterns:string[]};
+  search: {fuzzy:number;prefix:boolean;indexFrontmatter:boolean};
+  api: {rateLimitPerMin:number;keys:unknown[]};
+  ui: {theme:string;defaultView:'live'|'source'|'reading';showInlineTitle:boolean;editingToolbar?:ToolbarConfigV1};
+  plugins:{enabled:string[];installed:string[]};
+}
 
 export interface TreeNode {
   name: string;
@@ -248,7 +260,7 @@ export const api = {
     if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).error ?? 'Upload failed', res.status);
     return res.json() as Promise<{ ok: true; path: string; size: number }>;
   },
-  rawUrl: (path: string) => `/api/files/content?path=${encodeURIComponent(path)}`,
+  rawUrl: (path: string, from?: string) => `/api/files/content?path=${encodeURIComponent(path)}${from ? `&from=${encodeURIComponent(from)}` : ''}`,
   /** Same route, but the server sends it as an attachment under its own name (FR-22). */
   downloadUrl: (path: string) =>
     `/api/files/content?path=${encodeURIComponent(path)}&download=1`,
@@ -277,8 +289,8 @@ export const api = {
     }),
   backlinks: (path: string) =>
     req<{ backlinks: string[] }>(`/api/backlinks?path=${encodeURIComponent(path)}`),
-  resolve: (target: string) =>
-    req<{ path: string | null }>(`/api/resolve?target=${encodeURIComponent(target)}`),
+  resolve: (target: string, from?: string) =>
+    req<{ path: string | null }>(`/api/resolve?target=${encodeURIComponent(target)}${from ? `&from=${encodeURIComponent(from)}` : ''}`),
   graph: () =>
     req<{
       nodes: { id: string; label: string; kind: 'note' | 'attachment' | 'unresolved'; tags: string[] }[];
@@ -306,7 +318,7 @@ export const api = {
     }),
 
   // settings
-  getSettings: () => req<any>('/api/settings/'),
+  getSettings: () => req<Settings>('/api/settings/'),
   putSettings: (patch: any) => req<any>('/api/settings/', { method: 'PUT', body: JSON.stringify(patch) }),
   browse: (dir?: string) =>
     req<{ dir: string; parent: string; roots: string[]; folders: { name: string; path: string }[] }>(

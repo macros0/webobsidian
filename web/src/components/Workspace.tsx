@@ -86,6 +86,7 @@ function EditorPane() {
 }
 
 export default function Workspace() {
+  const locked = useStore((s) => s.locked);
   const tabs = useStore((s) => s.tabs);
   const activePath = useStore((s) => s.activePath);
   const openFile = useStore((s) => s.openFile);
@@ -299,6 +300,10 @@ export default function Workspace() {
     const isNote = !!activePath && /\.(md|markdown)$/i.test(activePath);
     const noteDir = activePath && isNote ? activePath.split('/').slice(0, -1).join('/') : '';
     const dir = isNote && noteDir ? `${noteDir}/${ATTACHMENT_DIR_NAME}` : ATTACHMENT_DIR_NAME;
+    const uploadView = getActiveEditor();
+    let uploadDoc = uploadView?.state.doc;
+    let uploadSelection = uploadView?.state.selection;
+    const uploadPath = activePath;
     let text = content;
     for (const file of Array.from(files)) {
       if (!file.type.startsWith('image/')) continue;
@@ -310,10 +315,12 @@ export default function Workspace() {
         const md = isNote
           ? `![](${rel.replace(/ /g, '%20').replace(/\(/g, '%28').replace(/\)/g, '%29')})`
           : `![[${path}]]`;
-        const ed = isNote ? getActiveEditor() : null;
+        if(useStore.getState().activePath!==uploadPath || (uploadView && (uploadView!==getActiveEditor() || uploadView.state.readOnly || uploadView.state.doc!==uploadDoc))) {notify('Uploaded '+path+'; document changed, insert the link manually.');continue;}
+        const ed = isNote ? uploadView : null;
         if (ed) {
-          const { from, to } = ed.state.selection.main;
+          const { from, to } = (uploadSelection ?? ed.state.selection).main;
           ed.dispatch({ changes: { from, to, insert: `${md}\n` }, selection: { anchor: from + md.length + 1 }, userEvent: 'input.paste' });
+          uploadDoc=ed.state.doc; uploadSelection=ed.state.selection;
         } else {
           text += `\n${md}\n`;
           setContent(text);
@@ -453,7 +460,7 @@ export default function Workspace() {
       )}
 
       {!isMobile && activePath && !isViewPath(activePath) && isMd && viewMode !== 'reading' && (
-        <FormatToolbar />
+        <FormatToolbar key={activePath} disabled={locked} />
       )}
 
       <div className={`editor-area ${splitDirection === 'down' ? 'split-down' : ''}`}>
@@ -501,7 +508,7 @@ export default function Workspace() {
         )}
       </div>
       {isMobile && activePath && !isViewPath(activePath) && isMd && viewMode !== 'reading' && (
-        <FormatToolbar mobile />
+        <FormatToolbar key={activePath} mobile disabled={locked} />
       )}
       <StatusBar />
     </div>

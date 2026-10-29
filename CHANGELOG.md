@@ -1,5 +1,65 @@
 # Changelog
 
+## Literal identifiers use body text color — 2026-10-29
+
+- Display `<LS_BEN>` and other underscore identifiers in the normal text color in
+  Source/Live/Reading, including their brackets. Preserve note source and actual
+  HTML/code syntax colors. This supersedes the earlier decision to retain red.
+- Verify mode switching with the actual React Editor: Source exposes Markdown,
+  Live renders it, Reading renders it read-only, and document text stays unchanged.
+- Match Obsidian Live for paired multiline backticks, including blank paragraphs:
+  conceal delimiters and display the body as ordinary literal lines, preserving
+  identifiers and line breaks. Reading keeps its separate Markdown semantics.
+
+## 2026-10-29 — Native Editing Toolbar
+
+- Full standard toolbar inventory with popup groups, text tools, insert dialogs, brush/cleanup, alpha colors and alignment; shared editor command registry.
+- Selection, fixed and mobile layouts, safe settings/import/export, custom literal templates and clipboard fallbacks.
+- Retain finished parallel rendering parity work (tables, embeds, fragments, typography and literal angle-bracket text).
+
+
+## Rendering parity: background reference checks — 2026-10-29
+
+- Capture Obsidian 1.14.5 reference PNG/DOM/styles in an isolated hidden process,
+  preserving OS focus and note hashes. No app installation or production access.
+- Render tables inside lists/quotes, preserve their prefixes on edit/Undo and retain
+  empty column positions and correctly escaped pipes.
+- Resolve compound heading paths within their parent sections and match the observed
+  six-level transclusion limit. Align measured text, paragraph, quote and table metrics.
+
+## Rendering parity: original Obsidian comparison — 2026-10-29
+
+- Compare synthetic fixtures with Obsidian 1.14.5 in an isolated vault; record
+  accessibility evidence and unchanged source hash (window capture was unavailable).
+- Share Markdown preprocessing, callouts, tasks and HTML sanitization between web/public.
+  Render formatted table cells, nested/folded callouts and Reading footnotes with working
+  links and unique IDs. Keep compiled embeds out of a second Markdown pass.
+- Support paragraph/list block embeds and source-relative resolution of same-named notes;
+  omit filename titles for fragment embeds and preserve angle-wrapped image destinations.
+- Fall back to visible source for YAML the simple property editor cannot preserve.
+- Verify 24 mode/theme/width/line-ending combinations without document edit transactions.
+  Remaining visual and syntax coverage is documented in `docs/rendering-compatibility.md`.
+
+## Rendering parity: critical parsing fixes — 2026-10-29
+
+- Preserve literal identifiers such as `<LS_BEN>` alongside inline HTML in Live/Reading.
+- Protect parser-defined code, escapes and HTML attributes before Markdown extensions;
+  restrict Live tables to actual parser boundaries and prevent embed expansion inside code.
+- Hide Obsidian comments in Reading/preview/public output, including public metadata,
+  while keeping them editable in Live and preserving literal examples inside code.
+- Share heading-embed selection between Live and preview, preserve attachment paths and
+  carry the embedded note's path when resolving its images. Missing headings keep a fallback.
+- Add shared fixtures and browser regressions for source preservation. Full visual parity,
+  block embeds, complex table formatting and remaining dialect differences are still pending.
+
+## Editor color and selection toolbar — 2026-10-29
+
+- Add text/background color palettes, custom colors and reset to the desktop/mobile formatting toolbar.
+- Show a compact floating toolbar for selected text; preserve selection, support Escape and Undo/Redo,
+  inherit the current theme, and disable formatting on locked/read-only notes.
+- Store Obsidian-compatible color spans, preserve Markdown block structure and render colors with
+  emphasis/inline code in Live/Reading and the Markdown preview. No new dependencies.
+
 ## Rendering dependency maintenance — 2026-10-29
 
 - Upgrade KaTeX to patched 0.18.10 and Mermaid to 12.2.0, sharing the patched math renderer.

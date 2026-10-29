@@ -11,6 +11,8 @@ server/dist/
 server/public/
 coverage/
 *.tsbuildinfo
+# Local execution ledgers and review scratch files
+.superpowers/
 # Desktop (Electron) build artifacts
 desktop/.gen/
 desktop/release/

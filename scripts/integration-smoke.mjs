@@ -31,6 +31,10 @@ try {
   }));
   await fs.writeFile(path.join(vault, 'notes', 'locked.md'), '# Locked');
   await fs.writeFile(path.join(vault, 'notes', 'editable.md'), '# Editable');
+  await fs.writeFile(path.join(vault, 'notes', 'neighbor.md'), '# Nearby');
+  await fs.writeFile(path.join(vault, 'neighbor.md'), '# Root collision');
+  await fs.mkdir(path.join(vault, 'second'));
+  await fs.writeFile(path.join(vault, 'second', 'neighbor.md'), '# Second collision');
   const pdf = Buffer.from('%PDF-1.4\n% smoke-test fixture\n%%EOF\n');
   await fs.writeFile(path.join(vault, 'notes', 'attachments', 'document.pdf'), pdf);
   await fs.writeFile(path.join(vault, 'attachments', 'document.pdf'), '%PDF-root-collision');
@@ -69,6 +73,10 @@ try {
   const relative = '/api/files/content?path=attachments/document.pdf&from=notes/editable.md';
   const resolved = await (await request('/api/files/resolve?path=attachments/document.pdf&from=notes/editable.md')).json();
   assert.equal(resolved.path, 'notes/attachments/document.pdf');
+  const localNote = await (await request('/api/resolve?target=neighbor&from=notes/editable.md')).json();
+  assert.equal(localNote.path, 'notes/neighbor.md', 'note embeds resolve beside their source before basename fallback');
+  const secondNote = await (await request('/api/resolve?target=neighbor&from=second/root.md')).json();
+  assert.equal(secondNote.path, 'second/neighbor.md');
   const document = await request(relative);
   assert.equal(document.status, 200);
   assert.match(document.headers.get('content-type'), /application\/pdf/);

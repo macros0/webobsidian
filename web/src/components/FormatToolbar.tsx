@@ -1,62 +1,17 @@
+import ToolbarSurface from './toolbar/ToolbarSurface';
 import { useEffect, useState } from 'react';
-import Icon from './Icon';
-import type { IconName } from './Icon';
-import {
-  fmtInline,
-  fmtChecklist,
-  fmtPrefixLines,
-  fmtInsert,
-  fmtLink,
-  fmtIndent,
-  fmtOutdent,
-  fmtUndo,
-  fmtRedo,
-} from '../lib/activeEditor';
+import type { EditorView } from '@codemirror/view';
 
-type Btn = { icon: IconName; title: string; run: () => void };
-
-const BUTTONS: Btn[] = [
-  { icon: 'heading', title: 'Heading', run: () => fmtPrefixLines('# ') },
-  { icon: 'bold', title: 'Bold', run: () => fmtInline('**') },
-  { icon: 'italic', title: 'Italic', run: () => fmtInline('*') },
-  { icon: 'list', title: 'Bullet list', run: () => fmtPrefixLines('- ') },
-  { icon: 'check-square', title: 'Checklist', run: () => fmtChecklist() },
-  { icon: 'quote', title: 'Quote', run: () => fmtPrefixLines('> ') },
-  { icon: 'brackets', title: 'Internal link', run: () => fmtInsert('[[]]', 2) },
-  { icon: 'link', title: 'Link', run: () => fmtLink() },
-  { icon: 'code', title: 'Inline code', run: () => fmtInline('`') },
-  { icon: 'hash', title: 'Tag', run: () => fmtInsert('#') },
-  { icon: 'indent-increase', title: 'Indent', run: () => fmtIndent() },
-  { icon: 'indent-decrease', title: 'Outdent', run: () => fmtOutdent() },
-  { icon: 'undo', title: 'Undo', run: () => fmtUndo() },
-  { icon: 'redo', title: 'Redo', run: () => fmtRedo() },
-];
-
-function Buttons({ size }: { size: number }) {
-  return (
-    <>
-      {BUTTONS.map((b) => (
-        <button
-          key={b.title}
-          title={b.title}
-          // Keep the editor focused / the keyboard open when a button is pressed.
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={b.run}
-        >
-          <Icon name={b.icon} size={size} />
-        </button>
-      ))}
-    </>
-  );
+export function FormattingButtons({size,view,compact=false,disabled=false}:{size:number;view?:EditorView;compact?:boolean;disabled?:boolean}) {
+  return <ToolbarSurface view={view} layout={compact?'following':'top'} disabled={disabled}/>;
 }
-
 /**
  * Markdown formatting toolbar (Obsidian Mobile-style). Two layouts:
  * - mobile: fixed above the on-screen keyboard (anchored via the visual viewport,
  *   since iOS Safari doesn't reflow fixed elements for the keyboard).
  * - desktop: an in-flow strip rendered right under the view header.
  */
-export default function FormatToolbar({ mobile = false }: { mobile?: boolean }) {
+export default function FormatToolbar({ mobile = false, disabled = false }: { mobile?: boolean; disabled?: boolean }) {
   const [bottom, setBottom] = useState(0);
 
   useEffect(() => {
@@ -80,14 +35,14 @@ export default function FormatToolbar({ mobile = false }: { mobile?: boolean }) 
 
   if (mobile) {
     return (
-      <div className="mobile-toolbar" style={{ bottom }}>
-        <Buttons size={20} />
+      <div className="mobile-toolbar" role="toolbar" aria-label="Formatting" style={{ bottom }}>
+        <ToolbarSurface layout="mobile" disabled={disabled} />
       </div>
     );
   }
   return (
-    <div className="format-toolbar">
-      <Buttons size={16} />
+    <div className="format-toolbar" role="toolbar" aria-label="Formatting">
+      <ToolbarSurface disabled={disabled} /><div className="fixed-format-toolbar"><ToolbarSurface layout="fixed" disabled={disabled}/></div>
     </div>
   );
 }
