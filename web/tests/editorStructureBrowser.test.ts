@@ -21,7 +21,7 @@ test('real editor: Tab, Shift-Tab, visible folding and undo work in live and sou
    api.tags=async()=>({tags:[]});api.propertyTypes=async()=>({types:{}});
    const wait=()=>new Promise(r=>setTimeout(r,100));const check=(v,m)=>{if(!v)throw Error(m)};
    const fence=String.fromCharCode(96).repeat(3);
-   const doc=['# Title','body','','- parent','\\t- child','\\t\\t- grandchild','- sibling','','plain','\\tchild','','code',fence+'abap','parent','\\tchild',fence,'','# Next','end'].join('\\n');
+   const doc=['# Title','body','','- parent','\\t- child','\\t\\t- grandchild','- sibling','','plain','\\tchild','','code',fence+'abap','ZCL_3409_BADI_PRP-GET_INSURED_INFO','\\tzcl_3409_helper=>convert_date( EXPORTING iv_date = start_dt','\\t\\tIMPORTING ev_date = begin ).','','\\tzcl_3409_helper=>convert_date( EXPORTING iv_date = finish_dt','\\t\\tIMPORTING ev_date = end ).',fence,'','# Next','end'].join('\\n');
    let root;
    window.prepare=async mode=>{
     root?.unmount();document.body.className='theme-dark';document.body.innerHTML='<div class="cm-s-obsidian" id="root"></div>';
@@ -52,6 +52,25 @@ test('real editor: Tab, Shift-Tab, visible folding and undo work in live and sou
     check(foldedRanges(v.state).size>0,'arrow click folds section');unfoldAll(v);await wait();
     check(v.state.doc.toString()===doc,'click folding does not change text');
    };
+   window.nestedCode=async()=>{
+    const v=getActiveEditor();unfoldAll(v);v.dispatch({selection:{anchor:v.state.doc.line(15).from}});await wait();
+    const clickLine=async n=>{
+     const line=v.state.doc.line(n),block=v.lineBlockAt(line.from),y=v.documentTop+block.top+block.height/2;
+     const marker=Array.from(v.dom.querySelectorAll('.cm-foldGutter .cm-gutterElement')).find(e=>{const r=e.getBoundingClientRect();return getComputedStyle(e).visibility!=='hidden'&&v.lineBlockAtHeight((r.top+r.bottom)/2-v.documentTop).from===line.from&&e.textContent.trim()});
+     check(marker,'nested ABAP fold arrow on line '+n);const r=marker.getBoundingClientRect();
+     marker.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:r.left+3,clientY:y,button:0}));await wait();
+    };
+    await clickLine(15);
+    check(foldedRanges(v.state).size===1,'first call continuation folds');
+    check(!v.contentDOM.textContent.includes('IMPORTING ev_date = begin'),'first continuation hidden');
+    check(v.contentDOM.textContent.includes('IMPORTING ev_date = end'),'sibling continuation stays visible');
+    check(v.contentDOM.textContent.includes('ZCL_3409'),'enclosing block stays open');
+    await clickLine(15);check(foldedRanges(v.state).size===0,'same arrow unfolds continuation');
+    check(v.contentDOM.textContent.includes('IMPORTING ev_date = begin'),'continuation restored');
+    await clickLine(18);const folds=[];foldedRanges(v.state).between(0,v.state.doc.length,(from,to)=>folds.push([from,to]));check(!v.contentDOM.textContent.includes('IMPORTING ev_date = end'),'second continuation folds independently '+JSON.stringify({folds,line18:v.state.doc.line(18).to,line19:v.state.doc.line(19).to,text:v.contentDOM.textContent}));
+    await clickLine(18);check(foldedRanges(v.state).size===0,'second continuation unfolds');
+    check(v.state.doc.toString()===doc,'fold/unfold round trip preserves original code');
+   };
   `},bundle:true,format:'iife',platform:'browser',loader:{'.woff2':'file','.woff':'file','.ttf':'file'},define:{'import.meta.env.DEV':'false','import.meta.url':JSON.stringify('file:///fixture.js')},outfile:join(dir,'fixture.js'),logLevel:'silent'});
   await writeFile(join(dir,'index.html'),'<meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><script src="fixture.js"></script>');
   await writeFile(join(dir,'runner.cjs'),`const {app,BrowserWindow}=require('electron');app.whenReady().then(async()=>{
@@ -62,7 +81,7 @@ test('real editor: Tab, Shift-Tab, visible folding and undo work in live and sou
     w.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});w.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});
     await evaluate('window.indented()');
     w.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab',modifiers:['shift']});w.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab',modifiers:['shift']});
-    await evaluate('window.outdented()');
+    await evaluate('window.outdented()');await evaluate('window.nestedCode()');
    }console.log('STRUCTURE_PASS');w.destroy();app.quit();}).catch(e=>{console.error(e);app.exit(1)});`);
   const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
   const {stdout}=await promisify(execFile)(createRequire(import.meta.url)('electron'),[...(process.platform==='linux'?['--ozone-platform=headless']:[]),join(dir,'runner.cjs')],{env,windowsHide:true,timeout:60000});

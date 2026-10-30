@@ -3,12 +3,14 @@
 ## Editor indentation and folding — 2026-10-30
 
 - [x] Add four-column tab stops, literal Tab insertion and list/selection indentation with Shift-Tab outdent.
-- [x] Add clickable folding for headings, nested indentation and complete fenced code blocks; preserve literal code interiors.
+- [x] Add clickable folding for headings, nested indentation, complete fenced code blocks and individual indented code statements; preserve code text literally and stop at the enclosing fence.
 - [x] Indent/outdent a folded parent together with its hidden descendants; keep folding visual and support undo.
 - [x] Add fenced-code indentation guides, standard folding shortcuts and command-palette fold/unfold actions.
 - [x] Verify structural boundaries, readonly protection, mixed indentation and actual Editor keyboard/click behavior in Live Preview and Source.
 
 Progress 2026-10-30: five unit tests and the actual React Editor browser regression passed; web typecheck passed. Full tests/build recorded in the task result. Fold state is local to the current editor instance.
+
+Follow-up 2026-10-30: the original ABAP screenshot requires folding inside fenced code, not only the enclosing block. Removed the code-interior exclusion, bounded nested folds by code syntax nodes, and added independent fold/unfold clicks for both ABAP calls in Live Preview and Source. Seven structural unit tests and the browser regression passed before full verification.
 
 ## Draft recovery usability — 2026-10-30
 

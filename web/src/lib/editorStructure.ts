@@ -25,20 +25,34 @@ function shiftOutline(target: Parameters<StateCommand>[0], less: boolean): boole
 }
 export const outdentOutline: StateCommand = target=>shiftOutline(target,true);
 
-function inCode(state: EditorState, pos: number): boolean {
-  for(let node=syntaxTree(state).resolve(pos,1);node;node=node.parent!) {
-    if(node.name==='FencedCode'||node.name==='CodeBlock')return true;
+function codeBlockAt(state: EditorState, pos: number) {
+  const line=state.doc.lineAt(pos);
+  const contentStart=line.from+(line.text.match(/^[\t ]*/)?.[0].length??0);
+  for(let node=syntaxTree(state).resolve(contentStart,1);node;node=node.parent!) {
+    if(node.name==='FencedCode'||node.name==='CodeBlock')return node;
   }
-  return false;
+  return null;
 }
+const inCode=(state:EditorState,pos:number)=>codeBlockAt(state,pos)!==null;
 
-/** Fold indentation outside literal code. Markdown supplies heading/fence folds. */
+/** Fold indentation both in prose and code, bounded by the enclosing code block. */
 export function indentFold(state: EditorState, start: number, end: number): {from:number;to:number}|null {
   const line=state.doc.lineAt(start);
-  if(!line.text.trim()||inCode(state,start)||/^\s*#{1,6}\s/.test(line.text))return null;
+  const code=codeBlockAt(state,start);
+  if(!line.text.trim()||(!code&&/^\s*#{1,6}\s/.test(line.text)))return null;
+  let lastLine=state.doc.lines;
+  if(code){
+    lastLine=state.doc.lineAt(code.to).number;
+    if(code.name==='FencedCode'){
+      const marks=code.getChildren('CodeMark');
+      if(marks.some(mark=>state.doc.lineAt(mark.from).number===line.number))return null;
+      const closing=marks.length>1?marks[marks.length-1]:null;
+      if(closing)lastLine=state.doc.lineAt(closing.from).number-1;
+    }
+  }
   const depth=countColumn(line.text.match(/^[\t ]*/)?.[0]??'',state.tabSize);
   let to=end;
-  for(let n=line.number+1;n<=state.doc.lines;n++) {
+  for(let n=line.number+1;n<=lastLine;n++) {
     const child=state.doc.line(n);
     if(!child.text.trim())continue;
     const indent=countColumn(child.text.match(/^[\t ]*/)?.[0]??'',state.tabSize);
