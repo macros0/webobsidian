@@ -35,7 +35,7 @@ test('browser zoom and keyboard viewport keep toolbar, draft status, menus and p
  document.querySelector('#pane').style.width='calc(100vw - '+(sidebar+12)+'px)';document.querySelector('#pane').style.marginLeft=sidebar+'px';
  const bar=document.querySelector('.format-toolbar > .toolbar-surface');
  await settle(()=>Array.from(bar.children).filter(n=>!n.classList.contains('toolbar-measure')).every(n=>n.getBoundingClientRect().right<=bar.getBoundingClientRect().right+1));
- check(inside(bar),'desktop toolbar bounds');
+ check(inside(bar),'desktop toolbar bounds '+JSON.stringify({sidebar,viewport:[innerWidth,innerHeight],visual:{width:visualViewport.width,height:visualViewport.height},rect:bar.getBoundingClientRect().toJSON()}));
  const more=bar.querySelector('[aria-label="More"]');if(more){more.click();await settle(()=>!!document.querySelector('[role="menu"]'));check(inside(document.querySelector('[role="menu"]')),'zoom menu bounds');document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));}
  check(view.state.selection.main.to===5,'zoom keeps selection');
  return {sidebar,width:innerWidth,dpr:devicePixelRatio};
@@ -70,9 +70,13 @@ test('browser zoom and keyboard viewport keep toolbar, draft status, menus and p
  await writeFile(join(dir,'runner.cjs'),`
  const {app,BrowserWindow}=require('electron');const fs=require('fs');app.setPath('userData',${JSON.stringify(join(dir,'profile'))});
  app.whenReady().then(async()=>{const w=new BrowserWindow({show:false,width:1440,height:900,webPreferences:{backgroundThrottling:false}});await w.loadFile(${JSON.stringify(join(dir,'index.html'))});
+ w.webContents.debugger.attach('1.3');
+ // Hidden Ozone windows have no reliable native surface (sometimes 1x1).
+ // Preserve each zoom's effective CSS viewport explicitly and assert it.
+ const viewport=async(width,height)=>{await w.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});const actual=await w.webContents.executeJavaScript('[innerWidth,innerHeight]');const factor=w.webContents.getZoomFactor();const expected=[Math.round(width/factor),Math.round(height/factor)];if(actual[0]!==expected[0]||actual[1]!==expected[1])throw Error('Viewport mismatch '+JSON.stringify({actual,expected,factor}));};
  const results={zoom:[],keyboard:[]};
- for(const factor of [1,1.25,1.5,2]){w.webContents.setZoomFactor(factor);await w.webContents.executeJavaScript('window.setup(false)');for(const sidebar of [0,220,420]){const r=await w.webContents.executeJavaScript('window.checkDesktop('+sidebar+')');if(Math.abs(w.webContents.getZoomFactor()-factor)>0.01)throw Error('Zoom mismatch');results.zoom.push({factor,...r});}}
- w.webContents.setZoomFactor(1);await w.webContents.executeJavaScript('window.fixed()');w.webContents.debugger.attach('1.3');await w.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});await w.webContents.debugger.sendCommand('Emulation.setTouchEmulationEnabled',{enabled:true});
+ for(const factor of [1,1.25,1.5,2]){w.webContents.setZoomFactor(factor);await viewport(1440,900);await w.webContents.executeJavaScript('window.setup(false)');for(const sidebar of [0,220,420]){const r=await w.webContents.executeJavaScript('window.checkDesktop('+sidebar+')');if(Math.abs(w.webContents.getZoomFactor()-factor)>0.01)throw Error('Zoom mismatch');results.zoom.push({factor,...r});}}
+ w.webContents.setZoomFactor(1);await viewport(1440,900);await w.webContents.executeJavaScript('window.fixed()');await w.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});await w.webContents.debugger.sendCommand('Emulation.setTouchEmulationEnabled',{enabled:true});
  await w.webContents.executeJavaScript('window.setupMobile()');for(const args of [[844,0],[480,0],[280,120],[844,0]])results.keyboard.push(await w.webContents.executeJavaScript('window.keyboard('+args.join(',')+')'));
  await w.webContents.executeJavaScript('window.keyboard(280,120)');await w.webContents.executeJavaScript('window.conflictKeyboard()');
  await w.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width:390,height:480,screenHeight:844,deviceScaleFactor:1,mobile:true});results.keyboard.push({...await w.webContents.executeJavaScript('window.keyboard(480,0)'),mode:'layout-resize'});
