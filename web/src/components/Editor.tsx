@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import DocOutline from './DocOutline';
 import { Compartment, EditorState, Prec } from '@codemirror/state';
 import { EditorView, keymap, highlightActiveLine, drawSelection, rectangularSelection, crosshairCursor } from '@codemirror/view';
-import { defaultKeymap, simplifySelection, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { defaultKeymap, simplifySelection, history, historyKeymap } from '@codemirror/commands';
+import { editorStructure } from '../lib/editorStructure';
 import { search, searchKeymap } from '@codemirror/search';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { yamlFrontmatter } from '@codemirror/lang-yaml';
@@ -201,7 +202,8 @@ export default function Editor() {
         ),
         // In-document Find/Replace (⌘F / ⌘⇧F open the panel; ⌘G next).
         search({ top: true }),
-        keymap.of([{ key: 'Escape', run: simplifySelection }, ...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+        keymap.of([{ key: 'Escape', run: simplifySelection }, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+        editorStructure,
         // GFM base so Strikethrough/Table/TaskList nodes exist (Obsidian dialect);
         // codeLanguages lazy-loads grammars for fenced blocks (Obsidian: Prism).
         // YAML front matter (--- … ---) is parsed as YAML; the rest stays Markdown.

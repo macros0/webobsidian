@@ -1,5 +1,24 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Editor indentation and folding — 2026-10-30
+
+- [x] Add four-column tab stops, literal Tab insertion and list/selection indentation with Shift-Tab outdent.
+- [x] Add clickable folding for headings, nested indentation and complete fenced code blocks; preserve literal code interiors.
+- [x] Indent/outdent a folded parent together with its hidden descendants; keep folding visual and support undo.
+- [x] Add fenced-code indentation guides, standard folding shortcuts and command-palette fold/unfold actions.
+- [x] Verify structural boundaries, readonly protection, mixed indentation and actual Editor keyboard/click behavior in Live Preview and Source.
+
+Progress 2026-10-30: five unit tests and the actual React Editor browser regression passed; web typecheck passed. Full tests/build recorded in the task result. Fold state is local to the current editor instance.
+
+## Draft recovery usability — 2026-10-30
+
+- [x] Replace the persistent draft counter with an actionable unsaved-text recovery list; hide empty lists and ordinary live autosaves.
+- [x] Explain browser copies and provide Review text, Download copy and Remove browser copy actions with vault-safe removal confirmation.
+- [x] Explain deleted originals and require an explicit separate copy to recover their text.
+- [x] Extend real-browser coverage for recovery, removal, deleted originals, normal autosaves and mobile keyboard/zoom positioning.
+
+Progress 2026-10-30: recovery/viewport browser regressions, web typecheck, full `npm test` (288 server + 417 web passed; 10 server skips) and production build passed. Independent code review reported no actionable findings.
+
 ## Remote MCP, indexing and editor recovery integration — 2026-10-30
 
 - [x] Integrate authenticated remote MCP alongside local stdio and scoped keys.
