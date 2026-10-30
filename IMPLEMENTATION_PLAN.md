@@ -1,5 +1,9 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+CI follow-up 2026-10-30: the fork-main PR reproduced a hidden Electron selection-pixel timing race. The fixture now isolates its profile, disables background throttling, waits for the exact viewport and measured selection coverage, then waits up to four seconds for the selected compositor frame. All original theme, width, selected-pixel, unselected-background and margin assertions remain intact; no runtime/CSS changes are involved.
+
+The next CI run passed the complete test suite and exposed a smoke-startup race: `/healthz` was ready before the asynchronous initial index scan, so missing-file resolution correctly returned `503` rather than `404`. The smoke fixture now waits on authenticated `/api/index/status` availability and initial-scan completion before its existing resolver assertions.
+
 ## Editor indentation and folding — 2026-10-30
 
 - [x] Add four-column tab stops, literal Tab insertion and list/selection indentation with Shift-Tab outdent.
