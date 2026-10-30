@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, type GraphSettings } from '../lib/store';
+import { resolveThemeColor } from '../lib/cssColor';
+import { THEME_SELECTOR } from '../lib/theme';
 import { api } from '../lib/api';
 import Icon from './Icon';
 import {
@@ -26,6 +28,8 @@ interface GNode {
   y?: number;
   vx?: number;
   vy?: number;
+  fx?: number;
+  fy?: number;
 }
 interface GLink {
   source: GNode | string;
@@ -106,6 +110,7 @@ export default function GraphView() {
   const openFile = useStore((s) => s.openFile);
   const searchFor = useStore((s) => s.searchFor);
   const settings = useStore((s) => s.graphSettings);
+  const theme = useStore((s) => s.theme); // re-render + repaint when the theme changes
   const patch = useStore((s) => s.setGraphSettings);
   const reset = useStore((s) => s.resetGraphSettings);
 
@@ -128,7 +133,8 @@ export default function GraphView() {
   const flyNode = useRef<GNode | null>(null);
   const adjRef = useRef<Map<GNode, Set<GNode>>>(new Map());
   const hover = useRef<GNode | null>(null);
-  const drag = useRef<{ px: number; py: number; moved: number } | null>(null);
+  const drag = useRef<{ px: number; py: number; moved: number; dragNode?: GNode } | null>(null);
+  const dragNode = useRef<GNode | null>(null);
   const rafRef = useRef<number>();
   const fullDirty = useRef(false);
   const edgesDirty = useRef(false);
@@ -175,9 +181,11 @@ export default function GraphView() {
   // ---- colour helpers -----------------------------------------------------
   const getCols = (): ColorSet => {
     const Color = mod.current!.Color;
-    const cs = getComputedStyle(document.querySelector('.theme-light, .theme-dark') || document.body);
+    // Theme-aware resolution: follows var() alias chains, normalises hsl()/calc() accents
+    // to rgb() and finds the themed root by *all* theme classes (see lib/cssColor.ts). The
+    // numeric fallback is kept for when the palette variable is genuinely missing.
     const toInt = (name: string, fb: number) => {
-      const v = cs.getPropertyValue(name).trim();
+      const v = resolveThemeColor(name);
       if (!v) return fb;
       try {
         return new Color(v).toNumber();
@@ -329,13 +337,18 @@ export default function GraphView() {
     fullDirty.current = false;
     updateLabels();
     p.app.render();
-    // debug/testing hook: expose the live camera (used by automated UI checks)
+    // debug/testing hook: expose the live camera + the resolved palette (used by automated
+    // UI checks — e.g. exercising the theme switch and asserting the label ink matches the
+    // active theme's --text-normal instead of eyeballing pixels).
     (window as unknown as { __graphCam?: object }).__graphCam = {
       k,
       x,
       y,
       target: zoomTarget.current,
       dev: devScale(k),
+      cols: p.cols,
+      labelFill: (p.labels[0]?.style as { fill?: number } | undefined)?.fill,
+      theme: (document.querySelector(THEME_SELECTOR) as HTMLElement | null)?.className ?? null,
     };
     if (zooming || fading) scheduleRender(false);
   };
@@ -478,6 +491,10 @@ export default function GraphView() {
     cand.sort((u, v) => (v.n === h ? 1 : 0) - (u.n === h ? 1 : 0) || v.n.deg - u.n.deg);
     const MAX = Math.min(cand.length, 400);
 
+    // Declutter: candidates are sorted hovered-first then by degree, so skip any
+    // label that would overlap one already placed — hubs keep their labels and
+    // the rest appear as you zoom in and they spread apart.
+    const placed: { l: number; r: number; t: number; b: number }[] = [];
     let li = 0;
     for (let ci = 0; ci < MAX; ci++) {
       const { n, sx, sy, a } = cand[ci];
@@ -485,9 +502,15 @@ export default function GraphView() {
       const t = ensureLabel(li++);
       if (t.text !== label) t.text = label;
       const isH = n === h;
-      if ((t as unknown as { _hv?: boolean })._hv !== isH) {
-        (t as unknown as { _hv?: boolean })._hv = isH;
-        t.style.fill = isH ? p.cols.accentHover : p.cols.textStrong;
+      // Keep the label ink in step with the active theme: a live theme switch must repaint
+      // text that is neither hovered nor newly created. Guarded so it rewrites only on change
+      // (and never re-rasterises a stable label), and `_hv`/fill are one condition so a
+      // hover-to-normal transition repaints too.
+      const wantFill = isH ? p.cols.accentHover : p.cols.textStrong;
+      const hv = t as unknown as { _hv?: boolean };
+      if (hv._hv !== isH || t.style.fill !== wantFill) {
+        hv._hv = isH;
+        t.style.fill = wantFill;
       }
       // Obsidian: labels live in world space with scale = nodeScale and font
       // size 14 + getSize()/4, i.e. they shrink with √zoom exactly like nodes;
@@ -498,6 +521,12 @@ export default function GraphView() {
       t.scale.set(sc);
       t.x = sx;
       t.y = sy + (r + 5) * rs + (isH ? 15 / dpr : 0);
+      const box = { l: t.x - t.width / 2, r: t.x + t.width / 2, t: t.y, b: t.y + t.height };
+      if (!isH && placed.some((o) => box.l < o.r && box.r > o.l && box.t < o.b && box.b > o.t)) {
+        li--; // give the pooled Text back; it's reused (or hidden) below
+        continue;
+      }
+      placed.push(box);
       t.alpha = a;
       t.visible = true;
     }
@@ -558,6 +587,30 @@ export default function GraphView() {
     zoomAnchor.current = null;
   };
 
+  // Animate the camera (via the fly-to animation) so every node fits the view.
+  // Only zooms out: a small graph keeps Obsidian's default scale.
+  const fitToView = () => {
+    const nodes = nodesRef.current;
+    const wrap = wrapRef.current;
+    if (!nodes.length || !wrap) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const n of nodes) {
+      x0 = Math.min(x0, n.x ?? 0);
+      y0 = Math.min(y0, n.y ?? 0);
+      x1 = Math.max(x1, n.x ?? 0);
+      y1 = Math.max(y1, n.y ?? 0);
+    }
+    const W = wrap.clientWidth || 900;
+    const H = wrap.clientHeight || 600;
+    const PAD = 80; // room for node radius + label below the outermost nodes
+    const k = Math.min((W - PAD * 2) / Math.max(1, x1 - x0), (H - PAD * 2) / Math.max(1, y1 - y0));
+    const target = Math.max(SCALE_MIN, k * dprNow());
+    if (target >= devScale(cam.current.k)) return; // already fits
+    zoomTarget.current = target;
+    flyNode.current = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 } as GNode;
+    scheduleRender(true);
+  };
+
   const applyDisplay = () => {
     const p = pixi.current;
     if (!p) return;
@@ -568,8 +621,20 @@ export default function GraphView() {
       sp.tint = n === hover.current ? p.cols.accentHover : colorOf(n, p.cols);
       sp.scale.set(spriteScale(n, s, k));
     }
+    // Label ink tracks the palette (see updateLabels); edges are re-styled on the next pass.
+    edgesDirty.current = true;
+    fullDirty.current = true;
     scheduleRender(true);
   };
+
+  // The graph tab is restored from the saved workspace *before* App applies the saved theme,
+  // and the user can toggle the theme with the graph open. In both cases getCols() has stale
+  // ink (light-theme text on a dark canvas). Subscribe to the store's theme and repaint when
+  // it changes so the canvas always matches the app.
+  useEffect(() => {
+    applyDisplay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [theme]);
 
   // ---- init pixi (once) ---------------------------------------------------
   useEffect(() => {
@@ -652,7 +717,8 @@ export default function GraphView() {
         out.width = src.width;
         out.height = src.height;
         const ctx = out.getContext('2d')!;
-        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--bg-primary').trim() || '#ffffff';
+        // resolved theme bg, so a dark-theme screenshot is not pasted on white
+        ctx.fillStyle = '#' + p.cols.bg.toString(16).padStart(6, '0');
         ctx.fillRect(0, 0, out.width, out.height);
         ctx.drawImage(src, 0, 0);
         const blob = await new Promise<Blob | null>((res) => out.toBlob(res, 'image/png'));
@@ -811,7 +877,18 @@ export default function GraphView() {
         .alphaDecay(1 - Math.pow(0.001, 1 / 300))
         .velocityDecay(0.4);
       userMoved.current = false;
-      sim.on('tick', () => scheduleRender(true));
+      // Obsidian opens at scale 1 and lets the graph bloom past the edges; on a
+      // real vault that leaves most nodes off-screen. Once the layout has mostly
+      // settled, ease out (never in) so the whole graph fits — unless the user
+      // already took the camera.
+      let fitted = false;
+      sim.on('tick', () => {
+        if (!fitted && sim && sim.alpha() < 0.1) {
+          fitted = true;
+          if (!userMoved.current) fitToView();
+        }
+        scheduleRender(true);
+      });
       simRef.current = sim;
       setSceneVersion((v) => v + 1); // tell the renderer to (re)create sprites
     } catch (err) {
@@ -897,6 +974,156 @@ export default function GraphView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ---- touch interactions (mobile): 1 finger = pan, pinch = zoom, tap = open node ----
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const st: {
+      pts: Map<number, { x: number; y: number }>;
+      mode: 'pan' | 'pinch' | 'node' | null;
+      px: number;
+      py: number;
+      moved: number;
+      dist: number;
+      grabNode?: GNode | null;
+      timer?: number;
+    } = { pts: new Map(), mode: null, px: 0, py: 0, moved: 0, dist: 0, grabNode: null };
+
+    const twoPts = () => {
+      const v = [...st.pts.values()];
+      return v.length >= 2 ? ([v[0], v[1]] as const) : null;
+    };
+    const mid = () => {
+      const p = twoPts();
+      return p ? { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 } : { x: 0, y: 0 };
+    };
+    const spread = () => {
+      const p = twoPts();
+      return p ? Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1 : 1;
+    };
+
+    const onStart = (e: TouchEvent) => {
+      e.preventDefault();
+      for (const t of Array.from(e.changedTouches)) st.pts.set(t.identifier, { x: t.clientX, y: t.clientY });
+      if (st.pts.size === 1) {
+        const p = [...st.pts.values()][0];
+        st.mode = 'pan';
+        st.px = p.x;
+        st.py = p.y;
+        st.moved = 0;
+        // Long-press on a node grabs it for dragging (d3 fx/fy), like the
+        // mouse drag; moving or lifting before the timer just pans/taps.
+        const n = nodeAt(p.x, p.y);
+        st.grabNode = n && n.kind !== 'tag' ? n : null;
+        if (st.grabNode) {
+          st.timer = window.setTimeout(() => {
+            st.timer = undefined;
+            if (st.mode === 'pan' && st.moved < 12 && st.grabNode) {
+              st.mode = 'node';
+              const w = toWorld(st.px, st.py);
+              st.grabNode.fx = w.x;
+              st.grabNode.fy = w.y;
+              simRef.current?.alphaTarget(0.3).restart();
+              flyNode.current = null;
+              setHover(st.grabNode); // keep the node's relations lit while dragging
+            }
+          }, 300);
+        }
+      } else if (st.pts.size >= 2) {
+        if (st.timer) { clearTimeout(st.timer); st.timer = undefined; }
+        if (st.grabNode) {
+          if (st.mode === 'node') { st.grabNode.fx = undefined; st.grabNode.fy = undefined; simRef.current?.alphaTarget(0); setHover(null); }
+          st.grabNode = null;
+        }
+        const m = mid();
+        st.mode = 'pinch';
+        st.px = m.x;
+        st.py = m.y;
+        st.dist = spread();
+        st.moved = 999; // a pinch that drops to one finger must not count as a tap
+      }
+    };
+    const onMove = (e: TouchEvent) => {
+      e.preventDefault();
+      if (!st.mode) return;
+      for (const t of Array.from(e.changedTouches)) if (st.pts.has(t.identifier)) st.pts.set(t.identifier, { x: t.clientX, y: t.clientY });
+      flyNode.current = null; // manual gesture cancels a fly-to-node in progress
+      if (st.mode === 'node' && st.grabNode && st.pts.size === 1) {
+        const p = [...st.pts.values()][0];
+        const w = toWorld(p.x, p.y);
+        st.grabNode.fx = w.x;
+        st.grabNode.fy = w.y;
+        st.px = p.x;
+        st.py = p.y;
+        st.moved = 999; // never treat as a tap
+        userMoved.current = true;
+        scheduleRender(true);
+      } else if (st.mode === 'pinch' && st.pts.size >= 2) {
+        const m = mid();
+        const d = spread();
+        cam.current.x += m.x - st.px;
+        cam.current.y += m.y - st.py;
+        const t = Math.min(SCALE_MAX, Math.max(SCALE_MIN, zoomTarget.current * (d / st.dist)));
+        zoomTarget.current = t;
+        const rect = canvas.getBoundingClientRect();
+        zoomAnchor.current = t < cam.current.k * dprNow() ? null : { x: m.x - rect.left, y: m.y - rect.top };
+        st.dist = d;
+        st.px = m.x;
+        st.py = m.y;
+      } else if (st.mode === 'pan' && st.pts.size === 1) {
+        const p = [...st.pts.values()][0];
+        cam.current.x += p.x - st.px;
+        cam.current.y += p.y - st.py;
+        st.moved += Math.abs(p.x - st.px) + Math.abs(p.y - st.py);
+        st.px = p.x;
+        st.py = p.y;
+      }
+      userMoved.current = true;
+      scheduleRender(false);
+    };
+    const onEnd = (e: TouchEvent) => {
+      e.preventDefault();
+      for (const t of Array.from(e.changedTouches)) st.pts.delete(t.identifier);
+      if (st.pts.size === 0) {
+        if (st.timer) { clearTimeout(st.timer); st.timer = undefined; }
+        if (st.mode === 'node' && st.grabNode) {
+          st.grabNode.fx = undefined;
+          st.grabNode.fy = undefined;
+          st.grabNode = null;
+          simRef.current?.alphaTarget(0);
+          setHover(null); // touch has no mousemove to clear the highlight
+        }
+        if (st.mode === 'pan' && st.moved < 10) {
+          const t0 = e.changedTouches[0];
+          const n = nodeAt(t0.clientX, t0.clientY);
+          if (n) {
+            if (n.kind === 'note') openFile(n.id);
+            else if (n.kind === 'tag') searchFor(`tag:${n.id.slice(4)}`);
+          }
+        }
+        st.mode = null;
+      } else if (st.pts.size === 1 && st.mode === 'pinch') {
+        st.grabNode = null; // a leftover finger after pinch just pans
+        st.mode = 'pan'; // one finger left after a pinch: keep panning
+        const p = [...st.pts.values()][0];
+        st.px = p.x;
+        st.py = p.y;
+      }
+    };
+
+    canvas.addEventListener('touchstart', onStart, { passive: false });
+    canvas.addEventListener('touchmove', onMove, { passive: false });
+    canvas.addEventListener('touchend', onEnd, { passive: false });
+    canvas.addEventListener('touchcancel', onEnd, { passive: false });
+    return () => {
+      canvas.removeEventListener('touchstart', onStart);
+      canvas.removeEventListener('touchmove', onMove);
+      canvas.removeEventListener('touchend', onEnd);
+      canvas.removeEventListener('touchcancel', onEnd);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ---- pointer interactions ----------------------------------------------
   const nodeAt = (clientX: number, clientY: number): GNode | null => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -948,8 +1175,25 @@ export default function GraphView() {
     scheduleRender(false);
   };
 
+  // Node drag (dragNode): pinching a node with the mouse sets d3 fx/fy and
+  // reheats the sim (alphaTarget .3, like Obsidian's panel); releasing clears
+  // the pin so physics resumes. Clicks without movement still open the note.
+  const toWorld = (clientX: number, clientY: number) => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const { x: cx, y: cy, k } = cam.current;
+    return { x: (clientX - rect.left - cx) / k, y: (clientY - rect.top - cy) / k };
+  };
   const onDown = (e: React.MouseEvent) => {
-    drag.current = { px: e.clientX, py: e.clientY, moved: 0 };
+    const n = nodeAt(e.clientX, e.clientY);
+    drag.current = { px: e.clientX, py: e.clientY, moved: 0, dragNode: n ?? undefined };
+    if (n && n.kind !== 'tag') {
+      const w = toWorld(e.clientX, e.clientY);
+      n.fx = w.x; n.fy = w.y;
+      dragNode.current = n;
+      simRef.current?.alphaTarget(0.3).restart();
+      flyNode.current = null;
+      setHover(n); // highlight the node + its edges while dragging (Obsidian parity)
+    }
   };
   const onMove = (e: React.MouseEvent) => {
     if (drag.current) {
@@ -958,11 +1202,19 @@ export default function GraphView() {
       drag.current.px = e.clientX;
       drag.current.py = e.clientY;
       drag.current.moved += Math.abs(dx) + Math.abs(dy);
-      cam.current.x += dx;
-      cam.current.y += dy;
-      flyNode.current = null; // manual pan cancels a fly-to-node in progress
-      userMoved.current = true;
-      scheduleRender(false);
+      if (dragNode.current) {
+        const w = toWorld(e.clientX, e.clientY);
+        dragNode.current.fx = w.x;
+        dragNode.current.fy = w.y;
+        userMoved.current = true;
+        scheduleRender(true);
+      } else {
+        cam.current.x += dx;
+        cam.current.y += dy;
+        flyNode.current = null; // manual pan cancels a fly-to-node in progress
+        userMoved.current = true;
+        scheduleRender(false);
+      }
     } else {
       setHover(nodeAt(e.clientX, e.clientY));
     }
@@ -970,6 +1222,12 @@ export default function GraphView() {
   const onUp = (e: React.MouseEvent) => {
     const d = drag.current;
     drag.current = null;
+    if (dragNode.current) {
+      dragNode.current.fx = undefined;
+      dragNode.current.fy = undefined;
+      dragNode.current = null;
+      simRef.current?.alphaTarget(0);
+    }
     if (d && d.moved < 5) {
       const n = nodeAt(e.clientX, e.clientY);
       if (!n) return;
@@ -1029,7 +1287,7 @@ export default function GraphView() {
         </div>
 
         <div className="graph-hint">
-          {stats.shown} / {stats.total} notes · {stats.orphans} orphans · scroll to zoom · drag to pan · click a tag to search
+          {stats.shown} nodes · {stats.total} notes · {stats.orphans} orphans · scroll to zoom · drag to pan · click a tag to search
         </div>
 
         {buildError && (

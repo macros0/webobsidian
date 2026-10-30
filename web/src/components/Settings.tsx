@@ -1,9 +1,13 @@
+import {loadPlugins,usePluginStates} from '../lib/plugins';
 import { useEffect, useRef, useState } from 'react';
-import { useStore } from '../lib/store';
+import { useStore,resetDraftScope } from '../lib/store';
 import { api } from '../lib/api';
+import { themeClass } from '../lib/theme';
 import Icon from './Icon';
+import ToolbarSettings from './toolbar/ToolbarSettings';
+import {useIndexStatus,indexStatusMessage,refreshIndexStatus,resetIndexStatus} from '../lib/indexStatus';
 
-type Section = 'vault' | 'git' | 'api' | 'sharing' | 'plugins' | 'appearance' | 'account' | 'about';
+type Section = 'vault' | 'git' | 'api' | 'sharing' | 'plugins' | 'appearance' | 'toolbar' | 'account' | 'about';
 
 export default function Settings() {
   const open = useStore((s) => s.settingsOpen);
@@ -22,7 +26,7 @@ export default function Settings() {
       <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
         <div className="settings-layout">
           <div className="settings-nav">
-            {(['vault', 'git', 'api', 'sharing', 'plugins', 'appearance', 'account', 'about'] as Section[]).map((s) => (
+            {(['vault', 'git', 'api', 'sharing', 'plugins', 'appearance', 'toolbar', 'account', 'about'] as Section[]).map((s) => (
               <button key={s} className={section === s ? 'active' : ''} onClick={() => setSection(s)}>
                 {labels[s]}
               </button>
@@ -35,6 +39,7 @@ export default function Settings() {
             {section === 'sharing' && <Shares />}
             {section === 'plugins' && <Plugins />}
             {settings && section === 'appearance' && <Appearance s={settings} />}
+            {settings && section === 'toolbar' && <ToolbarSettings value={settings.ui.editingToolbar} onSaved={(editingToolbar) => setSettings((current: any) => ({...current, ui:{...current.ui, editingToolbar}}))} />}
             {section === 'account' && <AccountSettings s={settings} reload={() => api.getSettings().then(setSettings)} />}
             {section === 'about' && <About />}
           </div>
@@ -51,6 +56,7 @@ const labels: Record<Section, string> = {
   sharing: 'Sharing',
   plugins: 'Community Plugins',
   appearance: 'Appearance',
+  toolbar: 'Editing toolbar',
   account: 'Account',
   about: 'About',
 };
@@ -67,14 +73,63 @@ function Row({ name, desc, children }: { name: string; desc?: string; children: 
   );
 }
 
+function IndexSettings(){
+  const {status}=useIndexStatus();
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState('');
+  useEffect(()=>{refreshIndexStatus().catch(()=>setError('Could not load index status.'));},[]);
+  const run=async(mode:'reconcile'|'rebuild')=>{
+    setBusy(true);setError('');
+    try{await api.indexJob(mode);await refreshIndexStatus();}
+    catch{setError('Could not start index update. Check the connection and try again.');}
+    finally{setBusy(false);}
+  };
+  return <section aria-label="Search index" style={{marginBottom:20}}>
+    <Row name="Search index" desc={status?`${status.indexedNotes} notes · ${status.watcherMode} · ${status.pendingPaths} pending`:'Loading index status…'}>
+      <span role="status">{status?.phase==='ready'&&!status.persistenceError?'Up to date':indexStatusMessage(status)}</span>
+    </Row>
+    {status?.lastReconcileAt&&<div className="desc">Last check: {new Date(status.lastReconcileAt).toLocaleString()}</div>}
+    {error&&<div role="alert">{error}</div>}
+    <div style={{display:'flex',gap:8,marginTop:8}}>
+      <button className="btn secondary" disabled={busy} onClick={()=>run('reconcile')}>Check for changes</button>
+      <button className="btn secondary" disabled={busy} onClick={()=>run('rebuild')}>Rebuild index</button>
+    </div>
+  </section>;
+}
+
 function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
+  const autoReveal = useStore((st) => st.autoReveal);
+  const setAutoReveal = useStore((st) => st.setAutoReveal);
+  const showAttachmentFolders = useStore((st) => st.showAttachmentFolders);
+  const setShowAttachmentFolders = useStore((st) => st.setShowAttachmentFolders);
   const [path, setPath] = useState(s.vault.path);
   const [deleteMode, setDeleteMode] = useState(s.vault.deleteMode ?? 'trash');
+  const [retention, setRetention] = useState(String(s.vault.trashRetentionDays ?? 0));
   const [browser, setBrowser] = useState<any>(null);
-  const save = async () => {
-    await api.putSettings({ vault: { path } });
+  // Whole days, 0 (keep forever) … 3650. Invalid input snaps back to the saved value.
+  const saveRetention = async () => {
+    const n = Number(retention);
+    const saved = s.vault.trashRetentionDays ?? 0;
+    if (!Number.isInteger(n) || n < 0 || n > 3650) {
+      setRetention(String(saved));
+      return;
+    }
+    if (n === saved) return;
+    await api.putSettings({ vault: { trashRetentionDays: n } });
     await reload();
-    alert('Vault path saved. Reindex from the command palette if needed.');
+  };
+  const save = async () => {
+    try {
+      await useStore.getState().save();
+      await api.putSettings({ vault: { path } });
+      resetIndexStatus();
+      refreshIndexStatus().catch(()=>{});
+      resetDraftScope();
+      useStore.setState({tabs:[],activePath:null,content:'',dirty:false,splitPath:null,splitContent:''});
+      await useStore.getState().loadTree();
+      await reload();
+      useStore.getState().notify('Vault changed. Local drafts remain scoped to the previous vault.');
+    }catch(error){useStore.getState().notify(String(error));}
   };
   const saveDeleteMode = async (mode: string) => {
     setDeleteMode(mode);
@@ -85,6 +140,7 @@ function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
   return (
     <div>
       <h2>Vault & Files</h2>
+      <IndexSettings />
       <Row name="Vault path" desc="Absolute path on the server to your notes folder">
         <input className="text-input" style={{ width: 260 }} value={path} onChange={(e) => setPath(e.target.value)} />
       </Row>
@@ -122,6 +178,45 @@ function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
           <option value="trash">Move to .trash (recoverable)</option>
           <option value="permanent">Permanently delete</option>
         </select>
+      </Row>
+      <Row
+        name="Show attachment folders"
+        desc={'Pasted images are stored in an "attachments" folder next to each note. Hidden in the file tree by default; folders that contain notes are never hidden.'}
+      >
+        <input
+          type="checkbox"
+          checked={showAttachmentFolders}
+          onChange={(e) => setShowAttachmentFolders(e.target.checked)}
+        />
+      </Row>
+      <Row
+        name="Reveal active file in explorer"
+        desc="When enabled, opening or switching documents auto-expands parent folders, scrolls to the active file, and highlights it in the file explorer."
+      >
+        <input
+          type="checkbox"
+          checked={autoReveal}
+          onChange={(e) => setAutoReveal(e.target.checked)}
+        />
+      </Row>
+      <Row
+        name="Trash retention (days)"
+        desc="Items in .trash are permanently deleted this many days after they were moved there. 0 keeps them forever."
+      >
+        <input
+          className="text-input"
+          type="number"
+          min={0}
+          max={3650}
+          step={1}
+          style={{ width: 90 }}
+          value={retention}
+          onChange={(e) => setRetention(e.target.value)}
+          onBlur={saveRetention}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+        />
       </Row>
     </div>
   );
@@ -349,10 +444,11 @@ function Shares() {
 }
 
 function Plugins() {
+  const runtimeStates=usePluginStates();
   const [plugins, setPlugins] = useState<any[]>([]);
   const [repo, setRepo] = useState('');
   const [msg, setMsg] = useState('');
-  const load = () => api.listPlugins().then((r) => setPlugins(r.plugins)).catch(() => {});
+  const load = () => api.listPlugins().then((r) => setPlugins(r.plugins)).catch(() => setMsg('Could not load plugin catalog.'));
   useEffect(() => { load(); }, []);
   const install = async () => {
     setMsg('Installing…');
@@ -370,21 +466,21 @@ function Plugins() {
       </Row>
       {msg && <div style={{ color: 'var(--text-muted)', margin: '6px 0' }}>{msg}</div>}
       <div style={{ marginTop: 12 }}>
-        {plugins.length === 0 && <div style={{ color: 'var(--text-faint)' }}>No plugins installed in .obsidian/plugins</div>}
+        {plugins.length === 0 && <div style={{ color: 'var(--text-faint)' }}>No plugins installed</div>}
         {plugins.map((p) => (
           <div className="setting-row" key={p.id}>
             <div className="info">
               <div className="name">{p.name} <span style={{ color: 'var(--text-faint)' }}>v{p.version}</span></div>
-              <div className="desc">{p.description}</div>
+              <div className="desc">{p.description}</div><div className="desc">Source: {p.source??'desktop'} · {runtimeStates.find(x=>x.id===p.id)?.state??(p.enabled?'loading':'disabled')}</div>{runtimeStates.find(x=>x.id===p.id)?.failure&&<div role="alert">{runtimeStates.find(x=>x.id===p.id)?.failure?.message}</div>}
             </div>
             <label>
-              <input type="checkbox" checked={p.enabled} onChange={async (e) => { await api.setPluginEnabled(p.id, e.target.checked); load(); }} /> enabled
+              <input type="checkbox" checked={p.enabled} onChange={async (e) => { try { await api.setPluginEnabled(p.id, e.target.checked); await load(); await loadPlugins(); } catch { setMsg('Could not change plugin state.'); } }} /> enabled
             </label>
           </div>
         ))}
       </div>
       <p style={{ color: 'var(--text-faint)', fontSize: 12, marginTop: 14 }}>
-        Note: WebObsidian supports a subset of the Obsidian plugin API. Most metadata/markdown plugins work; plugins relying on Electron/Node internals may not.
+        Note: WebObsidian supports a subset of the Obsidian plugin API. Compatibility is limited. Runtime status shows failures and unsupported APIs; Node/Electron plugins require separate support. Web installations and settings are stored separately from desktop Obsidian.
       </p>
     </div>
   );
@@ -392,15 +488,37 @@ function Plugins() {
 
 function Appearance({ s }: { s: any }) {
   const [theme, setTheme] = useState(s.ui.theme);
-  const save = async (t: string) => { setTheme(t); await api.putSettings({ ui: { theme: t } }); location.reload(); };
+  const [inlineTitle, setInlineTitle] = useState(s.ui.showInlineTitle !== false);
+  const saveInlineTitle = async (v: boolean) => {
+    setInlineTitle(v);
+    useStore.getState().setShowInlineTitle(v);
+    await api.putSettings({ ui: { showInlineTitle: v } });
+  };
+  // Apply the theme live (no reload — keeps the Settings dialog open), then persist.
+  const save = async (t: string) => {
+    setTheme(t);
+    useStore.getState().setTheme(themeClass(t));
+    await api.putSettings({ ui: { theme: t } });
+  };
   return (
     <div>
       <h2>Appearance</h2>
       <Row name="Theme">
         <select className="text-input" value={theme} onChange={(e) => save(e.target.value)}>
-          <option value="obsidian-dark">Obsidian Dark</option>
-          <option value="obsidian-light">Obsidian Light</option>
+          <optgroup label="Obsidian">
+            <option value="obsidian-dark">Obsidian Dark</option>
+            <option value="obsidian-light">Obsidian Light</option>
+          </optgroup>
+          <optgroup label="Catppuccin">
+            <option value="catppuccin-mocha">Catppuccin Mocha</option>
+            <option value="catppuccin-macchiato">Catppuccin Macchiato</option>
+            <option value="catppuccin-frappe">Catppuccin Frappé</option>
+            <option value="catppuccin-latte">Catppuccin Latte</option>
+          </optgroup>
         </select>
+      </Row>
+      <Row name="Show inline title" desc="Display the file name as a title above the note. Turn it off if your notes start with their own heading.">
+        <input type="checkbox" checked={inlineTitle} onChange={(e) => saveInlineTitle(e.target.checked)} />
       </Row>
     </div>
   );
@@ -419,23 +537,23 @@ function AccountSettings({ s, reload }: { s: any; reload: () => void }) {
     setErr('');
     setMsg('');
     if (next.length < 6) {
-      setErr('Mật khẩu mới phải có ít nhất 6 ký tự');
+      setErr('New password must be at least 6 characters');
       return;
     }
     if (next !== confirm) {
-      setErr('Mật khẩu xác nhận không khớp');
+      setErr('Passwords do not match');
       return;
     }
     setBusy(true);
     try {
       await api.changePassword(current, next);
-      setMsg('Đã đổi mật khẩu ✓');
+      setMsg('Password changed ✓');
       setCurrent('');
       setNext('');
       setConfirm('');
       await reload();
     } catch (e: any) {
-      setErr(e?.message ?? 'Đổi mật khẩu thất bại');
+      setErr(e?.message ?? 'Failed to change password');
     } finally {
       setBusy(false);
     }
@@ -445,35 +563,35 @@ function AccountSettings({ s, reload }: { s: any; reload: () => void }) {
     <div>
       <h2>Account</h2>
       <p style={{ color: 'var(--text-muted)' }}>
-        Mật khẩu đăng nhập vào WebObsidian.
+        Your WebObsidian login password.
         {usingDefault && (
           <>
-            {' '}Bạn đang dùng <b>mật khẩu mặc định <code>123456</code></b> — hãy đổi mật khẩu để
-            bảo mật vault.
+            {' '}You’re using the <b>default password <code>123456</code></b> — change it to secure
+            your vault.
           </>
         )}
       </p>
-      <Row name="Mật khẩu hiện tại" desc={usingDefault ? 'Mặc định là 123456' : undefined}>
+      <Row name="Current password" desc={usingDefault ? 'Defaults to 123456' : undefined}>
         <input className="text-input" type="password" style={{ width: 240 }} value={current}
           onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" />
       </Row>
-      <Row name="Mật khẩu mới" desc="Tối thiểu 6 ký tự">
+      <Row name="New password" desc="At least 6 characters">
         <input className="text-input" type="password" style={{ width: 240 }} value={next}
           onChange={(e) => setNext(e.target.value)} autoComplete="new-password" />
       </Row>
-      <Row name="Xác nhận mật khẩu mới">
+      <Row name="Confirm new password">
         <input className="text-input" type="password" style={{ width: 240 }} value={confirm}
           onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" />
       </Row>
       {err && <div style={{ color: '#e5534b', margin: '6px 0' }}>{err}</div>}
       {msg && <div style={{ color: 'var(--text-accent, #4caf50)', margin: '6px 0' }}>{msg}</div>}
       <button className="btn" onClick={save} disabled={busy || !current || !next}>
-        {busy ? 'Đang lưu…' : 'Đổi mật khẩu'}
+        {busy ? 'Saving…' : 'Change password'}
       </button>
       <p style={{ color: 'var(--text-faint)', fontSize: 12, marginTop: 16 }}>
-        Quên mật khẩu? Đặt <code>auth.passwordHash</code> trong <code>data/settings.json</code> hoặc
-        biến môi trường <code>WEBOBSIDIAN_PASSWORD</code> làm mật khẩu khôi phục (override) rồi đăng
-        nhập lại để đổi mật khẩu mới.
+        Forgot your password? Set <code>auth.passwordHash</code> in <code>data/settings.json</code>,
+        or the <code>WEBOBSIDIAN_PASSWORD</code> environment variable, as a recovery (override)
+        password, then log back in to set a new one.
       </p>
     </div>
   );

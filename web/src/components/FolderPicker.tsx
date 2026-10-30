@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../lib/store';
-import { api, type TreeNode } from '../lib/api';
+import { type TreeNode } from '../lib/api';
 import { pruneDescendants } from '../lib/tree';
+import { displayChildren } from '../lib/attachments';
 
 /** Collect every folder path in the vault, in tree order. */
-function collectFolders(node: TreeNode | null): string[] {
+function collectFolders(node: TreeNode | null, showAttachments: boolean): string[] {
   if (!node) return [];
   const out: string[] = [];
   const walk = (n: TreeNode) => {
-    for (const c of n.children ?? []) {
+    for (const c of displayChildren(n.children ?? [], showAttachments)) {
       if (c.type === 'folder') {
         out.push(c.path);
         walk(c);
@@ -28,9 +29,9 @@ export default function FolderPicker() {
   const movePath = useStore((s) => s.movePath);
   const setMovePath = useStore((s) => s.setMovePath);
   const tree = useStore((s) => s.tree);
+  const showAttachmentFolders = useStore((s) => s.showAttachmentFolders);
   const loadTree = useStore((s) => s.loadTree);
-  const openFile = useStore((s) => s.openFile);
-  const closeTab = useStore((s) => s.closeTab);
+  const renamePath = useStore((s) => s.renamePath);
   const notify = useStore((s) => s.notify);
 
   const [q, setQ] = useState('');
@@ -48,13 +49,13 @@ export default function FolderPicker() {
   // Root + every folder, minus targets that would move a folder into itself or a
   // descendant of any source (and, for a single item, its own folder — a no-op).
   const folders = useMemo(() => {
-    const all = ['', ...collectFolders(tree)];
+    const all = ['', ...collectFolders(tree, showAttachmentFolders)];
     return all.filter((f) => {
       if (single !== null && f === currentDir) return false;
       if (froms.some((src) => f === src || f.startsWith(`${src}/`))) return false;
       return true;
     });
-  }, [tree, froms, single, currentDir]);
+  }, [tree, showAttachmentFolders, froms, single, currentDir]);
 
   const lc = q.trim().toLowerCase();
   const matches = useMemo(
@@ -79,19 +80,15 @@ export default function FolderPicker() {
 
   const move = async (folder: string) => {
     const targetDir = folder.replace(/\/+$/, '');
-    const activePath = useStore.getState().activePath;
     setMovePath(null);
     let moved = 0;
-    let reopen: string | null = null;
     for (const src of froms) {
       const b = src.split('/').pop()!;
       const to = targetDir ? `${targetDir}/${b}` : b;
       if (to === src) continue; // already in the chosen folder
       if (targetDir === src || targetDir.startsWith(`${src}/`)) continue; // into self/descendant
       try {
-        await api.rename(src, to);
-        closeTab(src);
-        if (activePath === src) reopen = to;
+        await renamePath(src, to);
         moved++;
       } catch (e: any) {
         notify(e?.message ?? 'Move failed');
@@ -99,7 +96,6 @@ export default function FolderPicker() {
     }
     await loadTree();
     useStore.getState().setSelected([]);
-    if (reopen) await openFile(reopen);
     if (moved) {
       const dest = folder || 'vault root';
       notify(moved > 1 ? `Moved ${moved} items to ${dest}` : `Moved to ${dest}`);

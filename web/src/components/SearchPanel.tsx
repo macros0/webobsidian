@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, type SearchHit, type MatchContext, type NoteMatches } from '../lib/api';
+import { api, ApiError, type SearchHit, type MatchContext, type NoteMatches } from '../lib/api';
 import { useStore } from '../lib/store';
 import Icon from './Icon';
+import { cleanSnippet } from '../lib/snippet';
+import {useIndexStatus,indexStatusMessage,applyIndexStatus} from '../lib/indexStatus';
 
 type SortMode = 'relevance' | 'name-asc' | 'name-desc' | 'path-asc';
 
@@ -13,8 +15,9 @@ const SORT_LABELS: Record<SortMode, string> = {
 };
 
 /** Render a match context with its highlighted ranges as React nodes. */
-function highlight(c: MatchContext): ReactNode[] {
+function highlight(raw: MatchContext): ReactNode[] {
   const out: ReactNode[] = [];
+  const c = { ...raw, ...cleanSnippet(raw.text, raw.ranges) };
   const ranges = [...c.ranges].sort((a, b) => a[0] - b[0]);
   let pos = 0;
   if (c.pre) out.push('…');
@@ -33,6 +36,12 @@ function highlight(c: MatchContext): ReactNode[] {
 export default function SearchPanel() {
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const indexState=useIndexStatus();
+  const indexKey=`${indexState.status?.generation ?? ''}:${indexState.status?.revision ?? ''}:${indexState.status?.initialScanComplete ?? ''}:${indexState.refresh}`;
+  const contextEpoch=useRef(0);
+  const previousGeneration=useRef(indexState.status?.generation);
   const [matches, setMatches] = useState<Map<string, NoteMatches>>(new Map());
   const [matchCase, setMatchCase] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -58,22 +67,38 @@ export default function SearchPanel() {
     if (searchQuery) setQ(searchQuery);
   }, [searchQuery]);
 
+  useEffect(()=>{
+    if(previousGeneration.current!==indexState.status?.generation){
+      previousGeneration.current=indexState.status?.generation;
+      setHits([]);
+      setMatches(new Map());
+    }
+  },[indexState.status?.generation]);
+
   useEffect(() => {
+    let current=true;
     window.clearTimeout(timer.current);
     if (!q.trim()) {
       setHits([]);
+      setError('');setLoading(false);
       return;
     }
+    setLoading(true);setError('');
     timer.current = window.setTimeout(async () => {
       try {
         const r = await api.search(q); // no limit — server returns every match
+        if(!current)return;
         setHits(r.hits);
-      } catch {
-        setHits([]);
+        if(r.index)applyIndexStatus(r.index);
+      } catch(e) {
+        if(!current)return;
+        setError(e instanceof ApiError && e.status===503 ? 'Indexing notes. Search will update when ready.' : 'Search could not be refreshed. Check the connection and try again.');
+      } finally {
+        if(current)setLoading(false);
       }
     }, 180);
-    return () => window.clearTimeout(timer.current);
-  }, [q]);
+    return () => {current=false;window.clearTimeout(timer.current)};
+  }, [q,indexKey]);
 
   // Reset the render window when the result set or its ordering changes.
   useEffect(() => setVisible(50), [hits, sort, matchCase]);
@@ -82,7 +107,8 @@ export default function SearchPanel() {
     setMatches(new Map());
     setNoteOverride(new Map());
     inflight.current.clear();
-  }, [q, matchCase]);
+    contextEpoch.current++;
+  }, [q, matchCase,indexKey]);
   // Toggling the global collapse switch clears individual overrides.
   useEffect(() => setNoteOverride(new Map()), [collapsed]);
 
@@ -118,10 +144,11 @@ export default function SearchPanel() {
     batch.forEach((p) => inflight.current.add(p));
     const qAt = q;
     const caseAt = matchCase;
+    const epochAt=contextEpoch.current;
     api
       .searchMatches(qAt, batch, caseAt)
       .then((r) => {
-        if (qAt !== queryRef.current || caseAt !== caseRef.current) return; // stale
+        if (epochAt!==contextEpoch.current || qAt !== queryRef.current || caseAt !== caseRef.current) return; // stale
         setMatches((prev) => {
           const next = new Map(prev);
           for (const m of r.matches) next.set(m.path, m);
@@ -129,8 +156,8 @@ export default function SearchPanel() {
         });
       })
       .catch(() => {})
-      .finally(() => batch.forEach((p) => inflight.current.delete(p)));
-  }, [shown, visible, q, matchCase, matches]);
+      .finally(() => {if(epochAt===contextEpoch.current)batch.forEach((p) => inflight.current.delete(p))});
+  }, [shown, visible, q, matchCase, matches,indexKey]);
 
   // Load the next chunk when the sentinel at the bottom scrolls into view.
   useEffect(() => {
@@ -207,10 +234,12 @@ export default function SearchPanel() {
           </div>
         )}
 
-        {q && (
+        {indexStatusMessage(indexState.status) && <div role="status" className="search-index-status">{indexStatusMessage(indexState.status)}</div>}
+        {error && <div role="alert" className="search-index-status">{error}</div>}
+        {q && !error && (
           <div className="search-meta">
             <span>
-              {shown.length} note{shown.length === 1 ? '' : 's'}
+              {loading ? 'Searching…' : `${shown.length} note${shown.length === 1 ? '' : 's'}`}
               {totalMatches > 0 && ` · ${totalMatches}${visible < shown.length ? '+' : ''} matches`}
             </span>
             <span className="grow" />
@@ -284,7 +313,7 @@ export default function SearchPanel() {
                         className={`rg-match ${moreContext ? 'expanded' : ''}`}
                         onClick={() => openFile(h.path)}
                       >
-                        {h.snippet}
+                        {cleanSnippet(h.snippet, []).text}
                       </div>
                     )
                   )}

@@ -6,11 +6,21 @@ import {
   ViewUpdate,
   WidgetType,
 } from '@codemirror/view';
+import { frontmatterTitle } from './title';
+import { renderMarkdownBody, renderPreparedMarkdown } from '../../../server/src/services/markdownRendering';
 import { StateField, StateEffect, type EditorState, type Range, type Text } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
+import { isEscaped, preserveLiteralTags, findObsidianComments, stripObsidianComments, footnoteRanges, type SourceRange } from '../../../server/src/services/markdownContext';
+import { editableFrontmatter } from '../../../server/src/services/frontmatterPolicy';
 import { CALLOUT_SLOT, CALLOUT_RE, calloutDefaultTitle, calloutIconSvg } from './callouts';
+import { fetchLinkPreview, createPreviewCard } from './linkPreview';
 import { openLightbox } from './imageLightbox';
-import { VIDEO_EXT_RE, AUDIO_EXT_RE } from './media';
+import { VIDEO_EXT_RE, AUDIO_EXT_RE, PDF_EXT_RE } from './media';
+import { optionsFor, type PropOption } from './propOptions';
+import { useStore } from './store';
+import { themedPopupHost } from './theme';
+import { COLOR_STYLE_RE } from './colorFormatting';
+import { resolveExternalEmbed, createEmbedElement, type ExternalEmbed } from './embeds';
 
 /**
  * Live Preview for CodeMirror 6 — an Obsidian-style WYSIWYG editing mode.
@@ -37,6 +47,24 @@ export interface LpMenuItem {
 let openMenu: (m: { x: number; y: number; items: LpMenuItem[] }) => void = () => {};
 export function setLivePreviewMenuHandler(fn: (m: { x: number; y: number; items: LpMenuItem[] }) => void) {
   openMenu = fn;
+}
+
+/** Path of the note being rendered — relative image refs resolve against its folder. */
+let notePath = '';
+export function setLivePreviewNotePath(p: string | null) {
+  notePath = p ?? '';
+}
+
+/** Trash-icon click on an image: `target` is the raw vault reference (null for web URLs). */
+export interface ImageDeleteRequest {
+  target: string | null;
+  view: EditorView;
+  /** Remove the image's Markdown reference from the note. */
+  remove: () => void;
+}
+let imageDeleteHandler: (r: ImageDeleteRequest) => void = (r) => r.remove();
+export function setLivePreviewImageDeleteHandler(fn: (r: ImageDeleteRequest) => void) {
+  imageDeleteHandler = fn;
 }
 
 export interface PropSuggestion {
@@ -163,6 +191,30 @@ class MdLinkWidget extends WidgetType {
   }
 }
 
+class LinkPreviewWidget extends WidgetType {
+  constructor(readonly url: string) {
+    super();
+  }
+  eq(o: LinkPreviewWidget) {
+    return o.url === this.url;
+  }
+  toDOM() {
+    const wrap = document.createElement('span');
+    wrap.className = 'link-preview cm-link-preview';
+    const a = document.createElement('a');
+    a.className = 'cm-md-link external-link';
+    a.textContent = this.url;
+    wrap.appendChild(a);
+    fetchLinkPreview(this.url).then((meta) => {
+      if (meta && wrap.isConnected) wrap.replaceChildren(createPreviewCard(meta));
+    });
+    return wrap;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
 class CheckboxWidget extends WidgetType {
   constructor(readonly checked: boolean, readonly pos: number) {
     super();
@@ -228,9 +280,51 @@ function writeImageWidth(view: EditorView, wrap: HTMLElement, width: number): vo
   }
 }
 
+/**
+ * Remove the image token (`![[img]]` / `![alt](url)`) a rendered image widget
+ * stands for. A line left empty by the removal is dropped with its newline.
+ */
+function removeImageToken(view: EditorView, wrap: HTMLElement): void {
+  let pos: number;
+  try {
+    pos = view.posAtDOM(wrap);
+  } catch {
+    return;
+  }
+  const line = view.state.doc.lineAt(pos);
+  const off = pos - line.from;
+  for (const re of [/!\[\[([^\]]+?)\]\]/g, /!\[([^\]]*)\]\(([^)]+)\)/g]) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line.text))) {
+      if (m.index <= off && off <= m.index + m[0].length) {
+        let from = line.from + m.index;
+        let to = from + m[0].length;
+        if ((line.text.slice(0, m.index) + line.text.slice(m.index + m[0].length)).trim() === '') {
+          from = line.from;
+          to = line.to;
+          if (to < view.state.doc.length) to += 1;
+          else if (from > 0) from -= 1;
+        }
+        view.dispatch({ changes: { from, to, insert: '' }, userEvent: 'delete' });
+        return;
+      }
+    }
+  }
+}
+
+const TRASH_SVG =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+
 class ImageWidget extends WidgetType {
   /** `width`/`height` from the Obsidian size param `![[img|300]]` / `![[img|300x200]]`. */
-  constructor(readonly src: string, readonly alt: string, readonly width?: number, readonly height?: number) {
+  constructor(
+    readonly src: string,
+    readonly alt: string,
+    readonly width?: number,
+    readonly height?: number,
+    /** Raw vault reference (null for web URLs) — what the trash icon deletes. */
+    readonly target: string | null = null,
+  ) {
     super();
   }
   eq(o: ImageWidget) {
@@ -261,6 +355,25 @@ class ImageWidget extends WidgetType {
       openLightbox(this.src, this.alt);
     });
     wrap.appendChild(img);
+
+    // Hover trash icon (top-right) — removes the reference and, when nothing else
+    // uses the file, the attachment itself (decided by the delete handler).
+    const del = document.createElement('span');
+    del.className = 'cm-image-delete';
+    del.title = 'Delete image';
+    del.setAttribute('role', 'button');
+    del.innerHTML = TRASH_SVG;
+    del.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    del.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (view.state.readOnly) return;
+      imageDeleteHandler({ target: this.target, view, remove: () => removeImageToken(view, wrap) });
+    });
+    wrap.appendChild(del);
 
     // Drag-to-resize — left/right edge bars; width is written back as `|W`,
     // keeping aspect ratio (height auto), like Obsidian's image resize.
@@ -340,6 +453,69 @@ class MediaWidget extends WidgetType {
       embedNotFound(miss, this.alt);
     };
     wrap.appendChild(el);
+    return wrap;
+  }
+}
+
+/** Inline players are built only for the supported media providers. */
+class ExternalEmbedWidget extends WidgetType {
+  constructor(readonly embed: ExternalEmbed) {
+    super();
+  }
+  eq(o: ExternalEmbedWidget) {
+    return o.embed.src === this.embed.src;
+  }
+  ignoreEvent() {
+    return true;
+  }
+  toDOM() {
+    const wrap = document.createElement('div');
+    wrap.className = 'cm-external-embed-wrap';
+    wrap.appendChild(createEmbedElement(this.embed));
+    return wrap;
+  }
+}
+
+/**
+ * Embedded PDF for `![[doc.pdf]]` (FR-21). The editor cannot inline the bytes, so
+ * the frame is the browser's own viewer, with a header that opens the file in a
+ * tab (the full-pane view in Workspace). Same-origin, so the app's CSP
+ * (`frame-src 'self'`) allows it.
+ */
+class PdfEmbedWidget extends WidgetType {
+  constructor(readonly src: string, readonly path: string, readonly origin: string) {
+    super();
+  }
+  eq(o: PdfEmbedWidget) {
+    return o.src === this.src && o.path === this.path && o.origin === this.origin;
+  }
+  /** Let the frame and the header button receive events instead of CodeMirror. */
+  ignoreEvent() {
+    return true;
+  }
+  toDOM() {
+    const wrap = document.createElement('div');
+    wrap.className = 'cm-embed-pdf pdf-embed';
+    const head = document.createElement('div');
+    head.className = 'pdf-embed-title';
+    const name = this.path.split('/').pop() ?? this.path;
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'pdf-embed-open';
+    open.textContent = name;
+    open.title = 'Open in a tab';
+    open.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void useStore.getState().openAttachment(this.path, this.origin);
+    });
+    head.appendChild(open);
+    const frame = document.createElement('iframe');
+    frame.className = 'pdf-embed-frame';
+    frame.src = this.src;
+    frame.loading = 'lazy';
+    frame.title = name;
+    wrap.append(head, frame);
     return wrap;
   }
 }
@@ -488,7 +664,9 @@ class NoteEmbedWidget extends WidgetType {
     const content = document.createElement('div');
     content.className = 'markdown-embed-content markdown-preview';
     content.textContent = '…';
-    box.append(open, title, content);
+    box.append(open);
+    if (!this.target.includes('#')) box.append(title);
+    box.append(content);
     void noteEmbedProvider(this.target).then((res) => {
       if (!res) {
         box.textContent = '';
@@ -756,19 +934,25 @@ function isCalloutFolded(state: EditorState, titleFrom: number, foldChar: string
   return (foldChar === '-') !== toggled;
 }
 
+function quoteDepth(text: string): number {
+  return (text.match(QUOTE_MARKERS_RE)?.[0].match(/>/g) ?? []).length;
+}
+
 function buildCalloutFolds(state: EditorState): DecorationSet {
   if (!state.field(livePreviewState, false)) return Decoration.none;
   const doc = state.doc;
   const ranges: Range<Decoration>[] = [];
-  let prevIsQuote = false;
   for (let n = 1; n <= doc.lines; n++) {
     const line = doc.line(n);
-    const isQuote = QUOTE_LINE_RE.test(line.text);
-    if (isQuote && !prevIsQuote) {
+    const depth = quoteDepth(line.text);
+    let node = syntaxTree(state).resolveInner(line.from + (line.text.match(QUOTE_MARKERS_RE)?.[0].length ?? 0), 1);
+    let parsedQuote = false;
+    while (node.parent) { if (node.name === 'Blockquote') parsedQuote = true; node = node.parent; }
+    if (parsedQuote && depth && (n === 1 || quoteDepth(doc.line(n - 1).text) < depth)) {
       const cm = line.text.replace(QUOTE_MARKERS_RE, '').match(CALLOUT_RE);
       if (cm && cm[2] && isCalloutFolded(state, line.from, cm[2])) {
         let last = n;
-        while (last < doc.lines && QUOTE_LINE_RE.test(doc.line(last + 1).text)) last++;
+        while (last < doc.lines && quoteDepth(doc.line(last + 1).text) >= depth) last++;
         if (last > n) {
           const to = doc.line(last).to;
           // reveal while the caret is inside the callout (never in readonly)
@@ -783,12 +967,10 @@ function buildCalloutFolds(state: EditorState): DecorationSet {
             }
           if (!touched) ranges.push(Decoration.replace({ block: true }).range(line.to, to));
           n = last;
-          prevIsQuote = false;
           continue;
         }
       }
     }
-    prevIsQuote = isQuote;
   }
   return Decoration.set(ranges, true);
 }
@@ -818,128 +1000,132 @@ interface TableBlock {
   header: string[];
   align: Align[];
   rows: string[][];
+  prefix: string;
+  continuationPrefix: string;
 }
-
-// A GFM delimiter row contains only `|`, `-`, `:`, and whitespace. The caller
-// also requires at least one `-` and one `|`, which rules out an `---` rule.
-const DELIM_RE = /^[\s|:-]+$/;
 
 function splitCells(line: string): string[] {
   let t = line.trim();
   if (t.startsWith('|')) t = t.slice(1);
   if (t.endsWith('|')) t = t.slice(0, -1);
-  return t.split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, '|').trim());
+  return t.split(/(?<!\\)\|/).map((c) => c.replace(/(`+)([\s\S]*?)\1|\\\|/g,
+    (token, ticks) => ticks ? token : '|').trim());
 }
 
 /** Find GFM/Obsidian tables in the doc: a header row, a delimiter row, then body rows. */
-function scanTables(doc: Text): TableBlock[] {
-  const out: TableBlock[] = [];
-  const total = doc.lines;
-  let n = 1;
-  while (n < total) {
-    const header = doc.line(n);
-    const delim = doc.line(n + 1);
-    if (
-      header.text.includes('|') &&
-      delim.text.includes('-') &&
-      delim.text.includes('|') &&
-      DELIM_RE.test(delim.text)
-    ) {
-      const headerCells = splitCells(header.text);
-      const align: Align[] = splitCells(delim.text).map((c) => {
-        const l = c.startsWith(':');
-        const r = c.endsWith(':');
-        return l && r ? 'center' : r ? 'right' : l ? 'left' : null;
-      });
-      const rows: string[][] = [];
-      let i = n + 2;
-      for (; i <= total; i++) {
-        const t = doc.line(i).text;
-        if (t.trim() === '' || !t.includes('|')) break;
-        rows.push(splitCells(t));
-      }
-      const from = header.from;
-      const to = doc.line(i - 1).to;
-      out.push({
-        from,
-        to,
-        key: `${headerCells.join('|')}${align.join(',')}${rows.map((r) => r.join('|')).join('')}`,
-        header: headerCells,
-        align,
-        rows,
-      });
-      n = i;
+const commentCache = new WeakMap<Text, SourceRange[]>();
+function documentComments(state: EditorState): SourceRange[] {
+  let ranges = commentCache.get(state.doc);
+  if (!ranges) {
+    ranges = findObsidianComments(state.doc.toString());
+    commentCache.set(state.doc, ranges);
+  }
+  return ranges;
+}
+
+const multilineCodeCache = new WeakMap<Text, (SourceRange & { size: number })[]>();
+function liveMultilineCodeRanges(state: EditorState): (SourceRange & { size: number })[] {
+  if (state.field(livePreviewReadonly, false)) return [];
+  const cached = multilineCodeCache.get(state.doc);
+  if (cached) return cached;
+  const source = state.doc.toString();
+  const blocks: SourceRange[] = [];
+  const owned: SourceRange[] = [...documentComments(state)];
+  const frontmatter = source.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/);
+  if (frontmatter) owned.push({ from: 0, to: frontmatter[0].length });
+  syntaxTree(state).iterate({ enter(node) {
+    if (node.name === 'FencedCode' || node.name === 'CodeBlock') {
+      blocks.push({from:node.from,to:node.to}); return false;
+    }
+    if (node.name === 'HTMLTag' || node.name === 'HTMLBlock') {
+      const raw = source.slice(node.from, node.to);
+      if (HTML_TAG_START_RE.test(raw) || raw.startsWith('<!--')) owned.push({from:node.from,to:node.to});
+    }
+  } });
+  const ranges: (SourceRange & { size: number })[] = [];
+  let opening: { from: number; size: number } | null = null;
+  for (const token of source.matchAll(/`+/g)) {
+    const from = token.index!, size = token[0].length;
+    if (blocks.some(b => from >= b.from && from < b.to)) { opening = null; continue; }
+    if (!opening) {
+      if (!isEscaped(source, from) && !owned.some(r => from >= r.from && from < r.to)) opening = {from,size};
       continue;
     }
-    n++;
+    if (size !== opening.size) continue;
+    if (source.slice(opening.from, from).includes('\n') &&
+        !blocks.some(b => b.from > opening!.from && b.from < from)) {
+      ranges.push({from:opening.from,to:from+size,size});
+    }
+    opening = null;
   }
+  multilineCodeCache.set(state.doc, ranges);
+  return ranges;
+}
+
+function scanTables(state: EditorState): TableBlock[] {
+  const doc = state.doc;
+  const out: TableBlock[] = [];
+  syntaxTree(state).iterate({ enter(ref) {
+    if (ref.name !== 'Table' || [...documentComments(state), ...liveMultilineCodeRanges(state)].some(r => ref.from >= r.from && ref.from < r.to)) return;
+    const table = ref.node;
+    const header = table.getChild('TableHeader');
+    const delimiter = table.getChild('TableDelimiter');
+    if (!header || delimiter?.name !== 'TableDelimiter') return;
+    const line = doc.lineAt(ref.from);
+    const delimiterLine = doc.lineAt(delimiter.from);
+    const prefix = doc.sliceString(line.from, ref.from);
+    const continuationPrefix = doc.sliceString(delimiterLine.from, delimiter.from);
+    const cells = (row: typeof table) => {
+      // Lezer omits empty TableCell nodes. Delimiter boundaries retain their
+      // column positions, including empty headers, without re-parsing escapes.
+      const values: string[] = [];
+      let start = row.from;
+      const normalize = (raw: string) => raw.replace(/(`+)([\s\S]*?)\1|\\\|/g,
+        (token, ticks) => ticks ? token : '|').trim();
+      for (const delimiter of row.getChildren('TableDelimiter')) {
+        if (delimiter.from !== row.from) values.push(normalize(doc.sliceString(start, delimiter.from)));
+        start = delimiter.to;
+      }
+      const tail = doc.sliceString(start, row.to);
+      if (tail.trim() || start === row.from) values.push(normalize(tail));
+      return values;
+    };
+    const headerCells = cells(header);
+    const align: Align[] = splitCells(doc.sliceString(delimiter.from, delimiter.to)).map(c =>
+      c.startsWith(':') ? (c.endsWith(':') ? 'center' : 'left') : c.endsWith(':') ? 'right' : null);
+    const rows = table.getChildren('TableRow').map(cells);
+    out.push({ from: line.from, to: ref.to, header: headerCells, align, rows, prefix, continuationPrefix,
+      key: JSON.stringify([prefix, continuationPrefix, headerCells, align, rows]) });
+    return false;
+  } });
   return out;
 }
 
-// Lightweight inline renderer for table cells (code / bold / italic / links).
-// `<br>` is the only inline HTML Obsidian commonly renders inside table cells.
-const CELL_INLINE_RE =
-  /(<br\s*\/?>)|(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*|_[^_]+_)|(!?\[\[[^\]]+?\]\])|(\[[^\]]+?\]\([^)]+\))/gi;
-
+// Table cells use the same dialect and sanitizer as Preview/public output.
 function appendInline(parent: HTMLElement, text: string) {
-  CELL_INLINE_RE.lastIndex = 0;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = CELL_INLINE_RE.exec(text))) {
-    if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
-    const tok = m[0];
-    if (m[1]) {
-      parent.appendChild(document.createElement('br'));
-    } else if (m[2]) {
-      const c = document.createElement('code');
-      c.className = 'cm-code';
-      c.textContent = tok.slice(1, -1);
-      parent.appendChild(c);
-    } else if (m[3]) {
-      const b = document.createElement('strong');
-      b.textContent = tok.slice(2, -2);
-      parent.appendChild(b);
-    } else if (m[4]) {
-      const em = document.createElement('em');
-      em.textContent = tok.slice(1, -1);
-      parent.appendChild(em);
-    } else if (m[5]) {
-      const embed = tok.startsWith('!');
-      const inner = tok.slice(embed ? 3 : 2, -2);
-      const [target, alias] = inner.split('|');
-      const a = document.createElement('a');
-      a.className = 'cm-wikilink internal-link';
-      a.textContent = (alias ?? target).trim();
-      a.onmousedown = (e) => {
-        e.preventDefault();
-        openLink(target.trim());
-      };
-      parent.appendChild(a);
-    } else {
-      const lm = /\[([^\]]+?)\]\(([^)]+)\)/.exec(tok)!;
-      const href = lm[2].replace(/\s+"[^"]*"$/, '').trim();
-      const a = document.createElement('a');
-      a.className = 'cm-md-link';
-      a.textContent = lm[1];
-      a.title = href;
-      const external = /^https?:\/\//i.test(href);
-      a.onmousedown = (e) => {
-        e.preventDefault();
-        if (external) window.open(href, '_blank', 'noopener');
-        else if (!href.startsWith('#')) openLink(href.replace(/\.(md|markdown)$/i, ''));
-      };
-      parent.appendChild(a);
-    }
-    last = CELL_INLINE_RE.lastIndex;
+  const template = document.createElement('template');
+  template.innerHTML = renderMarkdownBody(text, attachmentUrl);
+  const paragraph = template.content.firstElementChild;
+  if (paragraph?.tagName === 'P' && template.content.childElementCount === 1) {
+    parent.append(...Array.from(paragraph.childNodes));
+  } else parent.append(template.content);
+  for (const code of parent.querySelectorAll('code')) code.classList.add('cm-code');
+  for (const anchor of parent.querySelectorAll('a')) {
+    anchor.onmousedown = e => {
+      e.preventDefault();
+      const target = anchor.dataset.wikilink ?? anchor.getAttribute('href') ?? '';
+      if (/^https?:\/\//i.test(target)) window.open(target, '_blank', 'noopener');
+      else if (target && !target.startsWith('#')) openLink(target.replace(/\.(md|markdown)$/i, ''));
+    };
   }
-  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
 }
 
 const ALIGN_DELIM: Record<string, string> = { left: ':---', center: ':---:', right: '---:', '': '---' };
 
 /** Serialize a table model back to GFM markdown. */
 function serializeTable(header: string[], align: (Align | '')[], rows: string[][]): string {
-  const esc = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, '<br>');
+  const esc = (s: string) => s.replace(/(\\*)\|/g, (_match, slashes: string) =>
+    slashes + (slashes.length % 2 === 0 ? '\\|' : '|')).replace(/\n/g, '<br>');
   const line = (cells: string[]) => `| ${cells.map(esc).join(' | ')} |`;
   const delim = `| ${align.map((a) => ALIGN_DELIM[a || '']).join(' | ')} |`;
   return [line(header), delim, ...rows.map(line)].join('\n');
@@ -968,10 +1154,18 @@ class TableWidget extends WidgetType {
     const cols = b.header.length;
     const wrap = document.createElement('div');
     wrap.className = 'cm-table-wrap';
+    if (b.prefix.includes('>')) wrap.classList.add('cm-table-in-quote');
+    else if (/\S/.test(b.prefix)) wrap.classList.add('cm-table-in-list');
 
     const table = document.createElement('table');
     table.className = 'cm-table';
-    wrap.appendChild(table);
+    // Wide tables scroll inside their own box instead of being squeezed to the
+    // line width (which broke cells mid-word). The scroller is a separate child
+    // so the absolutely-positioned add-column/row controls on `wrap` aren't clipped.
+    const scroll = document.createElement('div');
+    scroll.className = 'cm-table-scroll';
+    scroll.appendChild(table);
+    wrap.appendChild(scroll);
 
     // Read the current (possibly edited) model straight from the DOM so that
     // uncommitted cell edits are never lost when a structural op fires.
@@ -989,7 +1183,7 @@ class TableWidget extends WidgetType {
       if (el && el.dataset && el.classList.contains('cm-cell-edit')) el.dataset.raw = el.innerText;
     };
     const commit = (m: { header: string[]; align: (Align | '')[]; rows: string[][] }) => {
-      view.dispatch({ changes: { from: b.from, to: b.to, insert: serializeTable(m.header, m.align, m.rows) } });
+      view.dispatch({ changes: { from: b.from, to: b.to, insert: serializeTable(m.header, m.align, m.rows).split('\n').map((line, index) => (index ? b.continuationPrefix : b.prefix) + line).join('\n') } });
       view.focus();
     };
     const mutate = (fn: (m: { header: string[]; align: (Align | '')[]; rows: string[][] }) => void) => {
@@ -1001,7 +1195,8 @@ class TableWidget extends WidgetType {
 
     const setCellRendered = (cell: HTMLElement) => {
       cell.textContent = '';
-      appendInline(cell, cell.dataset.raw ?? '');
+      const raw = cell.dataset.raw ?? '';
+      appendInline(cell, this.ro ? stripObsidianComments(raw) : raw);
     };
     const makeCell = (cell: HTMLElement, raw: string, col: number, rowIdx: number) => {
       cell.className = 'cm-cell-edit';
@@ -1216,38 +1411,30 @@ class BulletWidget extends WidgetType {
 
 /* ---------------- raw HTML blocks ---------------- */
 
+// Markdown HTML tag names contain letters, digits and hyphens. Lezer also
+// accepts underscores, but placeholders such as <LS_BEN> must stay literal.
+const HTML_TAG_START_RE = /^ {0,3}<\/?[a-zA-Z][a-zA-Z0-9-]*(?=[\s/>]|$)/;
+
 // Strip scripts/handlers/dangerous URLs from raw note HTML before rendering it
 // inline (Obsidian renders embedded HTML, e.g. CKEditor/Trilium tables, the same).
-const HTML_DROP_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'base']);
 function sanitizeHtml(html: string): string {
-  const tpl = document.createElement('template');
-  tpl.innerHTML = html;
-  for (const el of Array.from(tpl.content.querySelectorAll('*'))) {
-    if (HTML_DROP_TAGS.has(el.tagName.toLowerCase())) {
-      el.remove();
-      continue;
-    }
-    for (const attr of Array.from(el.attributes)) {
-      const n = attr.name.toLowerCase();
-      if (n.startsWith('on')) el.removeAttribute(attr.name);
-      else if ((n === 'href' || n === 'src' || n === 'xlink:href') && /^\s*javascript:/i.test(attr.value)) {
-        el.removeAttribute(attr.name);
-      }
-    }
-  }
-  return tpl.innerHTML;
+  const template = document.createElement('template');
+  template.innerHTML = renderPreparedMarkdown(preserveLiteralTags(html));
+  const paragraph = template.content.firstElementChild;
+  return paragraph?.tagName === 'P' && template.content.childElementCount === 1
+    ? paragraph.innerHTML : template.innerHTML;
 }
 
 class HtmlBlockWidget extends WidgetType {
-  constructor(readonly html: string) {
+  constructor(readonly html: string, readonly inline = false) {
     super();
   }
   eq(o: HtmlBlockWidget) {
-    return o.html === this.html;
+    return o.html === this.html && o.inline === this.inline;
   }
   toDOM() {
-    const div = document.createElement('div');
-    div.className = 'cm-html-block';
+    const div = document.createElement(this.inline ? 'span' : 'div');
+    div.className = this.inline ? 'cm-html-inline' : 'cm-html-block';
     div.innerHTML = sanitizeHtml(this.html);
     div.addEventListener('mousedown', (e) => {
       const a = (e.target as HTMLElement).closest('a');
@@ -1271,12 +1458,45 @@ function scanHtmlBlocks(state: EditorState): { from: number; to: number }[] {
   syntaxTree(state).iterate({
     enter: (node) => {
       if (node.name !== 'HTMLBlock') return;
+      if ([...documentComments(state), ...liveMultilineCodeRanges(state)].some(r => node.from >= r.from && node.from < r.to)) return;
       const fromLine = doc.lineAt(node.from);
+      const opener = doc.sliceString(node.from, fromLine.to);
+      if (/^<\/?[a-zA-Z]/.test(opener) && !HTML_TAG_START_RE.test(opener)) return;
       const toLine = doc.lineAt(Math.max(node.from, Math.min(node.to, doc.length) - 1));
       out.push({ from: fromLine.from, to: toLine.to });
     },
   });
   return out;
+}
+
+/** Matched inline HTML owns only its source range, never surrounding text. */
+function scanInlineHtml(state: EditorState): { from: number; to: number }[] {
+  const ranges: { from: number; to: number }[] = [];
+  const stack: { name: string; from: number; line: number; color: boolean }[] = [];
+  syntaxTree(state).iterate({ enter(node) {
+    if (node.name !== 'HTMLTag') return;
+    const raw = state.doc.sliceString(node.from, node.to);
+    const tag = /^<\/?([a-zA-Z][a-zA-Z0-9-]*)(?=[\s/>])/.exec(raw);
+    if (!tag) return false;
+    const line = state.doc.lineAt(node.from).number;
+    if (stack.length && stack[0].line !== line) stack.length = 0;
+    const name = tag[1].toLowerCase();
+    if (raw.startsWith('</')) {
+      const open = stack.at(-1);
+      if (open?.name !== name) return false;
+      stack.pop();
+      if (!stack.length && !open.color && state.doc.lineAt(node.to).number === line) {
+        ranges.push({ from: open.from, to: node.to });
+      }
+    } else if (/\/>$/.test(raw) || /^(br|img|hr|input|wbr|source|area|base|col|embed|link|meta|param|track)$/.test(name)) {
+      if (!stack.length) ranges.push({ from: node.from, to: node.to });
+    } else {
+      const style = raw.match(/^<span style="([^"]+)">$/)?.[1];
+      stack.push({ name, from: node.from, line, color: !!style && COLOR_STYLE_RE.test(style) });
+    }
+    return false;
+  } });
+  return ranges;
 }
 
 interface Prop {
@@ -1408,8 +1628,15 @@ class FrontmatterWidget extends WidgetType {
     return true;
   }
   toDOM(view: EditorView) {
+    // `shell` is the box CodeMirror measures, so the widget's vertical spacing lives
+    // on it as PADDING: the height oracle only ever sees border-box rects, and space
+    // contributed by a vertical `margin` here would be invisible to it — every click
+    // below the properties block then resolved one line too low.
+    const shell = document.createElement('div');
+    shell.className = 'cm-properties';
     const box = document.createElement('div');
-    box.className = 'properties cm-properties';
+    box.className = 'properties';
+    shell.appendChild(box);
 
     // Re-find the current frontmatter range and replace it with fresh YAML.
     const commit = (props: Prop[]) => {
@@ -1456,6 +1683,13 @@ class FrontmatterWidget extends WidgetType {
 
     // Change a property's type: persist to .obsidian/types.json, then convert the
     // note's YAML if list-ness changed (else just refresh the icon in place).
+    // A page's own `type` decides which status vocabulary applies (FR-23): a task's statuses are
+    // not an abnormality's. Read from the block's YAML so the rows and setType agree.
+    const pageKind = () => {
+      const rows = parseFrontmatter(this.yaml);
+      return (rows.find((p) => p.key.trim().toLowerCase() === 'type')?.values[0] ?? '').trim();
+    };
+
     const setType = async (key: string, dt: string) => {
       try {
         const types = await persistPropertyType(key, dtToObs(dt, key));
@@ -1488,7 +1722,13 @@ class FrontmatterWidget extends WidgetType {
         }
         const valCell = row.querySelector('.prop-val');
         const oldField = row.querySelector('.prop-val-field') as HTMLElement | null;
-        if (valCell && oldField) valCell.replaceChild(makeScalarField(dt, oldField.dataset.raw ?? ''), oldField);
+        if (valCell && oldField) {
+          // Rebuild the cell's single control rather than swapping the field in place: a
+          // pick-list field (FR-23) sits inside its own wrapper alongside the ▾ button.
+          const fresh = makeScalarField(dt, oldField.dataset.raw ?? '', key, pageKind());
+          valCell.textContent = '';
+          valCell.appendChild(fresh);
+        }
       }
     };
 
@@ -1534,9 +1774,88 @@ class FrontmatterWidget extends WidgetType {
       el.addEventListener('blur', onCommit);
     };
 
+    // The value list for a closed-vocabulary property (FR-23): a ▾ beside the field that opens
+    // the vault's values. Same popup host and classes as the list-item suggester, so the theme
+    // wrapper's palette resolves; picking writes the frontmatter through mutate() like any edit.
+    const pickButton = (key: string, field: HTMLElement, opts: PropOption[]): HTMLElement => {
+      const btn = document.createElement('span');
+      btn.className = 'prop-pick-btn';
+      btn.textContent = '▾';
+      btn.title = `Choose a ${key}`;
+      btn.setAttribute('role', 'button');
+      btn.setAttribute('aria-label', `Choose a ${key} value`);
+      btn.setAttribute('aria-haspopup', 'listbox');
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        openPickList(field, opts);
+      });
+      return btn;
+    };
+
+    const openPickList = (field: HTMLElement, opts: PropOption[]) => {
+      const dd = document.createElement('div');
+      dd.className = 'cm-props-dropdown prop-val-dropdown';
+      dd.setAttribute('role', 'listbox');
+      themedPopupHost().appendChild(dd);
+      // Fixed-position just below the field (viewport coords; rect forces reflow).
+      const r = field.getBoundingClientRect();
+      dd.style.left = `${Math.round(r.left)}px`;
+      dd.style.top = `${Math.round(r.bottom + 2)}px`;
+
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        dd.remove();
+        window.removeEventListener('mousedown', away, true);
+        window.removeEventListener('keydown', escape, true);
+      };
+      const pick = (value: string) => {
+        close();
+        // The DOM field is the source readProps reads: set both, then commit once.
+        field.textContent = value;
+        field.dataset.raw = value;
+        mutate(() => {});
+      };
+      const away = (e: MouseEvent) => {
+        if (!dd.contains(e.target as Node)) close();
+      };
+      const escape = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') close();
+      };
+      window.addEventListener('mousedown', away, true);
+      window.addEventListener('keydown', escape, true);
+
+      for (const o of opts) {
+        const it = document.createElement('div');
+        it.className = 'cm-props-dd-item' + (o.offList ? ' is-offlist' : '');
+        it.dataset.value = o.value;
+        it.setAttribute('role', 'option');
+        it.setAttribute('aria-selected', o.current ? 'true' : 'false');
+        const ic = document.createElement('span');
+        ic.className = 'prop-icon';
+        ic.textContent = o.current ? '✓' : '';
+        const nm = document.createElement('span');
+        nm.textContent = o.value;
+        it.append(ic, nm);
+        if (o.offList) {
+          // In the note but not in SCHEMA: shown, never rewritten, and labelled as such.
+          const hint = document.createElement('span');
+          hint.className = 'prop-val-offlist';
+          hint.textContent = 'in this note';
+          it.appendChild(hint);
+        }
+        it.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          pick(o.value);
+        });
+        dd.appendChild(it);
+      }
+    };
+
     // A value editor whose control matches the property type. `dataset.raw` always
     // holds the canonical YAML value so readProps never rewrites untouched fields.
-    const makeScalarField = (dt: string, value: string): HTMLElement => {
+    const makeScalarField = (dt: string, value: string, key: string, type: string): HTMLElement => {
       const commitChange = () => mutate(() => {});
       if (dt === 'number') {
         const inp = document.createElement('input');
@@ -1591,7 +1910,15 @@ class FrontmatterWidget extends WidgetType {
           mutate(() => {});
         }
       });
-      return span;
+      // Closed-vocabulary keys get the vault's values as a list to pick from (FR-23). The
+      // field stays editable text: SCHEMA owns the vocabulary, the picker only saves typing
+      // an id from memory, and a value it does not know is still shown and still writable.
+      const opts = this.ro ? null : optionsFor(key, value, type);
+      if (!opts) return span;
+      const wrap = document.createElement('span');
+      wrap.className = 'prop-val-wrap';
+      wrap.append(span, pickButton(key, span, opts));
+      return wrap;
     };
 
     // Add an item to a list property via a typed input + suggestion dropdown
@@ -1607,8 +1934,7 @@ class FrontmatterWidget extends WidgetType {
       container.insertBefore(inp, addBtn);
       // Mount inside the theme wrapper (not <body>) so the CSS variables that give
       // the dropdown its background resolve — otherwise it renders transparent.
-      const host = (document.querySelector('.theme-light, .theme-dark') as HTMLElement) ?? document.body;
-      host.appendChild(dd);
+      themedPopupHost().appendChild(dd);
       // Fixed-position just below the input (viewport coords; rect forces reflow).
       const ir = inp.getBoundingClientRect();
       dd.style.left = `${Math.round(ir.left)}px`;
@@ -1677,6 +2003,7 @@ class FrontmatterWidget extends WidgetType {
       );
     };
 
+    const pageType = pageKind();
     props.forEach((p, idx) => {
       const dt = displayTypeOf(p);
       const renderAsList = dt === 'list' || p.list;
@@ -1763,7 +2090,7 @@ class FrontmatterWidget extends WidgetType {
         });
         v.appendChild(add);
       } else {
-        v.appendChild(makeScalarField(dt, p.values[0] ?? ''));
+        v.appendChild(makeScalarField(dt, p.values[0] ?? '', p.key, pageType));
       }
 
       const del = document.createElement('span');
@@ -1874,7 +2201,7 @@ class FrontmatterWidget extends WidgetType {
       for (const el of box.querySelectorAll('[contenteditable]')) el.removeAttribute('contenteditable');
       for (const inp of box.querySelectorAll('input')) (inp as HTMLInputElement).disabled = true;
     }
-    return box;
+    return shell;
   }
 }
 
@@ -1896,7 +2223,23 @@ const EMPHASIS_CLASS: Record<string, string> = {
 const hidden = Decoration.replace({});
 
 function attachmentUrl(target: string): string {
-  return `/api/files/content?path=${encodeURIComponent(target)}`;
+  return `/api/files/content?path=${encodeURIComponent(target)}${
+    notePath ? `&from=${encodeURIComponent(notePath)}` : ''
+  }`;
+}
+
+/**
+ * Markdown link targets are percent-encoded (`![](My%20File.png)`) and
+ * attachmentUrl() encodes again, so decode once or `%20` becomes `%2520`.
+ * try/catch: a lone `%` makes decodeURIComponent throw; the raw name is right then.
+ * Only for `![](…)` — `![[wikilink]]` targets are literal, not encoded.
+ */
+function decodeLinkTarget(target: string): string {
+  try {
+    return decodeURIComponent(target);
+  } catch {
+    return target;
+  }
 }
 
 function buildDecorations(view: EditorView): DecorationSet {
@@ -1918,6 +2261,7 @@ function buildDecorations(view: EditorView): DecorationSet {
   // selection overlaps [from,to] (inclusive) → reveal raw syntax for that span.
   // In reading mode (readonly) nothing is ever revealed — same render, no edit.
   const readonly = view.state.field(livePreviewReadonly, false) ?? false;
+  const multilineCode = liveMultilineCodeRanges(view.state);
   const touches = (from: number, to: number) => {
     if (readonly) return false;
     for (const r of sel.ranges) if (r.from <= to && r.to >= from) return true;
@@ -1930,21 +2274,11 @@ function buildDecorations(view: EditorView): DecorationSet {
   };
 
   const total = doc.lines;
-  // Block comments: standalone `%%` fence lines toggle a commented region (§7).
-  const commentLines = new Set<number>();
-  {
-    let open = -1;
-    for (let n = 1; n <= total; n++) {
-      if (doc.line(n).text.trim() === '%%') {
-        if (open < 0) {
-          open = n;
-        } else {
-          for (let k = open; k <= n; k++) commentLines.add(k);
-          open = -1;
-        }
-      }
-    }
-  }
+  const comments = documentComments(view.state);
+  const footnotes = readingFootnotes(view.state);
+  const footnoteParts = [...footnotes.references, ...footnotes.definitions];
+  const inFootnote = (from: number, to: number) => footnoteParts.some(r => from < r.to && to > r.from);
+  const inComment = (from: number, to: number) => comments.some(r => from < r.to && to > r.from);
   // Frontmatter range (rendered by frontmatterField) — the regex passes skip it.
   const fmMatch = doc.sliceString(0, Math.min(doc.length, 4000)).match(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/);
   const fmEnd = fmMatch ? fmMatch[0].length : 0;
@@ -1953,7 +2287,7 @@ function buildDecorations(view: EditorView): DecorationSet {
   // (selection not inside it) the plugin must NOT decorate inside its range, or
   // its inline replaces would collide with the block widget. Editable tables
   // (selection inside) get normal raw-markdown handling.
-  const tables = scanTables(doc);
+  const tables = scanTables(view.state);
   const renderedTable = (from: number, to: number) =>
     tables.some((t) => from >= t.from && to <= t.to);
 
@@ -1962,11 +2296,17 @@ function buildDecorations(view: EditorView): DecorationSet {
   const htmlBlocks = scanHtmlBlocks(view.state);
   const renderedHtml = (from: number, to: number) =>
     htmlBlocks.some((h) => from >= h.from && to <= h.to && !touches(h.from, h.to));
+  const inlineHtml = scanInlineHtml(view.state).filter(h => !touches(h.from, h.to) &&
+    ![...comments, ...multilineCode].some(r => h.from >= r.from && h.from < r.to));
+  const renderedInlineHtml = (from: number, to: number) =>
+    inlineHtml.some(h => from >= h.from && to <= h.to);
 
   // Inline code and code blocks are literal — wikilink/embed/link/tag syntax
   // inside them must stay raw (e.g. `![[file]]` in backticks is not an embed).
-  const codeRanges: { from: number; to: number }[] = [];
+  const codeRanges: { from: number; to: number }[] = [...multilineCode];
   const inCode = (from: number, to: number) => {
+    if (inFootnote(from, to)) return true;
+    if (inComment(from, to)) return true;
     for (const r of codeRanges) if (from < r.to && to > r.from) return true;
     return false;
   };
@@ -1979,6 +2319,9 @@ function buildDecorations(view: EditorView): DecorationSet {
       to,
       enter: (node) => {
         const name = node.name;
+        if (comments.some(r => node.from >= r.from && node.to <= r.to)) return false;
+        if (multilineCode.some(r => node.from >= r.from && node.to <= r.to)) return false;
+        if (footnoteParts.some(r => node.from >= r.from && node.to <= r.to)) return false;
 
         // Record code spans/blocks so the regex passes below can skip them.
         if (name === 'InlineCode' || name === 'FencedCode' || name === 'CodeBlock') {
@@ -1986,7 +2329,7 @@ function buildDecorations(view: EditorView): DecorationSet {
         }
 
         // Don't decorate inside a rendered table/HTML block — their fields own it.
-        if (renderedTable(node.from, node.to) || renderedHtml(node.from, node.to)) return;
+        if (renderedTable(node.from, node.to) || renderedHtml(node.from, node.to) || renderedInlineHtml(node.from, node.to)) return;
 
         // Code block lines: HyperMD-codeblock(-begin/-end) like Obsidian.
         // The ``` fences are concealed while the caret is outside the block.
@@ -2066,6 +2409,20 @@ function buildDecorations(view: EditorView): DecorationSet {
     });
   }
 
+  for (const code of multilineCode) {
+    if (!touches(code.from, code.from + code.size)) pushReplace(code.from, code.from + code.size, hidden);
+    if (!touches(code.to - code.size, code.to)) pushReplace(code.to - code.size, code.to, hidden);
+  }
+  for (const h of inlineHtml) {
+    if (!renderedTable(h.from, h.to) && !renderedHtml(h.from, h.to)) {
+      let html = doc.sliceString(h.from, h.to);
+      if (readonly) for (const r of [...comments].reverse()) {
+        if (r.from >= h.from && r.to <= h.to) html = html.slice(0, r.from - h.from) + html.slice(r.to - h.from);
+      }
+      pushReplace(h.from, h.to, Decoration.replace({ widget: new HtmlBlockWidget(html, true) }));
+    }
+  }
+
   // Regex passes (links, images, wikilinks, tasks, bullets, blockquotes, tags).
   for (const { from, to } of view.visibleRanges) {
     const startLine = doc.lineAt(from).number;
@@ -2074,24 +2431,46 @@ function buildDecorations(view: EditorView): DecorationSet {
       const line = doc.line(ln);
       const text = line.text;
 
+      if (footnotes.definitions.some(r => line.from >= r.from && line.to <= r.to)) continue;
+
       // Skip lines covered by a rendered table / HTML block widget.
       if (renderedTable(line.from, line.to) || renderedHtml(line.from, line.to)) continue;
       // Skip the frontmatter block (rendered by frontmatterField).
       if (line.to <= fmEnd) continue;
       // Skip lines fully inside code (fences) — bullets/tags there are literal.
       if (codeRanges.some((r) => r.from <= line.from && r.to >= line.to)) continue;
-      // Whole-line %% block comment region → grey out, keep raw.
-      if (commentLines.has(ln)) {
-        all.push(Decoration.line({ class: 'cm-comment' }).range(line.from, line.from));
-        continue;
+      for (const comment of comments) {
+        const start = Math.max(line.from, comment.from), end = Math.min(line.to, comment.to);
+        if (end <= start) continue;
+        if (readonly) pushReplace(start, end, hidden);
+        else all.push(Decoration.mark({ class: 'cm-comment' }).range(start, end));
+      }
+      if (comments.some(r => r.from <= line.from && r.to >= line.to)) continue;
+
+      // Color spans stay editable and compose with Markdown emphasis. A whole-line
+      // HTML widget would overlap the emphasis replacements built above and would
+      // also render Markdown inside the span as literal punctuation.
+      const colorStack: { from: number; contentFrom: number; style: string | null }[] = [];
+      const colorTags = /<span\b[^>]*>|<\/span>/gi;
+      let colorTag: RegExpExecArray | null;
+      while ((colorTag = colorTags.exec(text))) {
+        if (colorTag[0].toLowerCase() !== '</span>') {
+          const style = colorTag[0].match(/^<span style="([^"]+)">$/)?.[1];
+          colorStack.push({ from: line.from + colorTag.index, contentFrom: line.from + colorTags.lastIndex,
+            style: style && COLOR_STYLE_RE.test(style) ? style : null });
+        } else {
+          const open = colorStack.pop();
+          const end = line.from + colorTags.lastIndex;
+          const contentTo = line.from + colorTag.index;
+          if (!open?.style || inCode(open.from, open.contentFrom) || inCode(contentTo, end)) continue;
+          if (contentTo > open.contentFrom) all.push(Decoration.mark({ attributes: { style: open.style } }).range(open.contentFrom, contentTo));
+          if (!touches(open.from, end)) {
+            pushReplace(open.from, open.contentFrom, hidden);
+            pushReplace(contentTo, end, hidden);
+          }
+        }
       }
 
-      // Inline-HTML paragraph line (e.g. `<u>…</u> và <mark>…`): Lezer only marks
-      // block-level openers as HTMLBlock, so render whole-line inline HTML here.
-      if (/^<[a-zA-Z][^>]*>/.test(text) && !lineActive(line.from)) {
-        pushReplace(line.from, line.to, Decoration.replace({ widget: new HtmlBlockWidget(text) }));
-        continue;
-      }
 
       // Horizontal rule: `---` / `***` / `___` → <hr> when the caret is elsewhere.
       if (/^ {0,3}([-*_])(?:\s*\1){2,}\s*$/.test(text) && !inCode(line.from, line.to)) {
@@ -2112,9 +2491,9 @@ function buildDecorations(view: EditorView): DecorationSet {
         bodyStart = prefix.length;
         // First/last line of this contiguous quote run
         let firstLn = ln;
-        while (firstLn > 1 && QUOTE_LINE_RE.test(doc.line(firstLn - 1).text)) firstLn--;
+        while (firstLn > 1 && quoteDepth(doc.line(firstLn - 1).text) >= depth) firstLn--;
         let lastLn = ln;
-        while (lastLn < total && QUOTE_LINE_RE.test(doc.line(lastLn + 1).text)) lastLn++;
+        while (lastLn < total && quoteDepth(doc.line(lastLn + 1).text) >= depth) lastLn++;
         const titleLineFrom = doc.line(firstLn).from;
         const firstInner = doc.line(firstLn).text.replace(QUOTE_MARKERS_RE, '');
         const cm = firstInner.match(CALLOUT_RE);
@@ -2186,12 +2565,25 @@ function buildDecorations(view: EditorView): DecorationSet {
           i = end;
         }
       };
+      // Hanging indent: wrapped lines align with the text after the marker. Indent
+      // units and the marker widget have fixed widths (see .HyperMD-hang in CSS).
+      // Build the prefix by addition because CSS calc multiplication is not supported
+      // by all browsers. `markerW` varies with digit count for ordered lists.
+      const hang = (ws: string, markerW?: string): Record<string, string> => {
+        if (bodyStart) return {};
+        let units = 0;
+        for (let i = 0; i < ws.length; i += ws[i] === '\t' ? 1 : 4) units++;
+        const prefix = [...Array.from({ length: units }, () => 'var(--hang-indent-w)'), 'var(--hang-marker-w)'].join(' + ');
+        // `--hang-marker-w` must be set on the line itself: the ordered-list marker box
+        // (.cm-ol-marker) reads it for its width, so it has to match what the prefix uses.
+        return { style: `${markerW ? `--hang-marker-w:${markerW};` : ''}--hang-prefix:calc(${prefix})` };
+      };
       const task = body.match(/^(\s*)([-*+])\s+\[(.)\]\s/);
       if (task) {
         all.push(
           Decoration.line({
-            class: 'HyperMD-list-line HyperMD-task-line',
-            attributes: { 'data-task': task[3] },
+            class: bodyStart ? 'HyperMD-list-line HyperMD-task-line' : 'HyperMD-list-line HyperMD-task-line HyperMD-hang',
+            attributes: { 'data-task': task[3], ...hang(task[1]) },
           }).range(line.from, line.from),
         );
         indentGuides(task[1]);
@@ -2202,7 +2594,12 @@ function buildDecorations(view: EditorView): DecorationSet {
       } else {
         const bullet = body.match(/^(\s*)([-*+])(\s+)/);
         if (bullet) {
-          all.push(Decoration.line({ class: 'HyperMD-list-line' }).range(line.from, line.from));
+          all.push(
+            Decoration.line({
+              class: bodyStart ? 'HyperMD-list-line' : 'HyperMD-list-line HyperMD-hang',
+              attributes: hang(bullet[1]),
+            }).range(line.from, line.from),
+          );
           indentGuides(bullet[1]);
           // Replace the `-`/`*`/`+` marker with a bullet and collapse its trailing
           // whitespace to a single space, so `-   Item` reads `• Item` like Obsidian.
@@ -2210,19 +2607,35 @@ function buildDecorations(view: EditorView): DecorationSet {
           const markerEnd = start + 1;
           const spaceEnd = markerEnd + bullet[3].length;
           if (!touches(start, spaceEnd)) {
-            pushReplace(start, markerEnd, Decoration.replace({ widget: new BulletWidget() }));
+            pushReplace(start, markerEnd + 1, Decoration.replace({ widget: new BulletWidget() }));
             if (bullet[3].length > 1) pushReplace(markerEnd + 1, spaceEnd, hidden);
           }
         } else {
-          // Ordered list: keep the `1.` but collapse extra spaces after it.
+          // Ordered list: keep the `1.` but collapse extra spaces after it. The marker
+          // is drawn in a fixed-width box (width grows with digit count) so wrapped
+          // lines can hang under the text, like bullets.
           const ol = body.match(/^(\s*)(\d{1,9}[.)])(\s+)/);
           if (ol) {
-            all.push(Decoration.line({ class: 'HyperMD-list-line' }).range(line.from, line.from));
+            const digits = ol[2].length - 1;
+            const markerW = `${(1.6 + (digits - 1) * 0.6).toFixed(2)}em`;
+            all.push(
+              Decoration.line({
+                class: bodyStart ? 'HyperMD-list-line' : 'HyperMD-list-line HyperMD-hang',
+                attributes: hang(ol[1], markerW),
+              }).range(line.from, line.from),
+            );
             indentGuides(ol[1]);
-            if (ol[3].length > 1) {
-              const markerEnd = bodyFrom + ol[1].length + ol[2].length;
-              const spaceEnd = markerEnd + ol[3].length;
-              if (!touches(bodyFrom + ol[1].length, spaceEnd)) pushReplace(markerEnd + 1, spaceEnd, hidden);
+            const start = bodyFrom + ol[1].length;
+            const markerEnd = start + ol[2].length;
+            const spaceEnd = markerEnd + ol[3].length;
+            if (!touches(start, spaceEnd)) {
+              if (bodyStart) {
+                // In quotes/callouts there is no hanging box: keep one space after the marker.
+                if (ol[3].length > 1) pushReplace(markerEnd + 1, spaceEnd, hidden);
+              } else {
+                all.push(Decoration.mark({ class: 'cm-ol-marker' }).range(start, markerEnd));
+                pushReplace(markerEnd, spaceEnd, hidden);
+              }
             }
           }
         }
@@ -2268,15 +2681,6 @@ function buildDecorations(view: EditorView): DecorationSet {
           all.push(Decoration.mark({ class: 'cm-formatting cm-formatting-highlight' }).range(s, s + 2));
           all.push(Decoration.mark({ class: 'cm-formatting cm-formatting-highlight' }).range(e - 2, e));
         }
-      }
-
-      // %%Comment%% — greyed out (dropped from reading view, visible faint in editor).
-      const cmtRe = /%%(.+?)%%/g;
-      while ((m = cmtRe.exec(text))) {
-        const s = line.from + m.index;
-        const e = s + m[0].length;
-        if (inCode(s, e)) continue;
-        all.push(Decoration.mark({ class: 'cm-comment' }).range(s, e));
       }
 
       // $$Display math$$ (single-line) — rendered via KaTeX when the caret is outside.
@@ -2339,7 +2743,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       while ((m = wikiRe.exec(text))) {
         const s = line.from + m.index;
         const e = s + m[0].length;
-        if (touches(s, e) || inCode(s, e)) continue;
+        if (touches(s, e) || inCode(s, e) || isEscaped(text, m.index)) continue;
         const inner = m[2];
         if (inner.includes('[[')) continue;
         const isEmbed = m[1] === '!';
@@ -2363,7 +2767,7 @@ function buildDecorations(view: EditorView): DecorationSet {
               h = sm[2] ? Number(sm[2]) : undefined;
             }
           }
-          pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(attachmentUrl(href), href, w, h) }));
+          pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(attachmentUrl(href), href, w, h, href) }));
         } else if (isEmbed && (VIDEO_EXT_RE.test(href) || AUDIO_EXT_RE.test(href))) {
           // `![[clip.mp4]]` / `![[song.mp3]]` → native HTML5 player like Obsidian.
           const kind = VIDEO_EXT_RE.test(href) ? 'video' : 'audio';
@@ -2375,6 +2779,10 @@ function buildDecorations(view: EditorView): DecorationSet {
             if (sm) w = Number(sm[1]);
           }
           pushReplace(s, e, Decoration.replace({ widget: new MediaWidget(attachmentUrl(href), href, kind, w) }));
+        } else if (isEmbed && PDF_EXT_RE.test(href.split('#')[0])) {
+          // FR-21: `![[doc.pdf]]` → the browser's viewer inline, like Obsidian.
+          // The `#page=…` fragment (if any) addresses the viewer, not the file API.
+          pushReplace(s, e, Decoration.replace({ widget: new PdfEmbedWidget(attachmentUrl(href.split('#')[0]), href.split('#')[0], notePath) }));
         } else if (isEmbed && !/\.[a-z0-9]{1,5}$/i.test(href.split('#')[0])) {
           // `![[note]]` (no binary extension) → real transclusion like Obsidian.
           pushReplace(s, e, Decoration.replace({ widget: new NoteEmbedWidget(href) }));
@@ -2388,6 +2796,15 @@ function buildDecorations(view: EditorView): DecorationSet {
             Decoration.replace({ widget: new WikilinkWidget(href, label, isEmbed, defaultDisplay !== label ? defaultDisplay : undefined) }),
           );
         }
+      }
+
+      // Standalone media URL → inline player (raw URL shows while the caret is on it)
+      const embedM = text.match(/^\s*(https?:\/\/\S+)\s*$/);
+      if (embedM) {
+        const s = line.from + text.indexOf(embedM[1]);
+        const e = s + embedM[1].length;
+        const emb = !touches(s, e) && !inCode(s, e) ? resolveExternalEmbed(embedM[1]) : null;
+        if (emb) pushReplace(s, e, Decoration.replace({ widget: new ExternalEmbedWidget(emb) }));
       }
 
       // Markdown images ![alt](url) — URL may contain spaces (real-world vaults)
@@ -2413,8 +2830,17 @@ function buildDecorations(view: EditorView): DecorationSet {
         // Browser-loadable URLs load directly; anything else (a relative path or
         // any custom scheme) is resolved by basename via the vault file index.
         const webLoadable = /^(https?|data|blob|file):/i.test(url);
-        const src = webLoadable ? url : attachmentUrl(url.split('/').pop() || url);
-        pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(src, alt, w, h) }));
+        let vaultRef: string | null = null;
+        if (!webLoadable) {
+          vaultRef = url.replace(/^<|>$/g, '');
+          try {
+            vaultRef = decodeURIComponent(vaultRef);
+          } catch {
+            /* keep raw */
+          }
+        }
+        const src = vaultRef === null ? url : attachmentUrl(vaultRef);
+        pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(src, alt, w, h, vaultRef) }));
       }
 
       // Markdown links [text](url) — not preceded by ! (those are images)
@@ -2425,6 +2851,11 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (touches(s, e) || inCode(s, e)) continue;
         const url = m[2].replace(/\s+"[^"]*"$/, '').trim();
         pushReplace(s, e, Decoration.replace({ widget: new MdLinkWidget(m[1], url) }));
+      }
+
+      // Standalone bare URL line → rich preview card (raw text shown while editing).
+      if (/^https?:\/\/\S+$/i.test(text) && !lineActive(line.from) && !inCode(line.from, line.to)) {
+        pushReplace(line.from, line.to, Decoration.replace({ widget: new LinkPreviewWidget(text) }));
       }
 
       // Markdown escapes `\.` `\*` … — conceal the backslash like Obsidian LP
@@ -2452,7 +2883,7 @@ function buildFrontmatter(state: EditorState): DecorationSet {
   if (!state.field(livePreviewState, false)) return Decoration.none;
   const text = state.doc.sliceString(0, Math.min(state.doc.length, 4000));
   const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*(\r?\n|$)/);
-  if (!fm) return Decoration.none;
+  if (!fm || !editableFrontmatter(fm[1])) return Decoration.none;
   const end = fm[0].length;
   const blockEnd = text[end - 1] === '\n' ? end - 1 : end;
   // Always show the interactive Properties editor (like Obsidian); editing happens
@@ -2516,8 +2947,9 @@ export const noteTitleField = StateField.define<string>({
 
 function buildInlineTitle(state: EditorState): DecorationSet {
   if (!state.field(livePreviewState, false)) return Decoration.none;
-  const title = state.field(noteTitleField, false) ?? '';
-  if (!title) return Decoration.none;
+  const baseTitle = state.field(noteTitleField, false) ?? '';
+  if (!baseTitle) return Decoration.none;
+  const title = frontmatterTitle(state.doc.sliceString(0, Math.min(state.doc.length, 2000))) ?? baseTitle;
   // Skip when the note already opens with an H1 equal to the title — the Trilium
   // export repeats the title as a heading, and Obsidian would otherwise show it twice.
   const head = state.doc.sliceString(0, Math.min(state.doc.length, 2000));
@@ -2554,7 +2986,7 @@ export const frontmatterField = StateField.define<DecorationSet>({
 
 function buildTables(state: EditorState): DecorationSet {
   if (!state.field(livePreviewState, false)) return Decoration.none;
-  const tables = scanTables(state.doc);
+  const tables = scanTables(state);
   if (!tables.length) return Decoration.none;
   const ro = state.field(livePreviewReadonly, false) ?? false;
   // Like Obsidian, tables are ALWAYS shown as the interactive widget (never as raw
@@ -2578,10 +3010,54 @@ export const tableField = StateField.define<DecorationSet>({
 
 /* ---------------- raw HTML blocks (block widgets; need a StateField) ---------------- */
 
+interface ReadingFootnotes {
+  references: (SourceRange & { html: string })[];
+  definitions: SourceRange[];
+  html: string;
+}
+const footnoteCache = new WeakMap<Text, ReadingFootnotes>();
+function readingFootnotes(state: EditorState): ReadingFootnotes {
+  const empty = { references: [], definitions: [], html: '' };
+  if (!state.field(livePreviewReadonly, false)) return empty;
+  const cached = footnoteCache.get(state.doc);
+  if (cached) return cached;
+  const source = state.doc.toString();
+  const positions = footnoteRanges(source);
+  if (!positions.references.length) return empty;
+  const template = document.createElement('template');
+  template.innerHTML = renderMarkdownBody(source, attachmentUrl);
+  const refs = [...template.content.querySelectorAll('a[data-footnote-ref]')];
+  const result = {
+    references: positions.references.flatMap((range, index) => refs[index] ? [{ ...range, html: refs[index].outerHTML }] : []),
+    definitions: positions.definitions,
+    html: template.content.querySelector('[data-footnotes]')?.outerHTML ?? '',
+  };
+  footnoteCache.set(state.doc, result);
+  return result;
+}
+
+class ReadingFootnoteWidget extends WidgetType {
+  constructor(readonly html: string, readonly block = false) { super(); }
+  eq(other: ReadingFootnoteWidget) { return other.html === this.html && other.block === this.block; }
+  toDOM(view: EditorView) {
+    const element = document.createElement(this.block ? 'div' : 'sup');
+    element.className = this.block ? 'cm-reading-footnotes markdown-preview' : 'cm-footref';
+    element.innerHTML = this.html; // Already sanitized by the shared renderer.
+    element.addEventListener('click', event => {
+      const anchor = (event.target as HTMLElement).closest('a');
+      if (!anchor?.hash) return;
+      event.preventDefault();
+      const id = decodeURIComponent(anchor.hash.slice(1));
+      [...view.dom.querySelectorAll<HTMLElement>('[id]')].find(el => el.id === id)?.scrollIntoView({ block: 'nearest' });
+    });
+    return element;
+  }
+  ignoreEvent() { return true; }
+}
+
 function buildHtmlBlocks(state: EditorState): DecorationSet {
   if (!state.field(livePreviewState, false)) return Decoration.none;
   const blocks = scanHtmlBlocks(state);
-  if (!blocks.length) return Decoration.none;
   const ro = state.field(livePreviewReadonly, false) ?? false;
   const ranges: Range<Decoration>[] = [];
   for (const b of blocks) {
@@ -2597,6 +3073,14 @@ function buildHtmlBlocks(state: EditorState): DecorationSet {
     const html = state.doc.sliceString(b.from, b.to);
     ranges.push(Decoration.replace({ widget: new HtmlBlockWidget(html), block: true }).range(b.from, b.to));
   }
+  const notes = readingFootnotes(state);
+  const tables = scanTables(state);
+  for (const ref of notes.references) {
+    if (tables.some(t => ref.from >= t.from && ref.to <= t.to)) continue;
+    ranges.push(Decoration.replace({ widget: new ReadingFootnoteWidget(ref.html) }).range(ref.from, ref.to));
+  }
+  for (const def of notes.definitions) ranges.push(Decoration.replace({ block: true }).range(def.from, def.to));
+  if (notes.html) ranges.push(Decoration.widget({ widget: new ReadingFootnoteWidget(notes.html, true), block: true, side: 1 }).range(state.doc.length));
   return Decoration.set(ranges, true);
 }
 
@@ -2637,10 +3121,27 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
  * otherwise swallow the first click, which is why editing a heading "took
  * several clicks". We only act on a plain click (no shift = not range-extending)
  * and let CodeMirror still handle drag-select normally.
+ *
+ * Two things can still move the caret away from the clicked row, and both are
+ * handled here: CodeMirror leaves it put when `posAtCoords` has no precise answer
+ * (the padding of a tall heading line-box — fixed on mousedown), and the browser's
+ * own contenteditable caret placement picks a *neighbouring* line when the click
+ * lands in the blank part of a line whose only content is a widget, an image line
+ * say (re-asserted on mouseup, once the native handling has run). Widgets that own
+ * their interaction are left untouched.
  */
+const INTERACTIVE_WIDGET =
+  'input, textarea, select, audio, video, iframe, [contenteditable="true"]:not(.cm-content), ' +
+  '.cm-table-wrap, .cm-properties, .cm-media-wrap, .cm-note-embed';
+let plainClickAt: { x: number; y: number } | null = null;
+
 export const editorClickFix = EditorView.domEventHandlers({
   mousedown(event, view) {
-    if (event.button !== 0 || event.shiftKey || event.detail > 1) return false;
+    if (event.button !== 0 || event.shiftKey || event.altKey || event.detail > 1) {
+      plainClickAt = null;
+      return false;
+    }
+    plainClickAt = { x: event.clientX, y: event.clientY };
     // `precise: false` returns the CLOSEST position and never null, so clicking
     // anywhere on a tall heading line-box (incl. its padding, where the default
     // posAtCoords returns null and CM leaves the caret put) still moves the caret
@@ -2649,7 +3150,88 @@ export const editorClickFix = EditorView.domEventHandlers({
     view.dispatch({ selection: { anchor: pos } });
     return false; // let CodeMirror handle focus/drag normally too
   },
+  mouseup(event, view) {
+    const start = plainClickAt;
+    plainClickAt = null;
+    if (!start || event.button !== 0 || event.shiftKey || event.detail > 1) return false;
+    // A drag: keep the selection CodeMirror built.
+    if (Math.abs(event.clientX - start.x) > 3 || Math.abs(event.clientY - start.y) > 3) return false;
+    const target = event.target as HTMLElement | null;
+    if (target && typeof target.closest === 'function' && target.closest(INTERACTIVE_WIDGET)) return false;
+    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
+    if (pos != null && pos !== view.state.selection.main.head) view.dispatch({ selection: { anchor: pos } });
+    return false;
+  },
 });
+
+/**
+ * Re-measure when media inside the editor finishes loading. CodeMirror's height
+ * oracle only sees the DOM as it is during a measure pass and it does not listen for
+ * `load`/`error` events, so an attachment that arrives afterwards leaves the height
+ * map short by its own height — every click below it then resolves one or two lines
+ * too low until something else forces a re-measure (a keystroke, or a scroll).
+ */
+export const mediaLoadRemeasure = ViewPlugin.fromClass(
+  class {
+    private readonly onLoad = () => this.view.requestMeasure();
+    constructor(private readonly view: EditorView) {
+      view.dom.addEventListener('load', this.onLoad, true);
+      view.dom.addEventListener('error', this.onLoad, true);
+    }
+    destroy() {
+      this.view.dom.removeEventListener('load', this.onLoad, true);
+      this.view.dom.removeEventListener('error', this.onLoad, true);
+    }
+  },
+);
+
+/**
+ * Dev-only guard for exactly the bug above: CodeMirror's height map must describe what
+ * the editor actually rendered. When the map is short, some CSS inside the editor
+ * contributes vertical space the oracle cannot see — a `margin` on an editor block is
+ * the usual cause — and every click below the gap lands a line or two low. Silence in
+ * a production build.
+ */
+export const livePreviewGeometryGuard = import.meta.env.DEV
+  ? ViewPlugin.fromClass(
+      class {
+        private timer: ReturnType<typeof setTimeout> | null = null;
+        private warned = 0;
+        constructor(private readonly view: EditorView) {
+          this.schedule();
+        }
+        update() {
+          this.schedule();
+        }
+        destroy() {
+          if (this.timer) clearTimeout(this.timer);
+        }
+        private schedule() {
+          if (this.timer) clearTimeout(this.timer);
+          this.timer = setTimeout(() => this.verify(), 400);
+        }
+        private verify() {
+          this.timer = null;
+          const view = this.view;
+          // An attachment still in flight legitimately changes the height afterwards.
+          if ([...view.contentDOM.querySelectorAll('img')].some((img) => !img.complete)) {
+            this.schedule();
+            return;
+          }
+          // Both include the content padding, so the difference is the unmeasured space.
+          const drift = view.contentDOM.scrollHeight - view.contentHeight;
+          if (drift > 4 && Math.abs(drift - this.warned) > 1) {
+            this.warned = drift;
+            console.warn(
+              `[webobsidian] the editor's height map is ${drift.toFixed(1)}px short of the rendered ` +
+                'content, so clicks below that gap land on the wrong line. Vertical margins inside ' +
+                '.cm-content are invisible to CodeMirror — use padding (README › Live Preview geometry).',
+            );
+          }
+        }
+      },
+    )
+  : [];
 
 export const livePreviewTheme = EditorView.baseTheme({
   // Heading sizes/weights come from the stylesheet (.cm-s-obsidian .HyperMD-header-N,
@@ -2665,8 +3247,11 @@ export const livePreviewTheme = EditorView.baseTheme({
     lineHeight: 'var(--line-height-tight)',
     letterSpacing: '-0.015em',
     color: 'var(--text-normal)',
-    margin: '0 0 0.5em',
-    padding: '0',
+    // Space below the title is PADDING, not a margin: CodeMirror's height oracle
+    // measures border-box rects only, so margins between blocks are invisible to it
+    // and every click lands ~1 line too low (see README › Live Preview geometry).
+    margin: '0',
+    padding: '0 0 0.5em',
   },
   '.cm-em': { fontStyle: 'italic' },
   '.cm-strike': { textDecoration: 'line-through' },
@@ -2703,7 +3288,10 @@ export const livePreviewTheme = EditorView.baseTheme({
   },
   '.cm-task-checkbox': { verticalAlign: 'middle', marginRight: '4px', cursor: 'pointer' },
   '.cm-embed-image': { maxWidth: '100%', borderRadius: '6px', display: 'block', margin: '6px 0' },
-  '.cm-properties': { margin: '4px 0 18px' },
+  '.cm-properties': { padding: '0 0 18px' },
+  // The measured shell above owns the block's vertical spacing (padding); the visual
+  // box inside it keeps its own border-bottom/padding but must not re-add a margin.
+  '.cm-properties > .properties': { margin: '0' },
   // Compound `.cm-line.cm-blockquote` selector beats CodeMirror's own `.cm-line`
   // padding rule (equal specificity, declared later) so the gap actually applies —
   // otherwise text sits flush against the bar. Blockquote: 2px accent bar +
@@ -2716,18 +3304,36 @@ export const livePreviewTheme = EditorView.baseTheme({
   // Markdown tables — mirror Obsidian's table CSS variables
   // (https://docs.obsidian.md/Reference/CSS+variables/Editor/Table): 1px border,
   // left-aligned + top-valigned cells, semibold header with a subtle background.
-  '.cm-table': { borderCollapse: 'collapse', margin: '0', width: 'auto' },
+  // `.cm-lineWrapping` sets `overflow-wrap: anywhere`, which lets the table's
+  // auto layout shrink columns below word width ("Own|er", "hun|g"). Restore
+  // normal wrapping so columns are at least one word wide; overflow scrolls.
+  '.cm-table': { borderCollapse: 'collapse', margin: '0', width: 'auto', overflowWrap: 'normal', wordBreak: 'normal' },
+  '.cm-table-scroll': { overflowX: 'auto', maxWidth: '100%' },
+  // .cm-content is a flex item of .cm-scroller, so by default it can't shrink
+  // below its min-content width — a wide table would widen the whole column
+  // (clipping every paragraph on a phone) instead of scrolling in its own box.
+  '.cm-content.cm-lineWrapping': { minWidth: '0' },
   '.cm-table th, .cm-table td': {
     border: '1px solid var(--bg-modifier-border)',
-    padding: '4px 10px',
+    padding: '4px 8px',
     textAlign: 'left',
     verticalAlign: 'top',
-    lineHeight: '1.5',
+    lineHeight: '1.3',
     position: 'relative',
   },
-  '.cm-table th': { fontWeight: '600', background: 'var(--bg-secondary)' },
+  '.cm-table th': { fontWeight: '600', background: 'transparent' },
   // Interactive table editor (Obsidian-style): click-to-edit cells + hover controls.
-  '.cm-table-wrap': { position: 'relative', display: 'inline-block', margin: '8px 18px 18px 0' },
+  // `display: block` + `width: fit-content` shrink-wraps the table like the old
+  // `inline-block` did, but without the anonymous line box that added ~7px of
+  // unmeasurable space below the widget (inline-blocks sit on the text baseline).
+  '.cm-table-wrap': {
+    position: 'relative',
+    display: 'block',
+    width: 'fit-content',
+    maxWidth: '100%',
+    margin: '0 18px 0 0',
+    padding: '8px 0 18px',
+  },
   '.cm-cell-edit': { outline: 'none', cursor: 'text', minWidth: '1em' },
   '.cm-cell-edit:focus': { boxShadow: 'inset 0 0 0 2px var(--interactive-accent)', background: 'var(--bg-primary)' },
   '.cm-table-addcol, .cm-table-addrow': {
@@ -2747,7 +3353,7 @@ export const livePreviewTheme = EditorView.baseTheme({
     transition: 'opacity 0.1s',
   },
   '.cm-table-addcol': { top: '0', right: '-16px', width: '14px', height: '100%' },
-  '.cm-table-addrow': { left: '0', bottom: '-16px', height: '14px', width: '100%' },
+  '.cm-table-addrow': { left: '0', bottom: '2px', height: '14px', width: '100%' },
   '.cm-table-wrap:hover .cm-table-addcol, .cm-table-wrap:hover .cm-table-addrow': { opacity: '1' },
   // Column handle (top strip of each header cell) + row handle (left strip of first cell).
   '.cm-col-handle': { position: 'absolute', top: '0', left: '0', right: '0', height: '5px', cursor: 'pointer' },
@@ -2761,7 +3367,7 @@ export const livePreviewTheme = EditorView.baseTheme({
   },
   // Raw embedded HTML (e.g. CKEditor/Trilium tables) — table metrics match the
   // reading view (4px 10px cells, semibold header) so both modes look alike.
-  '.cm-html-block': { margin: '6px 0' },
+  '.cm-html-block': { margin: '0', padding: '6px 0' },
   '.cm-html-block table': { borderCollapse: 'collapse', margin: '4px 0', width: 'auto' },
   '.cm-html-block th, .cm-html-block td': {
     border: '1px solid var(--bg-modifier-border)',

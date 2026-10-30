@@ -1,3 +1,6 @@
+import {pluginCommands,usePluginRevision} from '../lib/plugins/registry';
+import {commands as editorToolbarCommands,captureContext,executeCommand} from '../lib/toolbar/registry';
+import {getActiveEditor} from '../lib/activeEditor';
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../lib/store';
 import { api, type TreeNode } from '../lib/api';
@@ -23,6 +26,7 @@ function flatten(node: TreeNode | null): { path: string; title: string }[] {
 }
 
 export default function CommandPalette() {
+  const pluginRevision=usePluginRevision();
   const open = useStore((s) => s.paletteOpen);
   const mode = useStore((s) => s.paletteMode);
   const setOpen = useStore((s) => s.setPalette);
@@ -33,11 +37,14 @@ export default function CommandPalette() {
   const setSettings = useStore((s) => s.setSettings);
   const setTrash = useStore((s) => s.setTrash);
   const setGraph = useStore((s) => s.setGraph);
+  const openTasks = useStore((s) => s.openTasks);
+  const setTasksMode = useStore((s) => s.setTasksMode);
   const setLeftPanel = useStore((s) => s.setLeftPanel);
   const setViewMode = useStore((s) => s.setViewMode);
   const save = useStore((s) => s.save);
   const toggleBookmark = useStore((s) => s.toggleBookmark);
   const openDailyNote = useStore((s) => s.openDailyNote);
+  const setTemplatePicker = useStore((s) => s.setTemplatePicker);
   const newNote = useStore((s) => s.newNote);
   const newCanvas = useStore((s) => s.newCanvas);
   const notify = useStore((s) => s.notify);
@@ -48,7 +55,10 @@ export default function CommandPalette() {
 
   const commands: Cmd[] = useMemo(
     () => [
+      ...pluginCommands(),
+      ...editorToolbarCommands.map(c=>({id:c.id,title:c.label,run:()=>{const v=getActiveEditor();if(v)void executeCommand(c.id,captureContext(v));}})),
       { id: 'new', title: 'New note', hint: '⌘N', run: () => newNote() },
+      { id: 'new-from-template', title: 'New note from template', run: () => setTemplatePicker(true) },
       { id: 'new-canvas', title: 'New canvas', run: () => newCanvas() },
       { id: 'daily', title: 'Open today’s daily note', run: () => openDailyNote() },
       { id: 'save', title: 'Save current file', hint: '⌘S', run: () => save() },
@@ -57,6 +67,18 @@ export default function CommandPalette() {
       { id: 'search', title: 'Open search', run: () => setLeftPanel('search') },
       { id: 'bookmarks', title: 'Open bookmarks & recent', run: () => setLeftPanel('bookmarks') },
       { id: 'graph', title: 'Open graph view', run: () => setGraph(true) },
+      { id: 'tasks', title: 'Open tasks board', run: () => openTasks() },
+      {
+        id: 'tasks-timeline',
+        title: 'Open tasks timeline',
+        run: () => {
+          // State first (the view may already be mounted and reading it), then
+          // the deep link, then open/focus the tab.
+          setTasksMode('timeline');
+          window.history.replaceState(null, '', '/tasks?mode=timeline');
+          return openTasks();
+        },
+      },
       { id: 'settings', title: 'Open settings', run: () => setSettings(true) },
       { id: 'trash', title: 'Open trash', run: () => setTrash(true) },
       { id: 'reading', title: 'View: Reading mode', run: () => setViewMode('reading') },
@@ -72,7 +94,7 @@ export default function CommandPalette() {
           }
         } },
     ],
-    [save, setLeftPanel, setGraph, setSettings, setTrash, setViewMode, activePath, toggleBookmark, openToSide, openDailyNote, newNote, newCanvas, notify],
+    [pluginRevision, save, setLeftPanel, setGraph, openTasks, setSettings, setTrash, setViewMode, activePath, toggleBookmark, openToSide, openDailyNote, newNote, newCanvas, notify],
   );
 
   const items = useMemo(() => {
