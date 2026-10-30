@@ -45,12 +45,14 @@ test('browser zoom and keyboard viewport keep toolbar, draft status, menus and p
  const bar=document.querySelector('.fixed-format-toolbar .toolbar-surface');check(inside(bar),'fixed toolbar outside viewport');check(Array.from(bar.children).filter(n=>!n.classList.contains('toolbar-measure')).every(n=>n.getBoundingClientRect().right<=bar.getBoundingClientRect().right+1),'fixed handle counted in overflow');
  };
  window.setupMobile=async()=>{
- fake=new EventTarget();Object.assign(fake,{width:390,height:844,offsetLeft:0,offsetTop:0,scale:1});Object.defineProperty(window,'visualViewport',{configurable:true,value:fake});await window.setup(true);
+ fake=new EventTarget();Object.assign(fake,{width:390,height:844,offsetLeft:0,offsetTop:0,scale:1});Object.defineProperty(window,'visualViewport',{configurable:true,value:fake});
+ await putDraft({scopeId:'viewport',path:'kbd.md',writerId:'old',revision:1,schemaVersion:1,updatedAt:Date.now(),baseVersion:'v1',baseContent:'base',content:'mine',kind:'text',state:'dirty'});
+ await window.setup(true);await settle(()=>!!document.querySelector('.draft-status'));
  };
  window.conflictKeyboard=async()=>{
  await putDraft({scopeId:'viewport',path:'kbd.md',writerId:'old',revision:1,schemaVersion:1,updatedAt:Date.now(),baseVersion:'v1',baseContent:'base',content:'mine',kind:'text',state:'dirty'});
  api.read=async()=>({content:'remote',version:'v2'});await wait();
- const button=text=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes(text));button('Local drafts').click();await settle(()=>!!button('Recover / Compare'));button('Recover / Compare').click();await settle(()=>!!document.querySelector('.draft-dialog'));
+ const button=text=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes(text));button('Recover unsaved text').click();await settle(()=>!!button('Review text'));button('Review text').click();await settle(()=>!!document.querySelector('.draft-dialog'));
  check(inside(document.querySelector('.draft-dialog')),'conflict dialog hidden by keyboard');
  const copy=document.querySelector('[aria-label="Recovered copy path"]');copy.focus();document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await wait();
  check(!document.querySelector('.draft-dialog'),'Escape postpones safely');
@@ -72,8 +74,8 @@ test('browser zoom and keyboard viewport keep toolbar, draft status, menus and p
  app.whenReady().then(async()=>{const w=new BrowserWindow({show:false,width:1440,height:900,webPreferences:{backgroundThrottling:false}});await w.loadFile(${JSON.stringify(join(dir,'index.html'))});
  w.webContents.debugger.attach('1.3');
  // Hidden Ozone windows have no reliable native surface (sometimes 1x1).
- // Preserve each zoom's effective CSS viewport explicitly and assert it.
- const viewport=async(width,height)=>{await w.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});const actual=await w.webContents.executeJavaScript('[innerWidth,innerHeight]');const factor=w.webContents.getZoomFactor();const expected=[Math.round(width/factor),Math.round(height/factor)];if(actual[0]!==expected[0]||actual[1]!==expected[1])throw Error('Viewport mismatch '+JSON.stringify({actual,expected,factor}));};
+ // Preserve each zoom's effective CSS viewport and wait for its asynchronous layout.
+ const viewport=async(width,height)=>{await w.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});const factor=w.webContents.getZoomFactor();const expected=[Math.round(width/factor),Math.round(height/factor)];const deadline=Date.now()+4000;let actual;do{actual=await w.webContents.executeJavaScript('[innerWidth,innerHeight]');if(actual[0]===expected[0]&&actual[1]===expected[1])return;await new Promise(resolve=>setTimeout(resolve,10));}while(Date.now()<deadline);throw Error('Viewport mismatch '+JSON.stringify({actual,expected,factor}));};
  const results={zoom:[],keyboard:[]};
  for(const factor of [1,1.25,1.5,2]){w.webContents.setZoomFactor(factor);await viewport(1440,900);await w.webContents.executeJavaScript('window.setup(false)');for(const sidebar of [0,220,420]){const r=await w.webContents.executeJavaScript('window.checkDesktop('+sidebar+')');if(Math.abs(w.webContents.getZoomFactor()-factor)>0.01)throw Error('Zoom mismatch');results.zoom.push({factor,...r});}}
  w.webContents.setZoomFactor(1);await viewport(1440,900);await w.webContents.executeJavaScript('window.fixed()');await w.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});await w.webContents.debugger.sendCommand('Emulation.setTouchEmulationEnabled',{enabled:true});

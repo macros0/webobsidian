@@ -5,6 +5,8 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { simpleGit } from 'simple-git';
+import { mutateFileText, withVaultMutation } from './vault.js';
+import { checkVersion, contentVersion } from './noteversion.js';
 
 const exec = promisify(execFile);
 const T = 20_000; // generous per-test timeout — these shell out to real git
@@ -12,7 +14,7 @@ const T = 20_000; // generous per-test timeout — these shell out to real git
 // Full git settings; vault.path is set per test to a fresh temp repo.
 const { settings } = vi.hoisted(() => ({
   settings: {
-    vault: { path: '', trash: '.trash' },
+    vault: { path: '', trash: '.trash', allowedRoots: [] as string[] },
     git: {
       enabled: true,
       autoSync: false,
@@ -86,6 +88,109 @@ afterEach(async () => {
 });
 
 describe.skipIf(!gitOnPath)('git integration (real repo)', () => {
+  it('a queued push keeps its vault and remote settings together across a vault switch', async () => {
+    await git.init();
+    await fs.writeFile(path.join(work, 'Note.md'), 'vault A');
+    await git.commitAll();
+    const next = await fs.mkdtemp(path.join(os.tmpdir(), 'wo-next-vault-'));
+    const nextRemote = await fs.mkdtemp(path.join(os.tmpdir(), 'wo-next-remote-'));
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(r => { entered = r; });
+    const gate = new Promise<void>(r => { release = r; });
+    const mutation = withVaultMutation(async () => { entered(); await gate; });
+    let pushing: Promise<unknown> | undefined;
+    try {
+      await exec('git', ['init', '--bare', '-b', 'main', nextRemote]);
+      await started;
+      pushing = git.push();
+      // Let the push join the occupied vault queue before changing settings.
+      await new Promise(r => setTimeout(r, 100));
+      settings.vault.path = next;
+      settings.git.remote = nextRemote;
+      release(); await mutation; await pushing;
+      expect((await exec('git', ['-C', work, 'remote', 'get-url', 'origin'])).stdout.trim()).toBe(bare);
+      expect((await exec('git', ['--git-dir', bare, 'show', 'main:Note.md'])).stdout).toBe('vault A');
+      expect((await exec('git', ['--git-dir', nextRemote, 'for-each-ref'])).stdout).toBe('');
+    } finally {
+      release(); await mutation; await pushing?.catch(() => {});
+      await fs.rm(next, { recursive: true, force: true });
+      await fs.rm(nextRemote, { recursive: true, force: true });
+    }
+  }, T);
+  async function remoteNoteUpdate() {
+    await git.init();
+    await fs.writeFile(path.join(work, 'Note.md'), 'base');
+    expect((await git.sync()).ok).toBe(true);
+    const peer = await fs.mkdtemp(path.join(os.tmpdir(), 'wo-peer-'));
+    try {
+      await exec('git', ['clone', bare, peer]);
+      await fs.writeFile(path.join(peer, 'Note.md'), 'remote');
+      await exec('git', ['-C', peer, 'add', '.']);
+      await exec('git', ['-C', peer, 'commit', '-m', 'remote edit']);
+      await exec('git', ['-C', peer, 'push']);
+    } finally { await fs.rm(peer, { recursive: true, force: true }); }
+  }
+
+  function saveLocal() {
+    return mutateFileText('Note.md', current => {
+      if (!checkVersion(current, contentVersion('base')).ok) {
+        throw Object.assign(new Error('version_conflict'), { status: 409 });
+      }
+      return { content: 'local', result: undefined };
+    });
+  }
+
+  it.each(['pull', 'sync'] as const)('%s waits for an accepted save and cannot overwrite it mid-write', async operation => {
+    await remoteNoteUpdate();
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(r => { entered = r; });
+    const gate = new Promise<void>(r => { release = r; });
+    const open = fs.open.bind(fs);
+    const spy = vi.spyOn(fs, 'open').mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      if (String(args[0]).includes('Note.md.tmp-')) { entered(); await gate; }
+      return open(...args);
+    });
+    const saving = saveLocal();
+    let pulling: Promise<string> | undefined;
+    try {
+      await started;
+      pulling = (operation === 'pull' ? git.pull().then(() => 'pulled')
+        : git.sync().then(result => result.ok ? 'pulled' : 'rejected')).catch(() => 'rejected');
+      const result = await Promise.race([pulling, new Promise<string>(r => setTimeout(() => r('waiting'), 1000))]);
+      expect(result).toBe('waiting');
+      release(); await saving;
+      expect(await pulling).toBe('rejected'); // Git protects the now-dirty local note.
+      expect(await fs.readFile(path.join(work, 'Note.md'), 'utf8')).toBe('local');
+      expect((await exec('git', ['-C', work, 'show', 'HEAD:Note.md'])).stdout).toBe(operation === 'sync' ? 'local' : 'base');
+      expect((await git.status()).conflicted).toEqual([]);
+    } finally { release(); await saving; await pulling; spy.mockRestore(); }
+  }, T);
+
+  it.each(['pull', 'sync'] as const)('a save queued behind %s checks the pulled version and reports a conflict', async operation => {
+    settings.git.lfsPatterns = ['*.png'];
+    await remoteNoteUpdate();
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(r => { entered = r; });
+    const gate = new Promise<void>(r => { release = r; });
+    const read = fs.readFile.bind(fs);
+    const spy = vi.spyOn(fs, 'readFile').mockImplementation((async (...args: Parameters<typeof fs.readFile>) => {
+      if (String(args[0]) === path.join(work, '.gitattributes')) { entered(); await gate; }
+      return read(...args);
+    }) as typeof fs.readFile);
+    const pulling = (operation === 'pull' ? git.pull().then(() => 'pulled')
+      : git.sync().then(result => result.ok ? 'pulled' : 'rejected')).catch(() => 'rejected');
+    let saving: Promise<unknown> | undefined;
+    try {
+      await started;
+      saving = saveLocal().then(() => 'saved', error => error.status);
+      const result = await Promise.race([saving, new Promise<string>(r => setTimeout(() => r('waiting'), 100))]);
+      expect(result).toBe('waiting');
+      release();
+      expect(await pulling).toBe('pulled');
+      expect(await saving).toBe(409);
+      expect(await fs.readFile(path.join(work, 'Note.md'), 'utf8')).toBe('remote');
+    } finally { release(); await pulling; await saving; spy.mockRestore(); }
+  }, T);
   it('uses the temporary global Git configuration for simple-git child processes', async () => {
     const origin = await simpleGit({ baseDir: work }).raw(['config', '--global', '--show-origin', '--get', 'user.name']);
     expect(origin.replace(/\\/g, '/').includes(cfgHome.replace(/\\/g, '/'))).toBe(true);
