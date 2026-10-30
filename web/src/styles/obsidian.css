@@ -2523,3 +2523,28 @@ body.fullscreen-focus .workspace > .sidebar,body.fullscreen-focus .status-bar { 
 body.fullscreen-focus .workspace { grid-template-columns:1fr; }
 body.workplace-fullscreen-focus .workspace { position:fixed; inset:0; z-index:500; background:var(--background-primary); }
 @media(pointer:coarse) { .toolbar-popover button,.toolbar-surface button { min-width:44px; min-height:44px; } }
+/* Container-sized overflow menu. Measurement copies are inert and out of flow. */
+.toolbar-surface[data-overflow="menu"] { position:relative; flex:1 1 0; width:100%; min-width:30px; max-width:100%; flex-wrap:nowrap; }
+.toolbar-surface[data-overflow="menu"] > button { flex:none; }
+.toolbar-measure { position:absolute; left:0; top:0; display:flex; width:max-content; visibility:hidden; pointer-events:none; }
+.toolbar-measure-item,.toolbar-measure-colors { display:inline-flex; flex:none; }
+.toolbar-surface[data-labels="true"] button { width:auto; min-width:30px; }
+.toolbar-measure .toolbar-separator { display:block; flex:none; }
+.format-toolbar:has(> [data-overflow="menu"]),.mobile-toolbar:has(> [data-overflow="menu"]) { overflow:visible; min-width:0; }
+.toolbar-surface[data-overflow="menu"] > .toolbar-more { flex:none; }
+.floating-format-toolbar .toolbar-surface[data-overflow="menu"] { width:min(500px,calc(100vw - 32px)); overflow:visible; }
+
+.toolbar-measure-colors { gap:1px; }
+.draft-status { position:fixed; bottom:24px; right:12px; z-index:90; display:flex; gap:8px; align-items:center; background:var(--background-secondary); color:var(--text-normal); padding:4px 8px; border-radius:6px; }
+.draft-list { position:absolute; right:0; bottom:100%; width:min(600px,90vw); max-height:60vh; overflow:auto; background:var(--background-primary); padding:12px; border:1px solid var(--background-modifier-border); }
+.draft-list > div { padding:8px 0; border-bottom:1px solid var(--background-modifier-border); }
+.draft-dialog-bg { position:fixed; inset:0; background:#0008; z-index:10010; display:grid; place-items:center; }
+.draft-dialog { width:min(1100px,96vw); max-height:94dvh; overflow:auto; padding:18px; background:var(--background-primary); color:var(--text-normal); border-radius:8px; }
+.draft-dialog pre { white-space:pre-wrap; max-height:25vh; overflow:auto; }
+.conflict-editor { max-height:50vh; overflow:auto; min-height:160px; border:1px solid var(--background-modifier-border); }
+.draft-dialog footer { display:flex; gap:8px; margin-top:10px; }
+@media(max-width:700px) { .draft-status { bottom:54px; font-size:11px; } }
+.draft-status { flex-wrap:wrap; overflow:visible; }
+@media(pointer:coarse) { .toolbar-surface[data-labels="true"] button { min-width:44px; } }
+/* Fixed surface owns its viewport position; its wrapper must not establish a transformed containing block. */
+.fixed-format-toolbar { position:static; transform:none; width:0; height:0; max-width:none; overflow:visible; }

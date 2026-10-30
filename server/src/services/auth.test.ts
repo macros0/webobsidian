@@ -9,7 +9,7 @@ const { cfg, settings } = vi.hoisted(() => ({
 vi.mock('../config.js', () => ({ config: cfg }));
 vi.mock('./settings.js', () => ({
   getSettings: vi.fn(async () => settings),
-  updateSettings: vi.fn(),
+  updateSettings: vi.fn(async (mutate: (draft: typeof settings) => void) => mutate(settings)),
 }));
 
 const { checkPassword, hasOverridePassword, hasCustomPassword, changePassword } = await import('./auth.js');
@@ -21,6 +21,11 @@ beforeEach(() => {
 });
 
 describe('hasOverridePassword', () => {
+  it('ignores the legacy CLI default as a recovery override', async () => {
+    cfg.initialPassword = '123456';
+    expect(await hasOverridePassword()).toBe(false);
+    expect(await hasCustomPassword()).toBe(false);
+  });
   it('is false with no override configured', async () => {
     expect(await hasOverridePassword()).toBe(false);
   });
@@ -31,6 +36,17 @@ describe('hasOverridePassword', () => {
   it('is true when a manual auth.passwordHash is set', async () => {
     settings.auth.passwordHash = 'scrypt$00$00';
     expect(await hasOverridePassword()).toBe(true);
+  });
+});
+
+describe('legacy CLI default', () => {
+  it('expires after the user chooses a password', async () => {
+    cfg.initialPassword = '123456';
+    await changePassword('123456', 'my-real-password');
+    expect(await hasCustomPassword()).toBe(true);
+    expect(await checkPassword('my-real-password')).toBe(true);
+    expect(await checkPassword('123456')).toBe(false);
+    await expect(changePassword('123456', 'another-password')).rejects.toThrow('Current password');
   });
 });
 

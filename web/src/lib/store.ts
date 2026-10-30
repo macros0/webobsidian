@@ -1,3 +1,5 @@
+import {DocumentSession} from './drafts/session';
+import {putDraft,deleteDraftIfRevision,remapDrafts} from './drafts/storage';
 import { create } from 'zustand';
 import { ApiError, api, setUnlock, setRenameHook, type TreeNode, type ShareRecord } from './api';
 import { findNode, isFolderPath } from './tree';
@@ -8,6 +10,18 @@ import { isInsideHiddenAttachmentFolder } from './attachments';
 /** Per-tab id so we can ignore the echo of our own server-pushed state change. */
 export const CLIENT_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
+export const documentSessions=new Map<string,DocumentSession>();
+export let currentDraftScope='';
+let draftScopeRequest:Promise<string>|null=null;
+let scopeEpoch=0;
+let draftSessionSequence=0;
+export function draftScopeEpoch(){return scopeEpoch;}
+export function isDraftScopeCurrent(scope:string,epoch:number){return scope===currentDraftScope&&epoch===scopeEpoch;}
+export function assertDraftScope(scope:string,epoch:number){if(!isDraftScopeCurrent(scope,epoch))throw new Error('Draft scope changed. Reopen recovery in the current vault.');}
+export async function loadDraftScope(){const epoch=scopeEpoch;if(!draftScopeRequest)draftScopeRequest=api.draftScope().then(r=>{if(epoch!==scopeEpoch)throw new Error('Draft scope changed');currentDraftScope=r.scopeId;return r.scopeId;}).catch(error=>{if(epoch===scopeEpoch)draftScopeRequest=null;throw error;});return draftScopeRequest;}
+export function resetDraftScope(){scopeEpoch++;openRequest++;for(const s of documentSessions.values())s.dispose();documentSessions.clear();currentDraftScope='';draftScopeRequest=null;if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-scope-change'));}
+export function acceptResolvedDocument(path:string,content:string,version:string){const s=documentSessions.get(path);if(s){s.acceptServerResult(content,version);}else{const scopeId=currentDraftScope;documentSessions.set(path,new DocumentSession({scopeId,path,writerId:CLIENT_ID+':'+(++draftSessionSequence),content,version},{put:putDraft,remove:deleteDraftIfRevision,write:(p,t,v)=>api.write(p,t,v,scopeId)},refreshSaveStatus));}useStore.setState({content,dirty:false});}
+function refreshSaveStatus(){if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-status'));}
 export type ViewMode = 'live' | 'source' | 'reading';
 /** Board | Timeline mode of the Tasks view (FR-16). Part of the URL, so a
  *  `/tasks?mode=timeline` deep link survives a reload. */
@@ -241,7 +255,12 @@ interface AppState {
   openCreatedFile: (path: string) => Promise<void>;
   keepTab: (path: string) => void;
   openWikilink: (target: string) => Promise<void>;
-  closeTab: (path: string) => void;
+  closeTab: (path: string) => Promise<boolean>;
+  renamePath: (from: string, to: string) => Promise<void>;
+  /** Discard state only after the server has confirmed removal. */
+  forgetDeletedPath: (path: string) => void;
+  /** Confirm deletion in the caller, then exclude saves until removal finishes. */
+  deletePath: (path: string, permanent?: boolean) => ReturnType<typeof api.remove>;
   setContent: (c: string) => void;
   /** Deliberately open the active locked note for editing — confirm dialog, or the operator
    *  password when the vault's locks config asks for one. Session-scoped; the agent keeps writing. */
@@ -275,7 +294,7 @@ interface AppState {
   /** Re-fetch content for the active/split tabs (after reload or remote sync). */
   hydrate: () => Promise<void>;
   /** Load persisted workspace state from the server and apply it. */
-  loadUiState: () => Promise<void>;
+  loadUiState: (strict?:boolean) => Promise<void>;
   /** Apply a workspace state pushed from another tab/device. */
   applyRemoteState: (state: any, originId: string) => Promise<void>;
 }
@@ -427,6 +446,66 @@ let navByHistory = false;
 
 /** Ignore older reads when notes are selected faster than the server responds. */
 let openRequest = 0;
+
+const withinPath = (path: string | null, parent: string): boolean =>
+  path !== null && (path === parent || path.startsWith(`${parent}/`));
+let editRevision = 0;
+const saves = new Map<string, Promise<void>>();
+const closes = new Map<string, Promise<boolean>>();
+let fileMutation: Promise<void> = Promise.resolve();
+let mutationsPending = 0;
+
+function mutateFiles<T>(action: () => Promise<T>): Promise<T> {
+  mutationsPending++;
+  const result = fileMutation.then(action);
+  fileMutation = result.then(() => {}, () => {}).finally(() => { mutationsPending--; });
+  return result;
+}
+
+async function waitForFileMutations(): Promise<void> {
+  while (mutationsPending) await fileMutation;
+}
+
+/** One writer per note; each writer drains edits made while its request is pending. */
+function saveActiveDraft(): Promise<void> {
+  const path = useStore.getState().activePath;
+  if (!path) return Promise.resolve();
+  if (!TEXT_RE.test(path)) {
+    const error = new Error('Cannot save this file type — keep this tab open and copy your changes');
+    useStore.getState().notify(error.message);
+    return Promise.reject(error);
+  }
+  const running = saves.get(path);
+  if (running) return running;
+  if (!useStore.getState().dirty) return Promise.resolve();
+  const saving = (async () => {
+    try {
+      while (useStore.getState().activePath === path && useStore.getState().dirty) {
+        const { content } = useStore.getState();
+        const revision = editRevision;
+        const session=documentSessions.get(path);
+        if(!session)throw new Error('Reopen this document to load its version before saving');
+        if(session.content!==content)session.edit(content);
+        await session.save();
+        useStore.setState((s) => s.activePath === path && revision === editRevision && s.content === content
+          ? { dirty: false } : {});
+      }
+    } catch (error) {
+      const state = useStore.getState();
+      if (error instanceof ApiError && error.status === 423) {
+        if (state.activePath === path) {
+          state.markLocked((error.data as { reason?: string } | undefined)?.reason ?? null);
+        }
+        state.notify('Read-only note — ask the agent to change it');
+      } else state.notify(error instanceof Error ? `Save failed: ${error.message}` : 'Save failed');
+      throw error;
+    } finally {
+      saves.delete(path);
+    }
+  })();
+  saves.set(path, saving);
+  return saving;
+}
 
 /** Push `path` onto the back/forward stack (truncating any forward entries). */
 function pushHistory(s: { history: string[]; histIndex: number }, path: string): { history: string[]; histIndex: number } {
@@ -603,6 +682,7 @@ export const useStore = create<AppState>()(
         else get().closeTab(GRAPH_PATH);
       },
       openGraph: async () => {
+        if (mutationsPending) await waitForFileMutations();
         const request = ++openRequest;
         if (get().dirty) await get().save();
         if (request !== openRequest) return;
@@ -622,6 +702,7 @@ export const useStore = create<AppState>()(
       resetGraphSettings: () => set({ graphSettings: DEFAULT_GRAPH_SETTINGS }),
 
       openTasks: async () => {
+        if (mutationsPending) await waitForFileMutations();
         const request = ++openRequest;
         if (get().dirty) await get().save();
         if (request !== openRequest) return;
@@ -703,6 +784,7 @@ export const useStore = create<AppState>()(
       },
 
       openFile: async (path, { preview = true } = {}) => {
+        if (mutationsPending) await waitForFileMutations();
         if (path === GRAPH_PATH) return get().openGraph();
         if (path === TASKS_PATH) return get().openTasks();
         const request = ++openRequest;
@@ -712,11 +794,16 @@ export const useStore = create<AppState>()(
         // view — never read it as a note nor pollute Recent with it.
         const isFolder = findNode(get().tree, path)?.type === 'folder';
         let content = '';
+        let version: string | undefined;
+        let documentScope='';
         let locked = false;
         let lockReason: string | null = null;
         let unlockMode: 'off' | 'confirm' | 'password' = 'confirm';
         if (!isFolder && TEXT_RE.test(path)) {
-          const r = await api.read(path);
+          documentScope=await loadDraftScope();
+          if(request!==openRequest)return;
+          const r = await api.read(path,documentScope||undefined);
+          version = typeof r==='string'?undefined:r.version;
           content = typeof r === 'string' ? r : r.content;
           if (typeof r !== 'string') {
             locked = !!r.locked;
@@ -728,6 +815,15 @@ export const useStore = create<AppState>()(
         // The user may have edited the previous note while this read was pending.
         if (get().dirty) await get().save();
         if (request !== openRequest) return;
+        if(!isFolder&&TEXT_RE.test(path)){
+          const previous=documentSessions.get(path);previous?.dispose();
+          const scopeId=documentScope;
+          if(request!==openRequest)return;
+          if(get().dirty)await get().save();
+          if(request!==openRequest)return;
+          if(version){documentSessions.set(path,new DocumentSession({scopeId,path,writerId:CLIENT_ID+':'+(++draftSessionSequence),content,version},{put:record=>scopeId?putDraft(record):Promise.reject(new Error('Local draft scope is unavailable')),remove:deleteDraftIfRevision,write:(path,text,version)=>api.write(path,text,version,scopeId||undefined)},refreshSaveStatus));}
+          else documentSessions.delete(path);
+        }
         const title = path.split('/').pop() ?? path;
         set((s) => {
           const existing = s.tabs.find((t) => t.path === path);
@@ -766,43 +862,120 @@ export const useStore = create<AppState>()(
             const newPath = hasExt ? target : `${target}.md`;
             await get().createNote(newPath, `# ${target.replace(/\.md$/, '')}\n`);
           }
-        } catch {
-          /* ignore */
+        } catch(error) {
+          get().notify(error instanceof ApiError && error.status===503 ? 'The index is updating. Try opening this link again shortly.' : 'Could not resolve this link. Check the connection.');
         }
       },
 
       closeTab: (path) => {
-        const s = get();
-        const tabs = s.tabs.filter((t) => t.path !== path);
-        const wasActive = s.activePath === path;
-        const activePath = wasActive ? (tabs.at(-1)?.path ?? null) : s.activePath;
-        set({ tabs, activePath, ...(wasActive ? { content: '', dirty: false } : {}) });
-        // The newly selected tab must load its content, otherwise the editor stays blank.
-        if (wasActive && activePath) void get().openFile(activePath);
+        const pending = closes.get(path);
+        if (pending) return pending;
+        const closing = (async () => {
+          try {
+            if (mutationsPending) await waitForFileMutations();
+            if (get().activePath === path && get().dirty && !TEXT_RE.test(path)) {
+              get().notify('Cannot save this file type — keep this tab open and copy your changes');
+              return false;
+            }
+            while (get().activePath === path && (get().dirty || saves.has(path))) {
+              await get().save();
+            }
+            const s = get();
+            const tabs = s.tabs.filter((t) => t.path !== path);
+            if (s.activePath !== path) {
+              set({ tabs });
+            } else {
+              ++openRequest;
+              const activePath = tabs.at(-1)?.path ?? null;
+              set({ tabs, activePath, content: '', dirty: false, locked: false, lockReason: null });
+              if (activePath) await get().openFile(activePath).catch((error: unknown) => {
+                get().notify(error instanceof Error ? error.message : 'Could not open file');
+              });
+            }
+            return true;
+          } catch {
+            return false;
+          } finally {
+            closes.delete(path);
+          }
+        })();
+        closes.set(path, closing);
+        // A clean inactive tab can finish synchronously, before it enters the map.
+        void closing.then(() => { if (closes.get(path) === closing) closes.delete(path); });
+        return closing;
       },
 
-      setContent: (c) => set((s) => ({
+      renamePath: (from, to) => mutateFiles(async () => {
+        if (from === to) return;
+        ++openRequest;
+        while (withinPath(get().activePath, from) && get().dirty) await saveActiveDraft();
+        await api.rename(from, to);
+        const remap = (path: string) => withinPath(path, from) ? `${to}${path.slice(from.length)}` : path;
+        for(const [name,session] of documentSessions){if(withinPath(name,from)){documentSessions.delete(name);session.key.path=remap(name);documentSessions.set(session.key.path,session);}}
+        if(currentDraftScope)await remapDrafts(currentDraftScope,from,to).catch(()=>get().notify('Rename succeeded; local draft paths could not be updated. Recover them from Local drafts.'));
+        const remapNullable = (path: string | null) => path === null ? null : remap(path);
+        set((s) => ({
+          tabs: s.tabs.map((tab) => {
+            const path = remap(tab.path);
+            return path === tab.path ? tab : { ...tab, path, title: path.split('/').pop() ?? path };
+          }),
+          activePath: remapNullable(s.activePath),
+          splitPath: remapNullable(s.splitPath),
+          history: s.history.map(remap), recent: s.recent.map(remap), bookmarks: s.bookmarks.map(remap),
+          expanded: s.expanded.map(remap), selected: s.selected.map(remap),
+          selectAnchor: remapNullable(s.selectAnchor), renamingPath: remapNullable(s.renamingPath),
+          newNotePath: remapNullable(s.newNotePath), versionHistoryPath: remapNullable(s.versionHistoryPath),
+          shareDialogPath: remapNullable(s.shareDialogPath),
+          clipboard: s.clipboard ? { ...s.clipboard, path: remap(s.clipboard.path) } : null,
+        }));
+      }),
+
+      deletePath: (path, permanent) => mutateFiles(async () => {
+        ++openRequest;
+        // Requests already sent must finish before deletion; queued autosaves wait for us.
+        await Promise.all([...saves].filter(([file]) => withinPath(file, path)).map(([, pending]) => pending.catch(() => {})));
+        const result = await api.remove(path, permanent);
+        get().forgetDeletedPath(path);
+        return result;
+      }),
+
+      forgetDeletedPath: (path) => {
+        for(const [name,session] of documentSessions)if(withinPath(name,path)){void session.flush().catch(()=>{});session.dispose();documentSessions.delete(name);}
+        ++openRequest;
+        const s = get();
+        const keep = (file: string) => !withinPath(file, path);
+        const tabs = s.tabs.filter((tab) => keep(tab.path));
+        const wasActive = withinPath(s.activePath, path);
+        const activePath = wasActive ? tabs.at(-1)?.path ?? null : s.activePath;
+        const history = s.history.filter(keep);
+        set({
+          tabs, activePath, history, histIndex: Math.min(s.histIndex, history.length - 1),
+          recent: s.recent.filter(keep), selected: s.selected.filter(keep), expanded: s.expanded.filter(keep),
+          ...(wasActive ? { content: '', dirty: false, locked: false, lockReason: null } : {}),
+          ...(withinPath(s.splitPath, path) ? { splitPath: null, splitContent: '' } : {}),
+        });
+        // Run after the deletion gate releases, otherwise openFile would wait on itself.
+        if (wasActive && activePath) void get().openFile(activePath).catch((error: unknown) => {
+          get().notify(error instanceof Error ? error.message : 'Could not open file');
+        });
+      },
+
+      setContent: (c) => {
+        editRevision++;
+        const path=get().activePath;if(path)documentSessions.get(path)?.edit(c);
+        set((s) => ({
         content: c,
         dirty: true,
         tabs: s.tabs.map((t) => t.path === s.activePath && t.preview ? { ...t, preview: false } : t),
-      })),
+        }));
+      },
 
       save: async () => {
-        const { activePath, content, dirty } = get();
-        if (!activePath || !dirty) return;
-        if (!TEXT_RE.test(activePath)) return;
-        try {
-          await api.write(activePath, content);
-        } catch (e) {
-          // 423 = the server's lock guard refused this session. Say so instead of "save failed".
-          if (e instanceof ApiError && e.status === 423) {
-            const reason = (e.data as { reason?: string } | undefined)?.reason ?? null;
-            set({ locked: true, lockReason: reason });
-            get().notify('Read-only note — ask the agent to change it');
-          }
-          throw e;
-        }
-        set((s) => s.activePath === activePath && s.content === content ? { dirty: false } : {});
+        if (mutationsPending) await waitForFileMutations();
+        const path = get().activePath;
+        if (!path) return;
+        // Recheck after await too: a queued input can arrive as the writer completes.
+        while (get().activePath === path && get().dirty) await saveActiveDraft();
       },
 
       markLocked: (reason) => set({ locked: true, lockReason: reason }),
@@ -907,8 +1080,9 @@ export const useStore = create<AppState>()(
             await get().openFile(existing);
             return;
           }
-        } catch {
-          /* none */
+        } catch(error) {
+          get().notify(error instanceof ApiError && error.status===503 ? 'The index is updating. Try opening the daily note again shortly.' : 'Could not check for an existing daily note. Check the connection.');
+          return;
         }
         // Create the note inside a `daily/` folder when the vault has one, and only fall back to
         // the conventional root `Daily/` otherwise. Vaults whose daily notes are filed by an agent
@@ -979,8 +1153,7 @@ export const useStore = create<AppState>()(
         const { activePath, splitPath, tabs } = get();
         if (activePath && TEXT_RE.test(activePath)) {
           try {
-            const r = await api.read(activePath);
-            set({ content: typeof r === 'string' ? r : r.content, dirty: false });
+            await get().openFile(activePath);
           } catch {
             set({
               tabs: tabs.filter((t) => t.path !== activePath),
@@ -999,14 +1172,15 @@ export const useStore = create<AppState>()(
         }
       },
 
-      loadUiState: async () => {
+      loadUiState: async (strict=false) => {
         try {
           const s = await api.getUiState();
           suppressSave = true;
           applyPersisted(s, set);
           lastSaved = JSON.stringify(pickPersisted(get()));
           suppressSave = false;
-        } catch {
+        } catch(error) {
+          if(strict)throw error;
           /* first run / not authed */
         }
         canSave = true;

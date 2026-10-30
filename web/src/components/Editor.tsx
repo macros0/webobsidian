@@ -195,7 +195,7 @@ export default function Editor() {
               openLink: (t) => void openWikilink(t),
               togglePreview: () =>
                 useStore.getState().setViewMode(useStore.getState().viewMode === 'reading' ? 'live' : 'reading'),
-              save: () => void useStore.getState().save(),
+              save: () => { void useStore.getState().save().catch(() => {}); },
             }),
           ),
         ),
@@ -286,7 +286,7 @@ export default function Editor() {
 
   // Debounced autosave.
   useEffect(() => {
-    const id = window.setTimeout(() => save(), 900);
+    const id = window.setTimeout(() => { void save().catch(() => {}); }, 900);
     return () => window.clearTimeout(id);
   }, [content, save]);
 

@@ -165,6 +165,43 @@ describe.skipIf(!gitOnPath)('git integration (real repo)', () => {
     T,
   );
 
+  it.each(['commitAll', 'sync'] as const)(
+    '%s excludes copy staging and UUID writer files while retaining normal dotfiles and published copies',
+    async (operation) => {
+      await git.init();
+      const stagingName = '.webobsidian-copy-Ab12Cd';
+      const writerName = 'note.md.tmp-12345678-1234-4abc-9def-123456789abc';
+      await fs.mkdir(path.join(work, 'nested', stagingName, 'payload'), { recursive: true });
+      await fs.writeFile(path.join(work, 'nested', stagingName, 'payload', 'partial.md'), 'unpublished copy');
+      await fs.mkdir(path.join(work, stagingName));
+      await fs.writeFile(path.join(work, stagingName, 'partial.md'), 'root unpublished copy');
+      await fs.writeFile(path.join(work, writerName), 'unpublished write');
+      await fs.writeFile(path.join(work, 'nested', writerName), 'nested unpublished write');
+      await fs.writeFile(path.join(work, 'note.md'), 'published note');
+      await fs.writeFile(path.join(work, '.normal-dotfile'), 'normal dotfile');
+      await fs.writeFile(path.join(work, 'keep.tmp-draft'), 'ordinary temporary-looking user document');
+
+      if (operation === 'sync') expect((await git.sync()).ok).toBe(true);
+      else await git.commitAll();
+      const { stdout: committed } = await exec('git', ['-C', work, 'ls-tree', '-r', '--name-only', 'HEAD']);
+      expect(committed.trim().split('\n').sort()).toEqual(['.normal-dotfile', 'keep.tmp-draft', 'note.md']);
+      const { stdout: staged } = await exec('git', ['-C', work, 'diff', '--cached', '--name-only']);
+      expect(staged).toBe('');
+      const { stdout: message } = await exec('git', ['-C', work, 'log', '-1', '--pretty=%B']);
+      expect(message).not.toContain(stagingName);
+      expect(message).not.toContain(writerName);
+
+      // With only in-flight artifacts left, another commit is an ordinary no-op.
+      expect(await git.commitAll()).toBe('Nothing to commit');
+      await fs.rename(path.join(work, 'nested', stagingName, 'payload'), path.join(work, 'published-copy'));
+      await git.commitAll();
+      const { stdout: published } = await exec('git', ['-C', work, 'ls-tree', '-r', '--name-only', 'HEAD']);
+      expect(published).toContain('published-copy/partial.md');
+      expect(published).not.toContain(stagingName);
+      expect(published).not.toContain(writerName);
+    }, T,
+  );
+
   it(
     'log + showFile round-trip a committed file',
     async () => {

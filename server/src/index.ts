@@ -8,7 +8,6 @@ import { fileURLToPath } from 'node:url';
 import { promises as fs, readFileSync } from 'node:fs';
 import http from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
-import chokidar from 'chokidar';
 
 import { config } from './config.js';
 import { loadSettings, getSettings, setPasswordIfInitial } from './bootstrap.js';
@@ -25,14 +24,15 @@ import { linkPreviewRouter } from './routes/linkpreview.js';
 import { keysRouter } from './routes/keys.js';
 import { pluginsRouter } from './routes/plugins.js';
 import { agentRouter } from './routes/agent.js';
+import { createMcpRouter } from './routes/mcp.js';
+import { readMcpConfig } from './services/mcpConfig.js';
 import { uiStateRouter } from './routes/uistate.js';
 import { sharesRouter, publicSharesRouter } from './routes/shares.js';
 import { sharePageRouter } from './routes/sharepage.js';
-import { initSearch, qmd } from './services/search.js';
-import { buildLinkGraph, updateLinkGraphForFile } from './services/links.js';
-import { buildFileIndex, indexFile, unindexFile } from './services/fileindex.js';
+import { indexing } from './services/indexing/coordinator.js';
+import { indexingRouter } from './routes/indexing.js';
 import { setBroadcaster, broadcast } from './services/realtime.js';
-import { getVaultRoot, ensureVault, invalidateStat } from './services/vault.js';
+import { getVaultRoot, ensureVault } from './services/vault.js';
 import { startAutoSync, stopAutoSync } from './services/autosync.js';
 import { startTrashRetention } from './services/trashretention.js';
 
@@ -63,6 +63,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 async function main() {
+  const mcpConfig = readMcpConfig(process.env);
   await loadSettings();
   await setPasswordIfInitial();
   await ensureVault();
@@ -75,6 +76,13 @@ async function main() {
   // address (see middleware/ratelimit.ts), not the spoofable X-Forwarded-For.
   // Set TRUST_PROXY=false for a directly-exposed instance with no proxy.
   app.set('trust proxy', config.trustProxy);
+  app.use('/mcp', createMcpRouter(mcpConfig));
+  // Bound plugin settings before the general file-content JSON parser.
+  const pluginDataJson = express.json({ limit: '1mb' });
+  app.use((req, res, next) => {
+    if (req.method === 'PUT' && /^\/api\/plugins\/[^/]+\/data$/.test(req.path)) pluginDataJson(req, res, next);
+    else next();
+  });
   app.use(express.json({ limit: '32mb' }));
   app.use(cookieParser());
 
@@ -154,6 +162,7 @@ async function main() {
   app.use('/api/shares', sharesRouter); // manage public share links (auth)
   app.use('/public/shares', publicSharesRouter); // shared-note content (NO auth)
   app.use('/share', sharePageRouter); // SSR public share page (NO auth, SEO/OG meta)
+  app.use('/api/index', indexingRouter);
   app.use('/api', searchRouter); // /api/search, /api/tags, /api/backlinks, /api/graph...
 
   // A plain (non-upgrade) GET /ws means a proxy in front stripped the WebSocket
@@ -184,16 +193,9 @@ async function main() {
 
   app.use(errorHandler);
 
-  // Build search index + link graph
-  console.log('[boot] indexing vault...');
-  await initSearch();
-  await buildLinkGraph();
-  await buildFileIndex();
-  console.log('[boot] index ready');
-
   const server = http.createServer(app);
   const wss = setupWebsocket(server);
-  const watcher = await setupWatcher();
+  await indexing.start(await getVaultRoot());
   startAutoSync();
   startTrashRetention();
 
@@ -212,6 +214,11 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`\n[shutdown] received ${signal} — closing server...`);
+    // Give in-flight HTTP requests a moment to finish before we force-exit.
+    setTimeout(() => {
+      console.log('[shutdown] force-exiting after timeout');
+      process.exit(128 + (signal === 'SIGTERM' ? 15 : 2));
+    }, 8000).unref();
     try {
       server.close(() => {
         console.log('[shutdown] HTTP server closed');
@@ -220,7 +227,7 @@ async function main() {
         console.log('[shutdown] WebSocket server closed');
       });
       // chokidar watcher — gracefully close, best-effort (it may be in polling mode).
-      watcher.close().catch(() => {});
+      await indexing.close();
       console.log('[shutdown] file watcher closed');
       // autosync periodic timer.
       stopAutoSync();
@@ -228,11 +235,7 @@ async function main() {
     } catch (err) {
       console.error('[shutdown] error during teardown:', err);
     }
-    // Give in-flight HTTP requests a moment to finish before we force-exit.
-    setTimeout(() => {
-      console.log('[shutdown] force-exiting after timeout');
-      process.exit(128 + (signal === 'SIGTERM' ? 15 : 2));
-    }, 8000).unref();
+
   }
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -309,84 +312,6 @@ function cookieValue(header: string | undefined, name: string): string | undefin
 
 function bearerToken(header: string | undefined): string | undefined {
   return header?.startsWith('Bearer ') ? header.slice(7) : undefined;
-}
-
-// --- chokidar watcher: reflect external changes (git pull, direct edits) ---
-async function setupWatcher() {
-  const root = await getVaultRoot();
-  // WEBOBSIDIAN_WATCH: 'auto' (default) = native inotify with automatic polling
-  // fallback when the host watch limit is exceeded; 'polling' = force polling.
-  const forcePolling = (process.env.WEBOBSIDIAN_WATCH ?? 'auto').toLowerCase() === 'polling';
-  return startWatcher(root, forcePolling);
-}
-
-export function startWatcher(root: string, usePolling: boolean): chokidar.FSWatcher {
-  const watcher = chokidar.watch(root, {
-    // Ignore VCS/dep/trash dirs AND `.obsidian` — the desktop Obsidian app
-    // rewrites its workspace/state files constantly, which otherwise floods the
-    // server with events (→ broadcasts → full tree refetches) and pins the CPU.
-    ignored: (p) => /(^|[/\\])(\.git|\.obsidian|node_modules|\.trash)([/\\]|$)/.test(p),
-    ignoreInitial: true,
-    persistent: true,
-    usePolling,
-    interval: 1000,
-    binaryInterval: 3000,
-    awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
-  });
-
-  // On a fresh VPS the kernel's `fs.inotify.max_user_watches` is often far below
-  // the file count of a large vault, so native watching fails with ENOSPC/EMFILE.
-  // Self-heal by transparently switching to polling (no inotify), and tell the
-  // operator how to restore native (cheaper) watching.
-  let degraded = false;
-  watcher.on('error', (err) => {
-    const code = (err as NodeJS.ErrnoException)?.code;
-    if (!usePolling && !degraded && (code === 'ENOSPC' || code === 'EMFILE')) {
-      degraded = true;
-      console.warn(
-        `[watcher] native file watching hit ${code} (host inotify limit too low ` +
-        `for this vault). Falling back to polling. For lower CPU, raise the limit: ` +
-        `sudo sysctl -w fs.inotify.max_user_watches=524288`,
-      );
-      watcher.close().catch(() => {});
-      startWatcher(root, true);
-      return;
-    }
-    console.error('[watcher] error:', err);
-  });
-
-  const onChange = async (absPath: string, type: string) => {
-    const rel = path.relative(root, absPath).split(path.sep).join('/');
-    // keep the attachment/file index in sync for embed resolution
-    if (type === 'add') indexFile(rel);
-    else if (type === 'unlink') unindexFile(rel);
-    // Drop the cached mtime/ctime so the next listTree re-stats just this file.
-    invalidateStat(rel);
-    if (/\.(md|markdown)$/i.test(rel)) {
-      // Update only the changed file in the search + link indexes (O(1)) — a full
-      // buildLinkGraph() re-reads every note in the vault and was the main CPU sink
-      // when Obsidian touched files in the background.
-      if (type === 'unlink') {
-        qmd.remove(rel);
-        await updateLinkGraphForFile(rel, true).catch(() => {});
-      } else {
-        await qmd.upsert(rel).catch(() => {});
-        await updateLinkGraphForFile(rel).catch(() => {});
-      }
-    }
-    broadcast({ type: 'fs', event: type, path: rel });
-  };
-  watcher
-    .on('add', (p) => onChange(p, 'add'))
-    .on('change', (p) => onChange(p, 'change'))
-    .on('unlink', (p) => onChange(p, 'unlink'))
-    .on('addDir', (p) => onChange(p, 'addDir'))
-    .on('unlinkDir', (p) => onChange(p, 'unlinkDir'));
-
-  // #27 declared this return type so `main()` can close the watcher on SIGTERM;
-  // without this line the function fell through and `watcher.close()` in the
-  // shutdown handler would throw on `undefined`.
-  return watcher;
 }
 
 async function dirExists(p: string): Promise<boolean> {

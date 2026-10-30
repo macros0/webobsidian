@@ -51,6 +51,21 @@ export interface SearchHit {
   snippet: string;
 }
 
+export interface IndexStatus {
+  phase: 'starting' | 'reconciling' | 'ready' | 'rebuilding' | 'degraded';
+  available: boolean;
+  initialScanComplete: boolean;
+  generation: string;
+  revision: number;
+  watcherMode: string;
+  indexedNotes: number;
+  pendingPaths: number;
+  errorCount: number;
+  lastReconcileAt: string | null;
+  lastHashAuditAt: string | null;
+  persistenceError: boolean;
+}
+
 export interface MatchContext {
   text: string;
   ranges: [number, number][];
@@ -195,8 +210,9 @@ export const api = {
   linkPreview: (url: string) => req<LinkPreview>(`/api/linkpreview?url=${encodeURIComponent(url)}`),
 
   // files
+  draftScope: () => req<{scopeId:string}>('/api/files/draft-scope'),
   tree: () => req<TreeNode>('/api/files/'),
-  read: (path: string) =>
+  read: (path: string, draftScopeId?: string) =>
     req<{
       path: string;
       content: string;
@@ -205,12 +221,12 @@ export const api = {
       locked?: boolean;
       lockReason?: string;
       unlock?: 'off' | 'confirm' | 'password';
-    }>(`/api/files/content?path=${encodeURIComponent(path)}`),
+    }>(`/api/files/content?path=${encodeURIComponent(path)}${draftScopeId===undefined?'':'&draftScopeId='+encodeURIComponent(draftScopeId)}`),
   // baseVersion (CAS): when given, the server rejects a stale write with 409 version_conflict.
-  write: (path: string, content: string, baseVersion?: string) =>
+  write: (path: string, content: string, baseVersion?: string, draftScopeId?: string) =>
     req<{ ok: true; path: string; version?: string }>('/api/files/content', {
       method: 'PUT',
-      body: JSON.stringify({ path, content, ...(baseVersion !== undefined ? { baseVersion } : {}) }),
+      body: JSON.stringify({ path, content, ...(baseVersion !== undefined ? { baseVersion } : {}), ...(draftScopeId!==undefined?{draftScopeId}:{}) }),
     }),
   createFolder: (path: string) =>
     req<{ ok: true }>('/api/files/folder', { method: 'POST', body: JSON.stringify({ path }) }),
@@ -268,7 +284,7 @@ export const api = {
   // search & links
   // limit omitted → server returns every match (panel renders them incrementally)
   search: (q: string, limit?: number) =>
-    req<{ hits: SearchHit[] }>(
+    req<{ hits: SearchHit[]; index?: IndexStatus }>(
       `/api/search?q=${encodeURIComponent(q)}${limit ? `&limit=${limit}` : ''}`,
     ),
   // per-note highlighted match contexts for the given paths (lazy, batched);
@@ -297,6 +313,10 @@ export const api = {
       edges: { source: string; target: string }[];
     }>('/api/graph'),
   reindex: () => req<{ ok: true }>('/api/reindex', { method: 'POST' }),
+  indexStatus: () => req<IndexStatus>('/api/index/status'),
+  indexJob: (mode: 'reconcile' | 'rebuild') => req<{jobId:string}>('/api/index/jobs', {
+    method: 'POST', body: JSON.stringify({mode}),
+  }),
 
   // tasks board (FR-15)
   tasks: (params?: TaskQuery) => {
@@ -360,9 +380,11 @@ export const api = {
   // the SPA never fetches /public/shares/* itself.
 
   // plugins
-  listPlugins: () => req<{ plugins: any[] }>('/api/plugins/'),
+  listPlugins: () => req<{ plugins: any[];vaultIdentity:string }>('/api/plugins/'),
   installPlugin: (repo: string) =>
     req<{ plugin: any }>('/api/plugins/install', { method: 'POST', body: JSON.stringify({ repo }) }),
+  pluginData: (id:string,vaultIdentity:string) => req<{data:unknown|null}>(`/api/plugins/${encodeURIComponent(id)}/data`,{headers:{'X-Plugin-Vault':vaultIdentity}}),
+  savePluginData: (id:string,data:unknown,vaultIdentity:string) => req<{ok:true}>(`/api/plugins/${encodeURIComponent(id)}/data`,{method:'PUT',headers:{'X-Plugin-Vault':vaultIdentity},body:JSON.stringify({data})}),
   setPluginEnabled: (id: string, enabled: boolean) =>
     req<{ ok: true }>(`/api/plugins/${id}/enabled`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
 };

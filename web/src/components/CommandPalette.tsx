@@ -1,3 +1,4 @@
+import {pluginCommands,usePluginRevision} from '../lib/plugins/registry';
 import {commands as editorToolbarCommands,captureContext,executeCommand} from '../lib/toolbar/registry';
 import {getActiveEditor} from '../lib/activeEditor';
 import { useEffect, useMemo, useState } from 'react';
@@ -25,6 +26,7 @@ function flatten(node: TreeNode | null): { path: string; title: string }[] {
 }
 
 export default function CommandPalette() {
+  const pluginRevision=usePluginRevision();
   const open = useStore((s) => s.paletteOpen);
   const mode = useStore((s) => s.paletteMode);
   const setOpen = useStore((s) => s.setPalette);
@@ -53,6 +55,7 @@ export default function CommandPalette() {
 
   const commands: Cmd[] = useMemo(
     () => [
+      ...pluginCommands(),
       ...editorToolbarCommands.map(c=>({id:c.id,title:c.label,run:()=>{const v=getActiveEditor();if(v)void executeCommand(c.id,captureContext(v));}})),
       { id: 'new', title: 'New note', hint: '⌘N', run: () => newNote() },
       { id: 'new-from-template', title: 'New note from template', run: () => setTemplatePicker(true) },
@@ -91,7 +94,7 @@ export default function CommandPalette() {
           }
         } },
     ],
-    [save, setLeftPanel, setGraph, openTasks, setSettings, setTrash, setViewMode, activePath, toggleBookmark, openToSide, openDailyNote, newNote, newCanvas, notify],
+    [pluginRevision, save, setLeftPanel, setGraph, openTasks, setSettings, setTrash, setViewMode, activePath, toggleBookmark, openToSide, openDailyNote, newNote, newCanvas, notify],
   );
 
   const items = useMemo(() => {

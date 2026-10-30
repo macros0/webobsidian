@@ -1,9 +1,11 @@
+import {loadPlugins,usePluginStates} from '../lib/plugins';
 import { useEffect, useRef, useState } from 'react';
-import { useStore } from '../lib/store';
+import { useStore,resetDraftScope } from '../lib/store';
 import { api } from '../lib/api';
 import { themeClass } from '../lib/theme';
 import Icon from './Icon';
 import ToolbarSettings from './toolbar/ToolbarSettings';
+import {useIndexStatus,indexStatusMessage,refreshIndexStatus,resetIndexStatus} from '../lib/indexStatus';
 
 type Section = 'vault' | 'git' | 'api' | 'sharing' | 'plugins' | 'appearance' | 'toolbar' | 'account' | 'about';
 
@@ -71,6 +73,30 @@ function Row({ name, desc, children }: { name: string; desc?: string; children: 
   );
 }
 
+function IndexSettings(){
+  const {status}=useIndexStatus();
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState('');
+  useEffect(()=>{refreshIndexStatus().catch(()=>setError('Could not load index status.'));},[]);
+  const run=async(mode:'reconcile'|'rebuild')=>{
+    setBusy(true);setError('');
+    try{await api.indexJob(mode);await refreshIndexStatus();}
+    catch{setError('Could not start index update. Check the connection and try again.');}
+    finally{setBusy(false);}
+  };
+  return <section aria-label="Search index" style={{marginBottom:20}}>
+    <Row name="Search index" desc={status?`${status.indexedNotes} notes · ${status.watcherMode} · ${status.pendingPaths} pending`:'Loading index status…'}>
+      <span role="status">{status?.phase==='ready'&&!status.persistenceError?'Up to date':indexStatusMessage(status)}</span>
+    </Row>
+    {status?.lastReconcileAt&&<div className="desc">Last check: {new Date(status.lastReconcileAt).toLocaleString()}</div>}
+    {error&&<div role="alert">{error}</div>}
+    <div style={{display:'flex',gap:8,marginTop:8}}>
+      <button className="btn secondary" disabled={busy} onClick={()=>run('reconcile')}>Check for changes</button>
+      <button className="btn secondary" disabled={busy} onClick={()=>run('rebuild')}>Rebuild index</button>
+    </div>
+  </section>;
+}
+
 function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
   const autoReveal = useStore((st) => st.autoReveal);
   const setAutoReveal = useStore((st) => st.setAutoReveal);
@@ -93,9 +119,17 @@ function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
     await reload();
   };
   const save = async () => {
-    await api.putSettings({ vault: { path } });
-    await reload();
-    alert('Vault path saved. Reindex from the command palette if needed.');
+    try {
+      await useStore.getState().save();
+      await api.putSettings({ vault: { path } });
+      resetIndexStatus();
+      refreshIndexStatus().catch(()=>{});
+      resetDraftScope();
+      useStore.setState({tabs:[],activePath:null,content:'',dirty:false,splitPath:null,splitContent:''});
+      await useStore.getState().loadTree();
+      await reload();
+      useStore.getState().notify('Vault changed. Local drafts remain scoped to the previous vault.');
+    }catch(error){useStore.getState().notify(String(error));}
   };
   const saveDeleteMode = async (mode: string) => {
     setDeleteMode(mode);
@@ -106,6 +140,7 @@ function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
   return (
     <div>
       <h2>Vault & Files</h2>
+      <IndexSettings />
       <Row name="Vault path" desc="Absolute path on the server to your notes folder">
         <input className="text-input" style={{ width: 260 }} value={path} onChange={(e) => setPath(e.target.value)} />
       </Row>
@@ -409,10 +444,11 @@ function Shares() {
 }
 
 function Plugins() {
+  const runtimeStates=usePluginStates();
   const [plugins, setPlugins] = useState<any[]>([]);
   const [repo, setRepo] = useState('');
   const [msg, setMsg] = useState('');
-  const load = () => api.listPlugins().then((r) => setPlugins(r.plugins)).catch(() => {});
+  const load = () => api.listPlugins().then((r) => setPlugins(r.plugins)).catch(() => setMsg('Could not load plugin catalog.'));
   useEffect(() => { load(); }, []);
   const install = async () => {
     setMsg('Installing…');
@@ -430,21 +466,21 @@ function Plugins() {
       </Row>
       {msg && <div style={{ color: 'var(--text-muted)', margin: '6px 0' }}>{msg}</div>}
       <div style={{ marginTop: 12 }}>
-        {plugins.length === 0 && <div style={{ color: 'var(--text-faint)' }}>No plugins installed in .obsidian/plugins</div>}
+        {plugins.length === 0 && <div style={{ color: 'var(--text-faint)' }}>No plugins installed</div>}
         {plugins.map((p) => (
           <div className="setting-row" key={p.id}>
             <div className="info">
               <div className="name">{p.name} <span style={{ color: 'var(--text-faint)' }}>v{p.version}</span></div>
-              <div className="desc">{p.description}</div>
+              <div className="desc">{p.description}</div><div className="desc">Source: {p.source??'desktop'} · {runtimeStates.find(x=>x.id===p.id)?.state??(p.enabled?'loading':'disabled')}</div>{runtimeStates.find(x=>x.id===p.id)?.failure&&<div role="alert">{runtimeStates.find(x=>x.id===p.id)?.failure?.message}</div>}
             </div>
             <label>
-              <input type="checkbox" checked={p.enabled} onChange={async (e) => { await api.setPluginEnabled(p.id, e.target.checked); load(); }} /> enabled
+              <input type="checkbox" checked={p.enabled} onChange={async (e) => { try { await api.setPluginEnabled(p.id, e.target.checked); await load(); await loadPlugins(); } catch { setMsg('Could not change plugin state.'); } }} /> enabled
             </label>
           </div>
         ))}
       </div>
       <p style={{ color: 'var(--text-faint)', fontSize: 12, marginTop: 14 }}>
-        Note: WebObsidian supports a subset of the Obsidian plugin API. Most metadata/markdown plugins work; plugins relying on Electron/Node internals may not.
+        Note: WebObsidian supports a subset of the Obsidian plugin API. Compatibility is limited. Runtime status shows failures and unsupported APIs; Node/Electron plugins require separate support. Web installations and settings are stored separately from desktop Obsidian.
       </p>
     </div>
   );

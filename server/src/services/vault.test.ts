@@ -19,12 +19,98 @@ beforeEach(async () => {
   settings.vault.allowedRoots = [];
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   await fs.rm(root, { recursive: true, force: true });
 });
 
 const abs = (rel: string) => path.join(root, rel);
 
 describe('vault writes', () => {
+  it('concurrent writes with a frozen clock use distinct exclusive temporary files', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(42);
+    const renamed = vi.spyOn(fs, 'rename');
+    const opened = vi.spyOn(fs, 'open');
+    await Promise.all([vault.writeFileText('note.md', 'first'), vault.writeFileText('note.md', 'second')]);
+    const temps = renamed.mock.calls.map(([source]) => String(source));
+    expect(new Set(temps).size).toBe(2);
+    expect(opened.mock.calls.filter(([, flags]) => flags === 'wx')).toHaveLength(2);
+    expect(['first', 'second']).toContain(await vault.readFileText('note.md'));
+    expect(await fs.readdir(root)).toEqual(['note.md']);
+  });
+
+  it('cleans its temporary file and preserves the original after a rename failure', async () => {
+    await vault.writeFileText('note.md', 'original');
+    const failure = Object.assign(new Error('controlled rename failure'), { code: 'EIO' });
+    vi.spyOn(fs, 'rename').mockRejectedValueOnce(failure);
+    await expect(vault.writeFileText('note.md', 'replacement')).rejects.toBe(failure);
+    expect(await fs.readFile(abs('note.md'), 'utf8')).toBe('original');
+    expect(await fs.readdir(root)).toEqual(['note.md']);
+    await vault.writeFileText('after.md', 'queue still works');
+  });
+
+  it('serializes text transformations against the latest document', async () => {
+    await vault.writeFileText('note.md', 'base');
+    const results = await Promise.all([' A', ' B'].map((suffix) =>
+      vault.mutateFileText('note.md', (current) => ({ content: current + suffix, result: suffix })),
+    ));
+    expect(['base A B', 'base B A']).toContain(await vault.readFileText('note.md'));
+    expect(results.map((r) => r.result)).toEqual([' A', ' B']);
+    expect(results[0].version).not.toBe(results[1].version);
+  });
+
+  it('does not write when a transformation rejects', async () => {
+    await vault.writeFileText('note.md', 'original');
+    await expect(vault.mutateFileText('note.md', () => { throw new Error('conflict'); })).rejects.toThrow('conflict');
+    expect(await vault.readFileText('note.md')).toBe('original');
+  });
+
+  it('keeps the root and allowed roots captured before waiting for the queue', async () => {
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), 'wo-snapshot-other-'));
+    const allowed = await fs.mkdtemp(path.join(os.tmpdir(), 'wo-snapshot-allowed-'));
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let first: Promise<void> | undefined;
+    let pending: Promise<void> | undefined;
+    try {
+      await fs.symlink(allowed, abs('linked'), process.platform === 'win32' ? 'junction' : 'dir');
+      settings.vault.allowedRoots = [allowed];
+      first = vault.withVaultMutation(async () => { entered(); await blocked; });
+      await started;
+      let captured!: () => void;
+      const snapshotTaken = new Promise<void>((resolve) => { captured = resolve; });
+      const realpath = fs.realpath.bind(fs);
+      vi.spyOn(fs, 'realpath').mockImplementation(async (...args: Parameters<typeof fs.realpath>) => {
+        if (String(args[0]) === root) captured();
+        return realpath(...args);
+      });
+      pending = vault.writeFileText('linked/queued.md', 'captured');
+      await snapshotTaken;
+      settings.vault.path = other;
+      settings.vault.allowedRoots = [];
+      release();
+      await Promise.all([first, pending]);
+      expect(await fs.readFile(path.join(allowed, 'queued.md'), 'utf8')).toBe('captured');
+      expect(await fs.readdir(other)).toEqual([]);
+    } finally {
+      release();
+      await Promise.allSettled([first, pending]);
+      await fs.rm(other, { recursive: true, force: true });
+      await fs.rm(allowed, { recursive: true, force: true });
+    }
+  });
+
+  it('serializes canonical file aliases and preserves their link target', async () => {
+    await vault.writeFileText('real/note.md', 'base');
+    await fs.symlink(abs('real'), abs('alias'), process.platform === 'win32' ? 'junction' : 'dir');
+    const result = await Promise.all(['real/note.md', 'alias/note.md'].map((rel) => vault.mutateFileText(rel, (current) => {
+      if (current !== 'base') throw Object.assign(new Error('conflict'), { status: 409 });
+      return { content: 'winner', result: true };
+    }).then(() => 200, (error: { status: number }) => error.status)));
+    expect(result.sort()).toEqual([200, 409]);
+    expect(await vault.readFileText('real/note.md')).toBe('winner');
+  });
   it('writeFileText round-trips content and creates nested parent dirs', async () => {
     await vault.writeFileText('a/b/c.md', '# Hello');
     expect(await vault.readFileText('a/b/c.md')).toBe('# Hello');
@@ -66,6 +152,121 @@ describe('vault writes', () => {
     await vault.writeFileText('d/two.md', '2');
     await vault.remove('d');
     expect(await vault.exists('d')).toBe(false);
+  });
+});
+
+describe('rename destination safety', () => {
+  it.each(['file', 'directory'] as const)('does not replace an existing %s', async (kind) => {
+    await vault.writeFileText('source.md', 'source');
+    if (kind === 'file') await vault.writeFileText('destination', 'destination');
+    else await vault.writeFileText('destination/child.md', 'destination');
+    await expect(vault.rename('source.md', 'destination')).rejects.toMatchObject({ status: 409, message: 'destination_exists' });
+    expect(await vault.readFileText('source.md')).toBe('source');
+    expect(await vault.readFileText(kind === 'file' ? 'destination' : 'destination/child.md')).toBe('destination');
+  });
+
+  it('does not replace an existing directory with another directory', async () => {
+    await vault.createFolder('source');
+    await vault.createFolder('destination');
+    await expect(vault.rename('source', 'destination')).rejects.toMatchObject({ status: 409 });
+    expect(await vault.exists('source')).toBe(true);
+  });
+
+  it('lets only one of two sources claim a new destination', async () => {
+    await vault.writeFileText('a.md', 'a');
+    await vault.writeFileText('b.md', 'b');
+    const results = await Promise.allSettled([vault.rename('a.md', 'target.md'), vault.rename('b.md', 'target.md')]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const winner = results[0].status === 'fulfilled' ? 'a' : 'b';
+    const loser = winner === 'a' ? 'b' : 'a';
+    expect(await vault.readFileText('target.md')).toBe(winner);
+    expect(await vault.readFileText(`${loser}.md`)).toBe(loser);
+  });
+
+  it('supports no-op and case-only rename', async () => {
+    await vault.writeFileText('note.md', 'original');
+    await vault.rename('note.md', 'note.md');
+    await vault.rename('note.md', 'NOTE.md');
+    expect(await fs.readdir(root)).toEqual(['NOTE.md']);
+    expect(await vault.readFileText('NOTE.md')).toBe('original');
+  });
+
+  it.skipIf(process.platform === 'win32')('does not confuse different entries that differ only in case', async () => {
+    await vault.writeFileText('note.md', 'lower');
+    await vault.writeFileText('NOTE.md', 'upper');
+    await expect(vault.rename('note.md', 'NOTE.md')).rejects.toMatchObject({ status: 409 });
+    expect(await vault.readFileText('note.md')).toBe('lower');
+    expect(await vault.readFileText('NOTE.md')).toBe('upper');
+  });
+});
+
+describe('copy preflight and publication', () => {
+  let outside: string;
+  const linkDir = (target: string, link: string) => fs.symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+  beforeEach(async () => { outside = await fs.mkdtemp(path.join(os.tmpdir(), 'wo-copy-external-')); });
+  afterEach(async () => { await fs.rm(outside, { recursive: true, force: true }); });
+
+  it('rejects deeply nested outside links before creating any destination', async () => {
+    await vault.writeFileText('source/deep/local.md', 'local');
+    await fs.writeFile(path.join(outside, 'secret.md'), 'secret');
+    await linkDir(outside, abs('source/deep/link'));
+    await expect(vault.readFileText('source/deep/link/secret.md')).rejects.toMatchObject({ status: 400 });
+    await expect(vault.copy('source', 'destination')).rejects.toMatchObject({ status: 400 });
+    expect(await fs.readdir(root)).toEqual(['source']);
+  });
+
+  it('materializes allowed external and repeated internal directory links', async () => {
+    settings.vault.allowedRoots = [outside];
+    await fs.writeFile(path.join(outside, 'shared.md'), 'shared');
+    await vault.writeFileText('source/real/note.md', 'inside');
+    await linkDir(outside, abs('source/external'));
+    await linkDir(abs('source/real'), abs('source/again'));
+    expect((await vault.copy('source', 'destination')).sort()).toEqual(['destination/again/note.md', 'destination/external/shared.md', 'destination/real/note.md']);
+    expect((await fs.lstat(abs('destination/external'))).isSymbolicLink()).toBe(false);
+    expect(await vault.readFileText('destination/external/shared.md')).toBe('shared');
+  });
+
+  it('rejects cyclic and broken directory links without publishing partial data', async () => {
+    await vault.writeFileText('source/note.md', 'source');
+    await linkDir(abs('source'), abs('source/cycle'));
+    await expect(vault.copy('source', 'destination')).rejects.toMatchObject({ status: 400 });
+    await fs.unlink(abs('source/cycle'));
+    await linkDir(abs('missing'), abs('source/broken'));
+    await expect(vault.copy('source', 'destination')).rejects.toMatchObject({ status: 400 });
+    expect(await fs.readdir(root)).toEqual(['source']);
+  });
+
+  it('rejects copying into the source subtree', async () => {
+    await vault.writeFileText('source/note.md', 'source');
+    await expect(vault.copy('source', 'source/child')).rejects.toMatchObject({ status: 400 });
+    expect(await fs.readdir(abs('source'))).toEqual(['note.md']);
+  });
+
+  it('rejects a permitted link into Git metadata before publication', async () => {
+    await fs.mkdir(abs('.git'));
+    await fs.writeFile(abs('.git/config'), 'metadata');
+    await vault.createFolder('source');
+    await linkDir(abs('.git'), abs('source/metadata'));
+    await expect(vault.copy('source', 'destination')).rejects.toMatchObject({ status: 400 });
+    expect(await vault.exists('destination')).toBe(false);
+  });
+
+  it('treats a dangling destination link as occupied for rename and copy', async () => {
+    await vault.writeFileText('source.md', 'source');
+    await linkDir(abs('missing'), abs('destination'));
+    await expect(vault.rename('source.md', 'destination')).rejects.toMatchObject({ status: 409 });
+    await expect(vault.copy('source.md', 'destination')).rejects.toMatchObject({ status: 409 });
+    expect((await fs.lstat(abs('destination'))).isSymbolicLink()).toBe(true);
+    expect(await vault.readFileText('source.md')).toBe('source');
+  });
+
+  it('removes only the operation staging directory after an I/O failure', async () => {
+    await vault.writeFileText('source/note.md', 'source');
+    const failure = Object.assign(new Error('controlled copy failure'), { code: 'EIO' });
+    vi.spyOn(fs, 'copyFile').mockRejectedValueOnce(failure);
+    await expect(vault.copy('source', 'destination')).rejects.toBe(failure);
+    expect(await fs.readdir(root)).toEqual(['source']);
+    expect(await vault.readFileText('source/note.md')).toBe('source');
   });
 });
 
@@ -133,6 +334,15 @@ describe('path safety (resolveInVault)', () => {
     await expect(vault.writeFileText('../evil.md', 'x')).rejects.toMatchObject({ status: 400 });
   });
 
+  it('rejects writing through a directory alias to Git metadata', async () => {
+    await fs.mkdir(abs('.git/hooks'), { recursive: true });
+    await fs.writeFile(abs('.git/hooks/post-merge'), 'original hook');
+    await fs.symlink(abs('.git/hooks'), abs('public'), process.platform === 'win32' ? 'junction' : 'dir');
+    await expect(vault.writeFileText('public/post-merge', 'replacement')).rejects.toMatchObject({ status: 400 });
+    await expect(vault.writeFileBuffer('public/post-merge', Buffer.from('replacement'))).rejects.toMatchObject({ status: 400 });
+    expect(await fs.readFile(abs('.git/hooks/post-merge'), 'utf8')).toBe('original hook');
+  });
+
   it.skipIf(process.platform === 'win32')(
     'rejects a symlink that escapes the vault',
     async () => {
@@ -196,6 +406,15 @@ describe('symlinked vault contents (#23 — follow symlinks within allowedRoots)
     await fs.writeFile(path.join(outside, 'note.md'), 'hello');
     await fs.symlink(path.join(outside, 'note.md'), abs('link.md'), 'file');
     expect(await vault.readFileText('link.md')).toBe('hello');
+  });
+
+  it('rejects a file alias into Git metadata for text and binary writes', async () => {
+    await fs.mkdir(abs('.git/hooks'), { recursive: true });
+    await fs.writeFile(abs('.git/hooks/post-merge'), 'original hook');
+    await fs.symlink(abs('.git/hooks/post-merge'), abs('safe.md'), 'file');
+    await expect(vault.writeFileText('safe.md', 'replacement')).rejects.toMatchObject({ status: 400 });
+    await expect(vault.writeFileBuffer('safe.md', Buffer.from('replacement'))).rejects.toMatchObject({ status: 400 });
+    expect(await fs.readFile(abs('.git/hooks/post-merge'), 'utf8')).toBe('original hook');
   });
 
   it('writes a file inside a symlinked folder (the write lands in the target)', async () => {

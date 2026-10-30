@@ -246,3 +246,7 @@ production wiki and its lint stay untouched:
 
 The operator-facing version of these notes (upgrade caveats, verification commands) is in the
 repository README: [`§ Community integration`](../README.md#-community-integration).
+
+## Optional remote MCP
+
+For a generic HTTPS deployment and Perplexity configuration, see [MCP_REMOTE.md](MCP_REMOTE.md). This historical host-specific runbook does not establish that a current instance has remote MCP enabled.

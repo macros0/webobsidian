@@ -1,4 +1,6 @@
-import { Router } from 'express';
+import {getDraftScope} from '../services/draftScopes.js';
+import { Router, type Request, type Response } from 'express';
+import { indexing } from '../services/indexing/coordinator.js';
 import multer from 'multer';
 import path from 'node:path';
 import { asyncHandler } from '../middleware/error.js';
@@ -17,6 +19,7 @@ import { annotateTree, loadLocks, lockFor, sessionMayWrite, targetsOf } from '..
 
 export const filesRouter = Router();
 filesRouter.use(requireAuth);
+filesRouter.get('/draft-scope',asyncHandler(async(_req,res)=>{res.json({scopeId:await getDraftScope((await getSettings()).vault.path)});}));
 
 // Locked paths (the areas the agent maintains: raw evidence, generated pages, `_system/`) are
 // readable but not writable from a browser session. The agent is unaffected — it writes through
@@ -46,11 +49,21 @@ const isMd = (p: string) => /\.(md|markdown)$/i.test(p);
 
 // Refresh derived indexes after a mutation (best-effort, non-blocking).
 // Incremental: only the touched file(s) are reparsed, not the whole vault.
-function reindex(opts: { upsert?: string; added?: string; removed?: string } = {}) {
-  if (opts.upsert) void qmd.upsert(opts.upsert).catch(() => {});
-  if (opts.added && isMd(opts.added)) void updateLinkGraphForFile(opts.added).catch(() => {});
-  if (opts.removed && isMd(opts.removed)) void updateLinkGraphForFile(opts.removed, true).catch(() => {});
+async function reindex(opts: { upsert?: string; added?: string; removed?: string } = {}) {
+  if (indexing.isStarted) {
+    indexing.notify({ root: await vault.getVaultRoot(), paths: [...new Set(Object.values(opts).filter((p): p is string => !!p))], source: 'web' });
+  } else {
+    if (opts.upsert) void qmd.upsert(opts.upsert).catch(() => {});
+    if (opts.removed) qmd.remove(opts.removed);
+    if (opts.added && isMd(opts.added)) void updateLinkGraphForFile(opts.added).catch(() => {});
+    if (opts.removed && isMd(opts.removed)) void updateLinkGraphForFile(opts.removed, true).catch(() => {});
+  }
   scheduleAutoCommitOnSave();
+}
+
+// Keep both the write and its index notification bound to the same captured vault.
+function mutationHandler(fn: (req: Request, res: Response) => Promise<unknown>) {
+  return asyncHandler(async (req, res) => vault.withVaultMutation(() => fn(req, res)));
 }
 
 /** `?download`, `?download=1`, `?download=true` (FR-22). */
@@ -78,6 +91,7 @@ async function resolveRef(target: string, from: string): Promise<string> {
     if (!cand.startsWith('..') && (await vault.exists(cand))) return cand;
   }
   if (!(await vault.exists(rel))) {
+    if (indexing.isStarted) indexing.assertReady();
     const resolved = resolveFile(rel);
     if (resolved) rel = resolved;
   }
@@ -97,9 +111,18 @@ filesRouter.get(
   }),
 );
 
+/** Scope check and operation share the vault's captured settings and mutation queue. */
+async function withDraftScope<T>(scope: unknown, action: () => Promise<T>): Promise<T> {
+  if(scope===undefined)return action();
+  return vault.withVaultMutation(async()=>{
+    if(typeof scope!=='string'||scope!==await getDraftScope(await vault.getVaultRoot()))throw Object.assign(new Error('draft_scope_changed'),{status:409});
+    return action();
+  });
+}
+
 filesRouter.get(
   '/content',
-  asyncHandler(async (req, res) => {
+  asyncHandler(async (req, res) => withDraftScope(req.method==='GET'?req.query.draftScopeId:req.body?.draftScopeId,async()=>{
     const target = String(req.query.path ?? '');
     if (!target) {
       res.status(400).json({ error: 'path required' });
@@ -139,12 +162,12 @@ filesRouter.get(
       }
       await sendFileWithRange(req, res, abs, mimeFor(rel), headers);
     }
-  }),
+  })),
 );
 
 filesRouter.put(
   '/content',
-  asyncHandler(async (req, res) => {
+  mutationHandler(async (req, res) => withDraftScope(req.method==='GET'?req.query.draftScopeId:req.body?.draftScopeId,async()=>{
     const { path: rel, content, baseVersion } = req.body ?? {};
     if (typeof rel !== 'string' || typeof content !== 'string') {
       res.status(400).json({ error: 'path and content required' });
@@ -155,29 +178,38 @@ filesRouter.put(
     // it keeps the old last-writer-wins autosave behaviour byte-for-byte. When
     // baseVersion IS sent, a missing file only satisfies baseVersion === '' —
     // otherwise a card move racing a delete would silently recreate the note.
-    if (typeof baseVersion === 'string') {
-      const exists = await vault.exists(rel);
-      const check = checkVersion(exists ? await vault.readFileText(rel) : null, baseVersion);
-      if (!check.ok) {
-        res.status(409).json({ error: 'version_conflict', currentVersion: check.currentVersion });
-        return;
+    let conflict: string | undefined;
+    await vault.mutateFileText(rel, current => {
+      if (typeof baseVersion === 'string') {
+        const check = checkVersion(current, baseVersion);
+        if (!check.ok) {
+          conflict = check.currentVersion;
+          throw Object.assign(new Error('version_conflict'), { status: 409, currentVersion: conflict });
+        }
       }
+      return { content, result: undefined };
+    }).catch(error => {
+      if (conflict === undefined) throw error;
+    });
+    if (conflict !== undefined) {
+      res.status(409).json({ error: 'version_conflict', currentVersion: conflict });
+      return;
     }
-    await vault.writeFileText(rel, content);
-    reindex({ upsert: rel, added: rel });
+    await reindex({ upsert: rel, added: rel });
     res.json({ ok: true, path: rel, version: contentVersion(content) });
-  }),
+  })),
 );
 
 filesRouter.post(
   '/folder',
-  asyncHandler(async (req, res) => {
+  mutationHandler(async (req, res) => {
     const { path: rel } = req.body ?? {};
     if (typeof rel !== 'string') {
       res.status(400).json({ error: 'path required' });
       return;
     }
     await vault.createFolder(rel);
+    await reindex({added:rel});
     res.json({ ok: true, path: rel });
   }),
 );
@@ -185,7 +217,7 @@ filesRouter.post(
 filesRouter.post(
   '/upload',
   upload.single('file'),
-  asyncHandler(async (req, res) => {
+  mutationHandler(async (req, res) => {
     const dir = String(req.body?.dir ?? '');
     const file = req.file;
     if (!file) {
@@ -202,6 +234,7 @@ filesRouter.post(
     }
     // Reuse an existing folder that differs only in case (e.g. an Obsidian vault's
     // "Attachments") instead of creating a duplicate "attachments". See vault.ts.
+    const rel = await vault.withVaultMutation(async () => {
     const resolvedDir = dir ? await vault.resolveDirCaseInsensitive(dir) : '';
     // Never overwrite an existing attachment: pick image.png, image-1.png, image-2.png, …
     const original = path.posix.basename(file.originalname.replace(/\\/g, '/')) || 'file';
@@ -212,42 +245,39 @@ filesRouter.post(
       rel = path.posix.join(resolvedDir, `${stem}-${i}${ext}`);
     }
     await vault.writeFileBuffer(rel, file.buffer);
+    await reindex({added:rel});
+    return rel;
+    });
     res.json({ ok: true, path: rel, size: file.size });
   }),
 );
 
 filesRouter.patch(
   '/rename',
-  asyncHandler(async (req, res) => {
+  mutationHandler(async (req, res) => {
     const { from, to } = req.body ?? {};
     if (typeof from !== 'string' || typeof to !== 'string') {
       res.status(400).json({ error: 'from and to required' });
       return;
     }
     await vault.rename(from, to);
-    await qmd.rename(from, to);
+    if (!indexing.isStarted) await qmd.rename(from, to);
     await onFileRenamed(from, to).catch(() => {}); // keep public share links pointing at the note
-    reindex({ added: to, removed: from });
+    await reindex({ added: to, removed: from });
     res.json({ ok: true, from, to });
   }),
 );
 
 filesRouter.post(
   '/copy',
-  asyncHandler(async (req, res) => {
+  mutationHandler(async (req, res) => {
     const { from, to } = req.body ?? {};
     if (typeof from !== 'string' || typeof to !== 'string') {
       res.status(400).json({ error: 'from and to required' });
       return;
     }
     const copied = await vault.copy(from, to);
-    for (const f of copied) {
-      if (isMd(f)) {
-        void qmd.upsert(f).catch(() => {});
-        void updateLinkGraphForFile(f).catch(() => {});
-      }
-    }
-    scheduleAutoCommitOnSave();
+    for (const f of copied) await reindex({upsert:f,added:f});
     res.json({ ok: true, from, to });
   }),
 );
@@ -265,14 +295,14 @@ filesRouter.get(
 
 filesRouter.post(
   '/trash/restore',
-  asyncHandler(async (req, res) => {
+  mutationHandler(async (req, res) => {
     const rel = String(req.body?.path ?? '');
     if (!rel) {
       res.status(400).json({ error: 'path required' });
       return;
     }
     const restored = await vault.restoreFromTrash(rel);
-    reindex({ upsert: restored, added: restored });
+    await reindex({ upsert: restored, added: restored });
     res.json({ ok: true, restored });
   }),
 );
@@ -280,7 +310,7 @@ filesRouter.post(
 // Permanently delete one trashed item.
 filesRouter.delete(
   '/trash/item',
-  asyncHandler(async (req, res) => {
+  mutationHandler(async (req, res) => {
     const rel = String(req.query.path ?? '');
     if (!rel) {
       res.status(400).json({ error: 'path required' });
@@ -350,24 +380,23 @@ filesRouter.get(
 
 filesRouter.delete(
   '/',
-  asyncHandler(async (req, res) => {
+  mutationHandler(async (req, res) => {
     const rel = String(req.query.path ?? '');
     if (!rel) {
       res.status(400).json({ error: 'path required' });
       return;
     }
     const s = await getSettings();
-    qmd.remove(rel);
     if (s.vault.deleteMode === 'permanent' || req.query.permanent === '1') {
       await vault.remove(rel);
       await vault.pruneEmptyAttachmentsDir(rel);
-      reindex({ removed: rel });
+      await reindex({ removed: rel });
       res.json({ ok: true, deleted: rel });
       return;
     }
     const dest = await vault.trash(rel);
     await vault.pruneEmptyAttachmentsDir(rel);
-    reindex({ removed: rel });
+    await reindex({ removed: rel });
     res.json({ ok: true, trashed: dest });
   }),
 );

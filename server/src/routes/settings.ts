@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { indexing } from '../services/indexing/coordinator.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -23,33 +24,60 @@ settingsRouter.put(
   '/',
   asyncHandler(async (req, res) => {
     const body = req.body ?? {};
+    const previousVault = (await getSettings()).vault;
     // A changed vault.path turns the whole files API into read/write over that
     // tree, so constrain it to the allowed roots (same gate as Browse…) and
     // require it to be an existing directory before persisting.
     if (body.vault && typeof body.vault.path === 'string' && body.vault.path) {
       await assertVaultPathAllowed(body.vault);
     }
-    const updated = await updateSettings((d) => {
-      if (body.vault) {
-        Object.assign(d.vault, sanitizeVault(body.vault));
-        ensureVaultBrowsable(d);
+    const requestedVault = { ...previousVault, ...(body.vault ? sanitizeVault(body.vault) : {}) };
+    const changesVault = path.resolve(previousVault.path) !== path.resolve(requestedVault.path)
+      || JSON.stringify(previousVault.allowedRoots) !== JSON.stringify(requestedVault.allowedRoots);
+    // updateSettings publishes its cache before persistence resolves. Hold index
+    // readiness throughout that window so derived results cannot cross vaults.
+    const releaseTransition = indexing.isStarted && changesVault ? indexing.beginTransition() : () => {};
+    try {
+      const updated = await updateSettings((d) => {
+        if (body.vault) {
+          Object.assign(d.vault, sanitizeVault(body.vault));
+          ensureVaultBrowsable(d);
+        }
+        if (body.git) {
+          const { token, ...rest } = body.git;
+          Object.assign(d.git, rest);
+          if (typeof token === 'string' && token && token !== '••••••••') d.git.token = token;
+        }
+        if (body.search) Object.assign(d.search, body.search);
+        if (body.ui) Object.assign(d.ui, body.ui);
+        if (body.api && typeof body.api.rateLimitPerMin === 'number') {
+          d.api.rateLimitPerMin = body.api.rateLimitPerMin;
+        }
+      });
+      if (indexing.isStarted && (path.resolve(previousVault.path) !== path.resolve(updated.vault.path) || JSON.stringify(previousVault.allowedRoots) !== JSON.stringify(updated.vault.allowedRoots))) {
+        // Another settings request may already have published a newer vault.
+        await indexing.switchVault((await getSettings()).vault.path);
       }
-      if (body.git) {
-        const { token, ...rest } = body.git;
-        Object.assign(d.git, rest);
-        if (typeof token === 'string' && token && token !== '••••••••') d.git.token = token;
+      // A new retention period applies right away (don't wait for the hourly check).
+      if (body.vault && 'trashRetentionDays' in body.vault) {
+        void purgeExpiredTrash().catch(() => undefined);
       }
-      if (body.search) Object.assign(d.search, body.search);
-      if (body.ui) Object.assign(d.ui, body.ui);
-      if (body.api && typeof body.api.rateLimitPerMin === 'number') {
-        d.api.rateLimitPerMin = body.api.rateLimitPerMin;
+      res.json(redactSettings(updated));
+    } catch (error) {
+      // Persistence can fail after the settings service has published its new
+      // cache. Keep derived indexes aligned with that actual active vault even
+      // though this HTTP request still reports the settings failure.
+      if (indexing.isStarted && changesVault) {
+        const active = (await getSettings()).vault;
+        if (path.resolve(previousVault.path) !== path.resolve(active.path)
+          || JSON.stringify(previousVault.allowedRoots) !== JSON.stringify(active.allowedRoots)) {
+          await indexing.switchVault(active.path);
+        }
       }
-    });
-    // A new retention period applies right away (don't wait for the hourly check).
-    if (body.vault && 'trashRetentionDays' in body.vault) {
-      void purgeExpiredTrash().catch(() => undefined);
+      throw error;
+    } finally {
+      releaseTransition();
     }
-    res.json(redactSettings(updated));
   }),
 );
 

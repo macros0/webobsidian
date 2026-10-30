@@ -6,6 +6,7 @@ import os from 'node:os';
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { renderDefaultEnv } from './default-env.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -113,16 +114,7 @@ async function cmdInstall(): Promise<void> {
   // Scaffold default .env if missing
   if (!fs.existsSync(ENV_FILE)) {
     const sampleVault = path.join(PROJECT_ROOT, 'sample-vault');
-    const defaultEnvContent = `# WebObsidian CLI Configuration (~/.webobsidian/.env)
-PORT=8787
-HOST=0.0.0.0
-VAULT_PATH=${sampleVault}
-DATA_DIR=${path.join(CONFIG_DIR, 'data')}
-ALLOWED_ROOTS=${sampleVault}
-WEBOBSIDIAN_PASSWORD=123456
-WEBOBSIDIAN_WATCH=auto
-TRUST_PROXY=true
-`;
+    const defaultEnvContent = renderDefaultEnv(sampleVault, path.join(CONFIG_DIR, 'data'));
     fs.writeFileSync(ENV_FILE, defaultEnvContent, { mode: 0o600 });
     console.log(`  Created default configuration at ${ENV_FILE}`);
   } else {

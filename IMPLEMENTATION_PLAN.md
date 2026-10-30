@@ -1,5 +1,16 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Review fixes — 2026-10-30
+
+- [x] R1: CLI default recovery password, including old installations.
+- [x] R2: preserve dirty tabs across close/rename/delete.
+- [x] R3/R4/R6: no-clobber rename, transactional versions and unique temporary files.
+- [x] R5: validate nested copy targets and publish complete copies.
+- [x] Regression tests, builds and integration verification.
+
+Progress 2026-10-30: all six review fixes implemented. Regression tests first reproduced default override login, dirty-tab loss, rename clobbering, concurrent CAS/append loss, nested outside-link copy, and temporary-file collisions. Independent review additionally closed Git-metadata aliases, unsupported-tab close loops, and temporary-copy exposure through watcher indexes and application Git snapshots. Final validation: 224 server tests passed / 9 Windows file-symlink skips; 388 web tests passed; all workspace and desktop typechecks, full build, desktop build, and disposable integration smoke passed. Linux-only smoke and manual browser interaction were not run.
+
+
 ## Upstream contribution preparation — 2026-10-29
 
 - [x] Consolidate the reviewed community integration and preserve contributor attribution.
@@ -2162,3 +2173,31 @@ Cập nhật lần cuối: 2026-10-16 (issue #36 reveal active file in explorer;
 - 2026-10-16: Floating scroll-aware document outline (issue #32, PRD 1.11) — `DocOutline.tsx` (parse heading bỏ qua frontmatter/code fence, marker theo cấp, active theo scroll qua `lineBlockAtHeight`, hover mở panel, click cuộn mượt), gắn trong `Editor.tsx`, style `.doc-outline` trong `obsidian.css`. Verify: typecheck sạch; chưa kiểm tra thủ công trên trình duyệt.
 - 2026-10-16: Sửa click outline nổi (issue #32) cuộn thiếu ở note dài — `DocOutline.tsx` `go()` dùng `EditorView.scrollIntoView(pos, {y:'start', yMargin})` + 1 lượt chốt lại sau 150ms thay cho `scrollTo(lineBlockAt().top, smooth)`: dòng nằm xa viewport chỉ có chiều cao ƯỚC LƯỢNG tới khi được render/đo, nên offset tính một lần bị thiếu và animation smooth bị CodeMirror huỷ khi đo lại (dừng cách heading hàng nghìn px, section active sai). Verify: click chuột thật trên 5 heading (xa xuôi, xa ngược, giữa, tiêu đề trùng, gần) đều tới đúng heading + đúng section active; typecheck/build sạch.
 - 2026-10-16: Outline nổi — cuộn có easing (ease-in-out cubic) khi click heading (issue #32): `DocOutline.tsx` `go()` chạy animation rAF tự viết (chậm → nhanh → chậm; thời lượng 300–900ms theo khoảng cách; tôn trọng `prefers-reduced-motion`; huỷ khi người dùng wheel/touch/click/phím hoặc khi outline unmount). Mỗi frame đi đúng phần quãng đường CÒN LẠI tính từ vị trí hiện tại tới đích, đích tính lại mỗi frame (ước lượng chiều cao dòng của CodeMirror đổi khi dòng được render/đo; khi heading đã render thì nhắm vị trí thật) → không giật khi CodeMirror re-measure và không còn cú giật cuối. Verify (click chuột thật + lấy mẫu scrollTop mỗi frame): xuống xa tốc độ 1→~130→0 px/frame ~870ms, lên xa tới H1 mượt, wheel giữa chừng dừng ngay, reduced-motion nhảy tức thì, chuyển Source giữa chừng không lỗi; typecheck/build sạch.
+
+
+## 2026-10-30: adaptive toolbar, drafts and conflicts
+
+Status: in progress. Execution order: container-sized one-row toolbar with More menu, then persistent local drafts, then version-conflict resolution. Existing explicit scroll/wrap layouts remain supported. See `docs/superpowers/plans/2026-10-30-drafts-conflicts-adaptive-toolbar.md`.
+
+
+### 2026-10-30 — drafts/conflicts/toolbar implementation
+
+- [x] Adaptive one-row toolbar measured against its editor container, with More menu and existing Scroll/Wrap compatibility.
+- [x] Persistent scoped local drafts, revision-aware acknowledgements, recovery/export/discard, lifecycle integration.
+- [x] CAS for normal editor saves and editable conflict comparison with explicit retry and create-only copies.
+- [ ] Manual actual browser zoom 125/150/200%, mobile keyboard and packaged desktop visual acceptance.
+
+Verification and scope: `docs/superpowers/plans/2026-10-30-drafts-conflicts-adaptive-toolbar-progress.md`. Git merge UI remains a separate future stage.
+
+### 2026-10-30 — follow-up review
+
+- [x] Исправить подтверждённые проблемы сохранности журнала, scope и запоздалых подтверждений.
+- [x] Проверить настоящий browser zoom 100/125/150/200% при трёх ширинах боковой области.
+- [x] Проверить геометрию overlay/resizing клавиатуры, панорамирования, меню/палитр и диалога конфликтов.
+- [ ] Проверить физическую iOS/Android клавиатуру на устройстве; доступного устройства в этой среде нет.
+
+Отчёт: `docs/superpowers/plans/2026-10-30-drafts-conflicts-adaptive-toolbar-review.md`.
+
+## Remote MCP (2026-10-30)
+
+Implementation and validation ledger: [remote MCP plan](docs/superpowers/plans/2026-10-30-remote-mcp.md). Local stdio compatibility, shared operations, HTTP auth, packaging and docs are tracked there. Public HTTPS deployment and live Perplexity Pro smoke are separate acceptance steps.

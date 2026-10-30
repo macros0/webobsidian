@@ -29,6 +29,14 @@ All `{path}` values are vault-relative (URL-encode slashes are fine, e.g. `Notes
 
 ## Reading and editing without clobbering
 
+Search, tags, backlinks and tasks depend on the shared server index. During initial
+verification they return `503 INDEX_NOT_READY`, which is retryable and does not mean
+the vault has no matching notes. Search/tags/backlinks responses include an additional
+`index` status; `degraded` means the last available data may be outdated. Direct
+note reads and version checks still read the underlying files. The web status and
+manual repair endpoints use session authentication; they do not grant API keys
+additional maintenance permissions. See [indexing and freshness](INDEXING.md).
+
 Three things make an agent's read-modify-write cycle safe:
 
 1. **Every read returns a `version`** — a hash of the note's bytes (`sha256`, first 16 hex chars).
@@ -45,6 +53,12 @@ Three things make an agent's read-modify-write cycle safe:
    A `find` that occurs more than once is refused with `409 find_ambiguous` and the occurrence
    count — add surrounding context or pass `"replaceAll": true`. `409 find_not_found` means the
    note changed under you (or the text is not there); re-read before retrying.
+
+Version validation and persistence share the same vault mutation queue for browser and
+Agent API requests. Concurrent requests with the same base version cannot both update
+the note; parallel append operations preserve each addition. This guarantee covers one
+server process. Independent filesystem writers (including external Obsidian and Git)
+do not participate in that queue.
 
 For long notes, read in slices (`?offset=&limit=` are **line** numbers) and locate the exact edit
 target with `/note-matches` instead of pulling the whole file into context:
@@ -181,3 +195,9 @@ Agents that speak [MCP](https://modelcontextprotocol.io) can use this API throug
 stdio server instead of hand-writing HTTP calls — see [`mcp-server/README.md`](../mcp-server/README.md).
 It exposes `read_note` / `write_note` / `edit_note` / `grep_note` / `search_notes` and friends,
 with `base_version` plumbed through, so the conflict rules above apply unchanged.
+
+### Remote MCP
+
+The optional `/mcp` endpoint exposes Streamable HTTP alongside the existing stdio server.
+It reuses WebObsidian API keys and scopes, checked per request; `/api/v1` remains REST.
+Enable explicitly; see [configuration, Perplexity example and validation status](MCP_REMOTE.md).

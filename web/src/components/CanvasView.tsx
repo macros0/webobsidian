@@ -340,7 +340,7 @@ export default function CanvasView() {
   }, [applyData]);
 
   useEffect(() => {
-    const id = window.setTimeout(() => save(), 900);
+    const id = window.setTimeout(() => { void save().catch(() => {}); }, 900);
     return () => window.clearTimeout(id);
   }, [data, save]);
 

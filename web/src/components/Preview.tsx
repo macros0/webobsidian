@@ -1,3 +1,4 @@
+import {processPluginMarkdown,usePluginRevision} from '../lib/plugins/registry';
 import { useEffect, useRef, useState } from 'react';
 import { highlightCode, classHighlighter } from '@lezer/highlight';
 import { LanguageDescription } from '@codemirror/language';
@@ -92,6 +93,7 @@ function setupHtmlPreview(codeEl: HTMLElement): void {
 }
 
 export default function Preview({ source }: { source?: string }) {
+  const pluginRevision=usePluginRevision();
   const storeContent = useStore((s) => s.content);
   const content = source ?? storeContent;
   const activePath = useStore((s) => s.activePath);
@@ -127,6 +129,7 @@ export default function Preview({ source }: { source?: string }) {
   // Post-render pass — same renderers as Live Preview so both modes match:
   // KaTeX for [data-tex] spans, mermaid for ```mermaid fences, callout icons.
   const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(()=>{if(bodyRef.current)return processPluginMarkdown(bodyRef.current,activePath??'');},[html,activePath,pluginRevision]);
   useEffect(() => {
     const root = bodyRef.current;
     if (!root) return;

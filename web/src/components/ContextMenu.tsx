@@ -19,7 +19,9 @@ function MenuList({ items, onClose }: { items: ContextMenuItem[]; onClose: () =>
                 e.stopPropagation();
                 return;
               }
-              it.onClick?.();
+              void Promise.resolve().then(() => it.onClick?.()).catch((error: unknown) => {
+                useStore.getState().notify(error instanceof Error ? error.message : 'Action failed');
+              });
               onClose();
             }}
           >

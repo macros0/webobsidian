@@ -11,7 +11,7 @@ import { displayChildren } from '../lib/attachments';
 /** Inline rename box shown in place of a tree row's name (Obsidian-style). */
 function RenameInput({ node, onDone }: { node: TreeNode; onDone: () => void }) {
   const loadTree = useStore((s) => s.loadTree);
-  const closeTab = useStore((s) => s.closeTab);
+  const renamePath = useStore((s) => s.renamePath);
   const notify = useStore((s) => s.notify);
   const ref = useRef<HTMLInputElement>(null);
   const done = useRef(false);
@@ -38,8 +38,7 @@ function RenameInput({ node, onDone }: { node: TreeNode; onDone: () => void }) {
     const to = dir ? `${dir}/${name}` : name;
     if (commit && name && name !== node.name && to !== node.path) {
       try {
-        await api.rename(node.path, to);
-        closeTab(node.path);
+        await renamePath(node.path, to);
         finalPath = to;
       } catch (e: any) {
         notify(e?.message ?? 'Rename failed');
@@ -117,7 +116,7 @@ function readDragPaths(e: React.DragEvent): string[] {
 
 /** Move every path into targetDir ('' = vault root). Skips no-ops and self/descendant moves. */
 async function moveItemsTo(paths: string[], targetDir: string): Promise<void> {
-  const { closeTab, loadTree, setSelected, notify } = useStore.getState();
+  const { renamePath, loadTree, setSelected, notify } = useStore.getState();
   let moved = 0;
   for (const from of pruneDescendants(paths)) {
     if (!from) continue;
@@ -126,8 +125,7 @@ async function moveItemsTo(paths: string[], targetDir: string): Promise<void> {
     if (to === from) continue; // already there
     if (targetDir === from || targetDir.startsWith(`${from}/`)) continue; // into self/descendant
     try {
-      await api.rename(from, to);
-      closeTab(from);
+      await renamePath(from, to);
       moved++;
     } catch (err: any) {
       notify(err?.message ?? 'Move failed');
@@ -170,7 +168,8 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
   const openFile = useStore((s) => s.openFile);
   const openToSide = useStore((s) => s.openToSide);
   const loadTree = useStore((s) => s.loadTree);
-  const closeTab = useStore((s) => s.closeTab);
+  const renamePath = useStore((s) => s.renamePath);
+  const deletePath = useStore((s) => s.deletePath);
   const openContextMenu = useStore((s) => s.openContextMenu);
   const setMovePath = useStore((s) => s.setMovePath);
   const clipboard = useStore((s) => s.clipboard);
@@ -236,8 +235,8 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
     if (!(await confirmDialog(`Delete ${paths.length} item${paths.length > 1 ? 's' : ''}?`, { confirmLabel: 'Delete', danger: true, detail }))) return;
     let n = 0;
     for (const p of paths) {
-      const r = await api.remove(p).catch(() => null);
-      if (r) { closeTab(p); n++; }
+      const r = await deletePath(p).catch(() => null);
+      if (r) n++;
     }
     setSelected([]);
     await loadTree();
@@ -256,8 +255,7 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
         : 'The empty folder will be removed.';
     }
     if (await confirmDialog(`Delete "${node.name}"?`, { confirmLabel: 'Delete', danger: true, detail })) {
-      const r = await api.remove(node.path);
-      closeTab(node.path);
+      const r = await deletePath(node.path);
       await loadTree();
       notify(r.deleted ? 'Deleted permanently' : 'Moved to trash');
     }
@@ -294,8 +292,7 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
       if (targetDir === srcDir) { setClipboard(null); return; } // already here — no-op
       const to = targetDir ? `${targetDir}/${base}` : base;
       try {
-        await api.rename(clip.path, to);
-        closeTab(clip.path);
+        await renamePath(clip.path, to);
         setClipboard(null);
         await loadTree();
         notify('Moved');
@@ -504,7 +501,7 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
               title="Delete"
               aria-label={`Delete ${node.name}`}
               draggable={false}
-              onClick={(e) => { e.stopPropagation(); void doDelete(); }}
+              onClick={(e) => { e.stopPropagation(); void doDelete().catch((error: unknown) => notify(error instanceof Error ? error.message : 'Delete failed')); }}
               onDoubleClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.stopPropagation()}
             >
@@ -568,7 +565,7 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
           title="Delete"
           aria-label={`Delete ${node.name}`}
           draggable={false}
-          onClick={(e) => { e.stopPropagation(); void doDelete(); }}
+          onClick={(e) => { e.stopPropagation(); void doDelete().catch((error: unknown) => notify(error instanceof Error ? error.message : 'Delete failed')); }}
           onDoubleClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.stopPropagation()}
           >
@@ -646,7 +643,7 @@ export default function FileTree() {
   const tree = rawTree ? sortTree(rawTree, treeSort, showAttachmentFolders, manualOrder) : rawTree;
   const loadTree = useStore((s) => s.loadTree);
   const notify = useStore((s) => s.notify);
-  const closeTab = useStore((s) => s.closeTab);
+  const renamePath = useStore((s) => s.renamePath);
   const clipboard = useStore((s) => s.clipboard);
   const setClipboard = useStore((s) => s.setClipboard);
   const openContextMenu = useStore((s) => s.openContextMenu);
@@ -716,8 +713,7 @@ export default function FileTree() {
     if (clip.mode === 'cut') {
       if (!clip.path.includes('/')) { setClipboard(null); return; } // already at root — no-op
       try {
-        await api.rename(clip.path, base);
-        closeTab(clip.path);
+        await renamePath(clip.path, base);
         setClipboard(null);
         await loadTree();
         notify('Moved');

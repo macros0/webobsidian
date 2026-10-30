@@ -1,5 +1,10 @@
 import { config } from '../config.js';
 
+/** Old CLI installs wrote the public first-login password as a permanent override. */
+export function effectiveOverridePassword(raw: string | undefined): string | undefined {
+  return raw === '123456' ? undefined : raw || undefined;
+}
+
 /**
  * The built-in default password (`123456`) is only accepted when NO other
  * credential has been configured.
@@ -26,5 +31,5 @@ export function isDefaultPasswordActive(auth: {
   userPasswordHash: string;
   passwordHash: string;
 }): boolean {
-  return !auth.userPasswordHash && !auth.passwordHash && !config.initialPassword;
+  return !auth.userPasswordHash && !auth.passwordHash && !effectiveOverridePassword(config.initialPassword);
 }

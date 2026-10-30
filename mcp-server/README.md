@@ -86,3 +86,7 @@ npm --workspace mcp-server test           # e2e: spawns the built server against
 
 `npm --workspace mcp-server test` needs `WEBOBSIDIAN_BASE_URL` and `WEBOBSIDIAN_API_KEY` and skips
 itself without them; `scripts/smoke-test.sh` boots a throwaway instance, mints a key and runs it.
+
+## Remote transport
+
+The main WebObsidian server can also expose the same ten tools over stateless Streamable HTTP at `/mcp`. The stdio command above is unchanged and never opens a port. Remote HTTP is disabled by default. See [HTTPS setup, Perplexity Pro example and validation status](../docs/MCP_REMOTE.md). Library consumers can import `createMcpServer` from `@webobsidian/mcp-server/server` without starting stdio or reading credentials.

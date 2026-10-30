@@ -111,6 +111,23 @@ gh run list --repo xnohat/webobsidian --workflow CI --limit 3
   comments, dark-mode text contrast, images whose name contains a space, and `DB_NAME_v2`-style table
   cells no longer rendering as italics.
 
+### Data safety and CLI upgrade notes
+
+Review fixes: closing a dirty tab waits for its latest save; save failures keep the
+tab and edits available. Rename/move refuses occupied destinations with
+`409 destination_exists`. Recursive copies validate nested link targets and publish
+only complete copies. Temporary copies are excluded from watcher indexes and application
+Git snapshots. Text writes use exclusive unique temporary files.
+
+The CLI no longer installs `123456` as a permanent recovery override. Existing
+`WEBOBSIDIAN_PASSWORD=123456` values are treated as no override, so the normal
+first-run password change applies; a previously chosen password remains effective.
+Strong recovery overrides and Electron's generated secret continue to work.
+
+Browser and Agent API read/check/write operations share a transaction queue in one
+server process. Independent Obsidian, Git or other filesystem writers do not join
+that queue; concurrent multi-process access is not a transactional storage system.
+
 ### Never sync the vault to this repository
 
 The app's **Settings → GitHub Sync** must not be pointed at this source repository: it pulls the
@@ -169,7 +186,7 @@ scripts/merge-upstream-pr.sh <n>           # fetch refs/pull/<n>/head and merge 
 - 🔗 **Backlinks & outline** — right sidebar tab strip: Backlinks (linked **and** unlinked
   mentions), Outgoing links (resolved/unresolved), Tags and Outline.
 - 🔍 **QMD search** — fast full-text + fielded search (`tag:`, `path:`, `title:`), fuzzy +
-  prefix matching, incremental indexing, persisted to disk for fast startup.
+  prefix matching and incremental indexing. A saved cache enables startup while background reconciliation checks offline changes. A shared queue, file hashes and periodic audits recover missed changes. For NFS/SMB vaults, set `WEBOBSIDIAN_WATCH=polling`. See [indexing, freshness and recovery](docs/INDEXING.md).
 - 🔄 **GitHub sync** — native `git` pull / commit / push with **Git LFS** for large
   attachments, optional auto-sync, and per-file **version history** (browse & restore).
 - 🔐 **Login gate** — a single master password (scrypt-hashed) protects everything; JWT in
@@ -182,7 +199,7 @@ scripts/merge-upstream-pr.sh <n>           # fetch refs/pull/<n>/head and merge 
   find/replace and `/note-matches` greps a note with line numbers. Bundled **MCP server** for
   MCP hosts. See [docs/AGENT_API.md](docs/AGENT_API.md).
 - 🧩 **Community plugins** — install Obsidian plugins from GitHub; loaded against an
-  Obsidian-API compatibility shim (subset support).
+  Obsidian-API compatibility shim (subset support). See [plugin compatibility and diagnostics](docs/PLUGIN_COMPATIBILITY.md).
 - 📱 **Responsive / mobile** — drawer sidebars, edge-swipe, an on-keyboard formatting
   toolbar, and touch-friendly targets, à la Obsidian Mobile.
 - 🗃️ **Pure-JSON config** — everything lives in `data/settings.json`. No database.
@@ -352,6 +369,8 @@ event and branch/PR. No additional secrets are needed.
 | `HTTP_PORT` | `8787` | Host port mapped to container `8787` |
 | `WEBOBSIDIAN_PASSWORD` | – | Seed/override the master password |
 | `WEBOBSIDIAN_WATCH` | `auto` | `auto` (native + polling fallback) or `polling` |
+| `WEBOBSIDIAN_RECONCILE_INTERVAL_MS` | `60000` | Metadata inventory interval; positive integer milliseconds |
+| `WEBOBSIDIAN_HASH_AUDIT_INTERVAL_MS` | `1800000` | Background Markdown SHA-256 audit interval; positive integer milliseconds |
 
 ### App-level env (read by the server; Docker sets these inside the container)
 
@@ -393,6 +412,10 @@ npm run build && npm run mcp        # needs WEBOBSIDIAN_BASE_URL + WEBOBSIDIAN_A
 ```
 
 See [`mcp-server/README.md`](mcp-server/README.md) for the host config snippet.
+
+**Remote MCP:** optional Streamable HTTP at `/mcp`, using the same API keys/scopes.
+Existing stdio configuration remains supported. See [remote setup and Perplexity Pro example](docs/MCP_REMOTE.md).
+HTTP MCP is disabled by default. Perplexity Pro registration was verified on 2026-10-30; see the deployment guide for the policy-routing fix required on this installation.
 
 ### 🧩 Drop-in agent skill (no clone needed)
 
@@ -613,3 +636,12 @@ That is intentional, so prefer a branch + PR over pushing straight to `main`, an
 <div align="center">
 <sub>Built for people who want to own their notes. Not affiliated with Obsidian.md.</sub>
 </div>
+
+
+### Local drafts, conflict recovery and toolbar width
+
+The formatting toolbar measures the editor container, including changes caused by sidebars and split panes. New layouts use **One row + More**: buttons that do not fit remain available in the More menu. Existing explicitly saved Scroll/Wrap preferences are preserved; select **Settings → Editing Toolbar → Overflow → One row + More** to enable the adaptive layout.
+
+Edits to Markdown, text and Canvas documents are journaled in browser IndexedDB. **Saved locally** means the local transaction completed; **Saved on server** means the server confirmed that revision. Open **Local drafts** to recover/compare an interrupted edit. Drafts are isolated by installation, vault and browser tab, and retained until confirmed saved or explicitly discarded. Browser storage may be unavailable, cleared or evicted; local storage errors are shown. This does not provide a complete offline application.
+
+Normal editor saves include the base content version. A conflict preserves local text and opens an editable comparison, with a separate copy path available. If the server changes during review, review the refreshed comparison before saving again. Canvas uses whole-document selection and validates JSON. This UI resolves content-version conflicts; Git merge conflicts remain a separate future feature.

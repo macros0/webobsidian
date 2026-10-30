@@ -2,7 +2,7 @@ import { scrypt, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import jwt from 'jsonwebtoken';
 import { getSettings, updateSettings } from './settings.js';
-import { isDefaultPasswordActive } from './password-policy.js';
+import { effectiveOverridePassword, isDefaultPasswordActive } from './password-policy.js';
 import { config } from '../config.js';
 
 const scryptAsync = promisify(scrypt);
@@ -73,7 +73,7 @@ export async function setUserPassword(password: string): Promise<void> {
  */
 export async function hasOverridePassword(): Promise<boolean> {
   const s = await getSettings();
-  return Boolean(config.initialPassword) || Boolean(s.auth.passwordHash);
+  return Boolean(effectiveOverridePassword(config.initialPassword)) || Boolean(s.auth.passwordHash);
 }
 
 /**
@@ -116,7 +116,8 @@ export async function checkPassword(
 
   // (2) Mật khẩu override (recovery) — luôn kiểm tra, kể cả khi đã đổi pass.
   if (s.auth.passwordHash && (await verifyPassword(password, s.auth.passwordHash))) return true;
-  if (config.initialPassword && safeEqualStr(password, config.initialPassword)) return true;
+  const override = effectiveOverridePassword(config.initialPassword);
+  if (override && safeEqualStr(password, override)) return true;
 
   return false;
 }

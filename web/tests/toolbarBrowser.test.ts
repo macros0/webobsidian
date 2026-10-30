@@ -22,6 +22,9 @@ test('real browser: selection toolbar colors, reset, focus, Escape, undo, locks 
       import { selectionToolbar } from './src/lib/selectionToolbar';
       import { setActiveEditor } from './src/lib/activeEditor';
       import FormatToolbar from './src/components/FormatToolbar';
+      import {api} from './src/lib/api';
+      import {getDefaultToolbarConfig} from './src/lib/toolbar/config';
+      const legacyConfig=getDefaultToolbarConfig();legacyConfig.appearance.overflow='scroll';api.getSettings=async()=>({ui:{editingToolbar:legacyConfig}});
       import { livePreviewState, livePreviewReadonly, setLivePreviewReadonly, htmlBlockField, livePreviewPlugin } from './src/lib/livePreview';
       import './src/styles/obsidian.css';
       const wait = () => new Promise(r => setTimeout(r, 80));
@@ -58,7 +61,7 @@ test('real browser: selection toolbar colors, reset, focus, Escape, undo, locks 
         check(document.querySelectorAll('.toolbar-popover [role="menuitem"]').length===5, 'editing popup has five actions');
         check(view.state.sliceDoc(view.state.selection.main.from,view.state.selection.main.to)==='hello', 'menu opening preserves selection');
         const menuRect=document.querySelector('.toolbar-popover').getBoundingClientRect();
-        check(menuRect.left>=0 && menuRect.right<=innerWidth && menuRect.bottom<=innerHeight, 'editing popup stays in viewport');
+        check(menuRect.left>=0 && menuRect.right<=innerWidth && menuRect.bottom<=innerHeight, 'editing popup stays in viewport '+JSON.stringify({mobile,viewport:[innerWidth,innerHeight],rect:menuRect.toJSON()}));
         document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await wait();
         check(!document.querySelector('.toolbar-popover'), 'Escape closes popup');
         await click('.floating-format-toolbar [aria-label="Text color"]');
@@ -117,7 +120,7 @@ test('real browser: selection toolbar colors, reset, focus, Escape, undo, locks 
     await writeFile(join(dir, 'index.html'), '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><script src="fixture.js"></script>');
     await writeFile(join(dir, 'runner.cjs'), `
       const {app,BrowserWindow}=require('electron');
-      app.whenReady().then(async()=>{
+      app.setPath('userData',${JSON.stringify(join(dir,'profile'))});app.whenReady().then(async()=>{
         const win=new BrowserWindow({show:false,width:1200,height:800,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
         await win.loadFile(${JSON.stringify(join(dir, 'index.html'))});
         // Ozone headless may leave a hidden BrowserWindow at 1x1 CSS pixels.

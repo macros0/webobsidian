@@ -40,6 +40,28 @@ afterAll(() => {
 });
 
 describe('QMD tasks map survives a restart without going stale (source of truth is the vault, not the persisted index)', () => {
+  it('boot reconciles added, changed and deleted notes instead of serving a stale persisted index', async () => {
+    const { QmdEngine, initSearch, qmd } = await import('./search.js');
+    const removed = 'retired-search-fixture.md';
+    const changed = 'changed-search-fixture.md';
+    const added = 'Работа/СЭДО СФР/ЕЦП.md';
+    await fsp.writeFile(path.join(vaultDir, removed), '# obsoletequartzid');
+    await fsp.writeFile(path.join(vaultDir, changed), '# oldcopperid');
+    await new QmdEngine().build();
+    // Changes made while the server is stopped cannot trigger ignoreInitial watcher events.
+    await fsp.unlink(path.join(vaultDir, removed));
+    await fsp.writeFile(path.join(vaultDir, changed), '# newmercuryid');
+    await fsp.mkdir(path.dirname(path.join(vaultDir, added)), { recursive: true });
+    await fsp.writeFile(path.join(vaultDir, added), '# ЕЦП\nАктуальная инструкция');
+    await initSearch();
+    expect((await qmd.search('ЕЦП')).map(hit => hit.path)).toContain(added);
+    expect((await qmd.search('newmercuryid')).map(hit => hit.path)).toContain(changed);
+    expect(await qmd.search('obsoletequartzid')).toEqual([]);
+    expect(await qmd.search('oldcopperid')).toEqual([]);
+    const restored = new QmdEngine();
+    expect(await restored.restore()).toBe(true);
+    expect((await restored.search('ЕЦП')).map(hit => hit.path)).toContain(added);
+  });
   it('restore() + the boot refresh reflects an on-disk edit made while the engine was not running', async () => {
     await fsp.mkdir(path.join(vaultDir, 'Wiki'), { recursive: true });
     const taskPath = 'Wiki/task.md';
@@ -63,9 +85,9 @@ describe('QMD tasks map survives a restart without going stale (source of truth 
     const restored = await engine2.restore();
     expect(restored).toBe(true);
 
-    // ... then the boot path refreshes the tasks map from the vault — the
-    // fix under test (initSearch() calls this once after a successful restore,
-    // same as buildLinkGraph()). Without it, allTasks() would still say "open".
+    // ... then a caller explicitly restoring a snapshot refreshes tasks.
+    // Normal boot now rebuilds the whole index; this preserves the manual
+    // restore/refresh contract.
     await engine2.refreshTasks();
 
     const after = await engine2.allTasks();
