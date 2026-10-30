@@ -1,7 +1,7 @@
 # Deployment — this fork on LXC 107
 
-> Historical deployment example from `phamtruonghung/webobsidian`.
-> These host-specific commands do not describe an upstream-managed installation.
+> Historical source-fork deployment. The owner's actual installation is Proxmox
+> `10.10.1.21`, LXC **102**. Use [INSTALLATION_CT102.md](INSTALLATION_CT102.md).
 
 How the fork is deployed, what the CI/CD path does, and the runbook for a human. Written for the
 actual production host (LXC 107 on the Proxmox node, `192.168.1.22`), but nothing here is specific to

@@ -1,14 +1,10 @@
 # Community fork integration plan
 
-Historical assembly plan. The upstream contribution consolidates the resulting tree into
-one commit on the original project's main branch; contributor attribution is retained.
-The source merge ancestry described below belongs to the assembly fork.
-
 > Execute inline in the dedicated new repository. Preserve both source histories and review the resulting integration branch before adopting it as our main branch.
 
 ## Goal and scope
 
-Create `macros0/webobsidian` and its local checkout, importing the complete selected revisions of both community forks. Do not deploy, access real vaults or change existing installations during integration.
+Create `macros0/webobsidian` and its local checkout, importing the complete selected revisions of both community forks. Do not deploy to LXC 102, access a real vault, or change the existing Synology installation.
 
 ## Sources
 

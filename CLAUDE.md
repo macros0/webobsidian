@@ -1,12 +1,13 @@
 # CLAUDE.md — WebObsidian contributor guidance
 
-## Upstream contribution — authoritative routing
+## Current fork — authoritative routing
 
-This branch contributes the integrated `macros0`, `phamtruonghung` and `lakylekidd`
-community work to `xnohat/webobsidian`. Read `docs/FORK_INTEGRATION.md` for historical
-source revisions and merge decisions.
-Use `--repo xnohat/webobsidian` explicitly for upstream GitHub operations. References below
-to the Pham issue tracker or LXC 107 describe the source fork and must not direct operations there.
+This is `macros0/webobsidian`, integrating `phamtruonghung` and `lakylekidd`.
+Read `docs/FORK_INTEGRATION.md` for source revisions and merge decisions.
+For the owner's actual server, SSH access, NAS mounts, startup and deployment/rollback,
+read `docs/INSTALLATION_CT102.md` (Proxmox `10.10.1.21`, LXC 102).
+Use `--repo macros0/webobsidian` explicitly for GitHub operations. References below to the
+Pham issue tracker or LXC 107 describe the source fork and must not direct operations there.
 Do not deploy or access a real vault unless explicitly requested. Use temporary local vaults
 for tests. Automatic trash retention defaults to zero (keep forever).
 

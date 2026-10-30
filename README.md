@@ -4,9 +4,9 @@
 
 # WebObsidian
 
-> **Community contributions integrated into WebObsidian.** This branch brings together
-> improvements from the `phamtruonghung`, `lakylekidd` and `macros0` forks, retaining
-> contributor attribution in a consolidated upstream commit.
+> **This repository is a community-maintained fork of WebObsidian.**
+> Repository: `macros0/webobsidian`. Original project: [xnohat/webobsidian](https://github.com/xnohat/webobsidian).
+> It combines community contributions with continued fixes and releases.
 
 **A self-hosted, Obsidian-compatible web app for your Markdown "second brain".**
 
@@ -15,7 +15,7 @@ CodeMirror editor, live preview, wikilinks, an interactive graph, full-text sear
 GitHub sync (incl. Git LFS), an API for AI agents, and community-plugin support.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![CI](https://github.com/xnohat/webobsidian/actions/workflows/ci.yml/badge.svg)](https://github.com/xnohat/webobsidian/actions/workflows/ci.yml)
+[![CI](https://github.com/macros0/webobsidian/actions/workflows/ci.yml/badge.svg)](https://github.com/macros0/webobsidian/actions/workflows/ci.yml)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.12-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
@@ -24,7 +24,7 @@ GitHub sync (incl. Git LFS), an API for AI agents, and community-plugin support.
 
 > 📐 Design: [PRD.md](PRD.md) · 📋 Progress: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 
-> 🔀 **Upstream integration from `macros0/webobsidian`.** It combines the `phamtruonghung`
+> 🔀 **This repository is `macros0/webobsidian`.** It combines the `phamtruonghung`
 > and `lakylekidd` forks with contributor attribution. See
 > [integration provenance and verification](docs/FORK_INTEGRATION.md).
 
@@ -78,10 +78,10 @@ curl -s http://localhost:8787/healthz      # or the public URL
 Compare it with the branch tip, and check that the container runs the image you just built:
 
 ```bash
-gh api repos/xnohat/webobsidian/commits/main --jq '.sha[0:8]'
+gh api repos/macros0/webobsidian/commits/main --jq '.sha[0:8]'
 docker inspect <container> --format '{{.Image}}'
 docker image inspect webobsidian:latest --format '{{.Id}}'   # the two must match
-gh run list --repo xnohat/webobsidian --workflow CI --limit 3
+gh run list --repo macros0/webobsidian --workflow CI --limit 3
 ```
 
 ### Upgrade notes — coming from upstream `v0.1.1`
@@ -210,7 +210,7 @@ scripts/merge-upstream-pr.sh <n>           # fetch refs/pull/<n>/head and merge 
 ## 🚀 Quick start (Docker)
 
 ```bash
-git clone https://github.com/xnohat/webobsidian.git
+git clone https://github.com/macros0/webobsidian.git
 cd webobsidian
 cp .env.example .env          # edit VAULT_HOST_PATH, set WEBOBSIDIAN_PASSWORD
 docker compose up -d --build

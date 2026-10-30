@@ -22,7 +22,7 @@
 - Сохранять Markdown и ограниченный совместимый HTML; не разрешать произвольные CSS/JS/SVG.
 - Node >=22.12.0; новых runtime зависимостей по умолчанию нет.
 - Git commit/push только по явному запросу пользователя. Текущая работа — документы; не выполнять deploy при подготовке плана.
-- Сохранять законченные параллельные доработки и настройки пользователя; deployment runbook хранится у оператора и не входит в upstream contribution.
+- Сохранять законченные параллельные доработки и настройки пользователя; deployment runbook — docs/INSTALLATION_CT102.md.
 
 ## Review Focus
 
@@ -156,7 +156,7 @@
 - [ ] Тесты Cut при отказе clipboard сохраняет текст; Paste при отказе предлагает ручное поле; Copy readonly; swap строк у начала/конца и на нескольких выбранных строках.
 - [ ] Тесты attach: upload error/cancel, note-relative path, переключение/редактирование/блокировка документа до завершения; Undo не удаляет файл.
 - [ ] Запустить node --import tsx --test web/tests/toolbarInserts.test.ts web/tests/toolbarClipboard.test.ts до RED; реализовать через существующие API без второго upload pipeline; повторить до PASS.
-- [ ] Проверить clipboard в disposable HTTP окружении с ограничениями insecure origin и в secure context.
+- [ ] Проверить clipboard в disposable HTTP окружении с теми же ограничениями origin, что у CT102, и в secure context.
 
 ## Задача 8. Все 15 инструментов обработки текста
 
@@ -186,7 +186,7 @@
 
 ## Задача 10. Итоговая приёмка и подготовка выпуска
 
-**Files:** дополнить web/tests/toolbarBrowser.test.ts и inventory fixtures; обновить PRD.md, IMPLEMENTATION_PLAN.md, CHANGELOG.md только по факту выполненной работы. Локальный deployment runbook хранится у оператора.
+**Files:** дополнить web/tests/toolbarBrowser.test.ts и inventory fixtures; обновить PRD.md, IMPLEMENTATION_PLAN.md, CHANGELOG.md, docs/INSTALLATION_CT102.md только по факту выполненной работы.
 
 - [ ] Проверить 64/64 ID через registry; matrix содержит test/fixture и результат каждой команды, отдельно список отличий/платформенных fallback.
 - [ ] Пройти оба скриншота пользователя: каждая видимая группа и её всплытия; mouse/keyboard/touch, темы, viewport/zoom, nested меню.
@@ -194,7 +194,7 @@
 - [ ] Проверить representative fixtures в доступных Chromium/Edge, Firefox, Safari; записать непроверенные среды. Проверить публичную ссылку и сохранение/повторное открытие заметки.
 - [ ] Провести review final diff, особенно общих файлов livePreview/Workspace/settings и параллельных изменений; закрыть существенные дефекты, повторить затронутые проверки.
 - [ ] Подготовить источник/манифест сборки с включёнными законченными параллельными доработками и точной build identity.
-- [ ] При переходе к выпуску следовать отдельно согласованному плану развёртывания: backup настроек/данных/старого image, deploy завершённой сборки, health/build/assets/login/settings smoke, проверить rollback. Подготовка плана не выполняет этот шаг.
+- [ ] При переходе к выпуску использовать уже данный пользователем запрос на сервер и CT102 runbook: backup настроек/данных/старого image, deploy завершённой сборки, health/build/assets/login/settings smoke, проверить rollback. Подготовка плана не выполняет этот шаг.
 
 ## Порядок и контрольные результаты
 

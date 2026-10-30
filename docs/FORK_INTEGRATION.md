@@ -1,51 +1,93 @@
-# Community integration
+# Community integration — 2026-10-29
 
-This contribution consolidates community work into one commit on `xnohat/webobsidian`.
-Contributor attribution is retained through source credits and commit co-author trailers.
-The assembly fork's intermediate commits are not ancestors of this contribution.
+Repository: `macros0/webobsidian`. This import does not deploy to any existing service or access
+the operator's vault. Local checkout: `C:\Users\alexey\ai-workspace\webobsidian`.
 
-## Source provenance
+## Pinned sources and attribution
 
-| Source | Revision | Role |
+| Remote | Revision | Role |
 | --- | --- | --- |
-| `xnohat/webobsidian` | `c41967a93317b2a0f08511c349ef3dbaf78fc882` | Original project and contribution parent |
-| `phamtruonghung/webobsidian` | `80106c6818fa44f7f92c8d894c7da71717c1980b` | Community feature source |
-| `lakylekidd/webobsidian` | `340af34a98bbc47e5a72fbf7976bb22cddb99f48` | Community feature source |
-| `macros0/webobsidian` | Consolidated contribution | Integration fixes, dependency updates and editor/rendering work |
+| `upstream` (`xnohat/webobsidian`) | `c41967a93317b2a0f08511c349ef3dbaf78fc882` | Original project |
+| `phamtruonghung` | `80106c6818fa44f7f92c8d894c7da71717c1980b` | Integration base |
+| `lakylekidd` | `340af34a98bbc47e5a72fbf7976bb22cddb99f48` | Second merge parent |
 
-The MIT license and original source credits are retained. Source-specific deployment and
-scheduled issue workflows remain guarded to `phamtruonghung/webobsidian`. Desktop release
-publishing and contributor routing target `xnohat/webobsidian`.
+Both source tips remain ancestors through a real merge. Original commit authors and MIT license
+are retained. Source-specific deployment/issue documents are historical; use this fork explicitly
+for GitHub operations. Deployment and scheduled upstream-issue workflows are guarded to the
+Pham source repository. Desktop release publishing targets `macros0` and requires a tag/manual run.
 
-## Features and integration decisions
+## Preserved features and conflict decisions
 
-- Pham: authentication/path safeguards, locks/unlock flows, versioned writes, PDF/binary
-  downloads, tasks/board/timeline, templates, preview tabs, themes, CLI and MCP.
-- Lakyle: manual explorer sorting and shortcuts, document outline, multi-cursor and
-  hanging-indent editing, note-relative attachment folders, rich links and media embeds.
-- File routes retain lock metadata, content versions, PDF MIME/range responses and explicit
-  download disposition while resolving attachments relative to their source notes.
-- Image deletion is guarded in locked/reading notes, including changes during confirmation.
-  PDF tabs retain source-note context. Newly created notes/canvases open permanent tabs.
-- Markdown retains the PDF handler and external-embed transform. Theme styles from both
-  sources coexist. Automatic trash retention defaults to zero (keep forever); explicit
-  existing positive settings remain effective.
-- Integration maintenance updates dependencies and adds advisory guards, authentication,
-  filesystem, Git, settings, Markdown and browser regression coverage.
-- The formatting toolbar and rendering corrections include literal identifiers, tables,
-  footnotes, callouts and section/block embeds. Live code block selections stay visible
-  inside block edges across themes and viewport widths.
+- Pham: auth and path safeguards, locks and unlock flows, versioned writes, PDF viewer and binary
+  downloads, tasks/board/timeline, templates, preview tabs, themes, CLI, MCP and existing tests.
+- Lakyle: manual explorer sorting, rename and quick actions, floating outline, multi-cursor and
+  hanging-indent editing, local attachment folders, link cards, external embeds and trash retention.
+- File content routes resolve note-relative attachments while retaining missing-file 404s,
+  lock metadata, content versions, PDF MIME/range responses and explicit download disposition.
+- Editor contains both the lock banner and outline; PDF and external-media live widgets coexist.
+  Local image references preserve subdirectories rather than collapsing to a basename.
+- Tree retains lock badges and new quick-delete actions. Rename hook and unlock header plumbing
+  coexist in the store; preview-tab behavior is preserved.
+- Markdown keeps the PDF handler and adds the external-embed transform. Theme styles from both
+  forks are retained with Pham's theme variables. Source documentation histories are retained.
+- Trash retention defaults to **0 (keep forever)** in the schema and UI. Existing positive
+  settings remain effective. Cleanup is opt-in for new and pre-retention settings files.
 
 ## Verification
 
-Validation uses temporary vaults and loopback servers. Run the commands in CONTRIBUTING.md:
-workspace/desktop typechecks, the complete server/web/browser test suite, production/desktop
-builds, dependency checks/audit and disposable HTTP integration smoke.
+All local runtime checks use temporary directories and a loopback-only server.
 
-Linux CI additionally runs the authentication/symlink/Agent API/MCP/shutdown smoke suite,
-a clean dependency installation, Docker image build and desktop directory packaging.
-Windows tests explicitly report unavailable symlink capabilities as skips.
+| Check | Result |
+| --- | --- |
+| Clean `npm ci --ignore-scripts` | Pass, merged lockfile installs 955 packages |
+| `npm run typecheck` | Pass: server, web, CLI, MCP |
+| Desktop typecheck | Pass |
+| `npm test` | Pass after review fixes: 163 server tests and 168 web tests on Windows |
+| Windows symlinks | 7 tests skipped; six use an EPERM capability probe, one inherited platform skip |
+| `npm run build` | Pass: web production assets, server, CLI and MCP |
+| Desktop bundle build | Pass; installer packaging/signing not requested |
+| `node scripts/integration-smoke.mjs` | Pass: auth, default retention, relative PDF, ranges/downloads, lock-protected mutations, stale-write rejection, SPA |
+| Linux CI at `01e1372` | Pass: 170 server + 168 web tests, 31 inherited smoke assertions, integration smoke, all builds and Docker image |
 
-Rendering fixtures and measured Obsidian references are under `tests/fixtures/rendering`.
-Verified behavior, intentional fallbacks and remaining visual coverage are documented in
-`docs/rendering-compatibility.md`.
+The same six symlink fixture creations failed on the unmerged Pham baseline because Windows lacks
+symlink privilege. Linux CI runs those tests without the Windows capability skip, plus the inherited
+auth/symlink/Agent API/MCP/graceful-shutdown smoke script and Docker build.
+
+`npm audit` reports **43 affected dependency entries** (9 critical, 23 high, 9 moderate, 2 low)
+at integration time. These are inherited dependencies, not 43 validated reachable exploits.
+They include runtime and development/desktop dependencies; remediation needs a separate dependency
+review, including major upgrades of simple-git, Vitest and electron-builder. No automatic audit fix
+or production upgrade was performed. Passing tests do not establish that the fork is safe to expose.
+
+## Updating the integration
+
+Fetch `upstream`, `phamtruonghung` and `lakylekidd` explicitly. Merge reviewed source commits into
+a feature branch, record their new SHAs here, rerun the checks above, and review before changing
+the main branch. Do not use source-repository GitHub sync for a notes vault.
+
+## Execution ledger
+
+- Baseline: Pham typecheck passed; six Windows symlink fixture failures predated the merge.
+- RED/GREEN: safe-retention regressions failed before importing the retention setting and passed
+  after defaulting it to zero. New cross-feature rename/unlock/preview tests passed.
+- Ruling: capability-skip Windows EPERM only; keep full symlink assertions active on Linux.
+- Ruling: use a dedicated clone as isolation; no separate worktree is needed for a new repository.
+- Ruling: publish a reviewable branch/PR; existing installations stay unchanged.
+- Independent review found three integration regressions, now covered and fixed:
+  image deletion from locked/reading notes (including locking/navigation during confirmation),
+  PDF tab paths losing the originating note context, and inline-created notes/canvases replacing
+  a preview instead of opening permanently. Image deletion logic was extracted for behavioral
+  tests; the widget hides/guards its delete control in read-only views.
+- Review considered but deferred inherited HTML split/transclusion attachment-directory resolution
+  and the inherited unlock-compartment effect dependency. These are source-fork limitations rather
+  than merge regressions; dependency advisories remain a separate follow-up.
+- First Linux CI: Docker build passed; unit tests and 30/31 inherited smoke assertions passed.
+  The sole failure was the old hardcoded health version `0.1.1` versus imported `0.3.0`.
+  The smoke test now reads the expected version from the package manifest.
+- Final Linux CI at `01e137207fdd7163756a3e197be71ff4ab0819c6` passed both jobs:
+  [run 40834145242](https://github.com/macros0/webobsidian/actions/runs/40834145242).
+  All 170 server tests (including symlinks) and 168 web tests passed. The inherited smoke test
+  passed 31/31 assertions, including Agent API/MCP/auth/locks/graceful shutdown. Docker and desktop
+  bundle builds passed. Integration was reviewed in [PR #1](https://github.com/macros0/webobsidian/pull/1).
+- Ruling: the user's autonomous fork-integration request authorizes adopting this reviewed result
+  into this new fork's `main` after green CI. Production deployment remains out of scope.

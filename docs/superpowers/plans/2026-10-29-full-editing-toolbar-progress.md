@@ -16,4 +16,4 @@
 
 Firefox/Safari и полная визуальная матрица тем/конструкций не проверялись. Linux-only symlink smoke требует отдельной Linux-среды; Windows skips сохранены явно. Исходный текст реальных заметок в тестах не использовался.
 
-Build/desktop typecheck/build и disposable HTTP smoke PASS.
+Выпуск CT102 завершён: cc8b061-worktree-4b3d33dba0da; healthy, assets/auth/settings/NAS/systemd проверены. Backup /opt/webobsidian/backups/20261029T133149Z-toolbar-full/. Build/desktop typecheck/build и disposable HTTP smoke PASS. Git commit/push не выполнялись.
