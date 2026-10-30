@@ -46,7 +46,6 @@ export default function StatusBar() {
 
   return (
     <div className="status-bar">
-      {dirty && <span>Saving…</span>}
       {isText && <span>{words} words</span>}
       {isText && <span>{content.length} characters</span>}
       <span className="clickable" title="Git sync" onClick={sync}>

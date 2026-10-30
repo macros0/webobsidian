@@ -25,8 +25,8 @@ function readRecent(): RecentColors {
   return result;
 }
 
-export default function ColorControls({view, disabled = false, customColors = [], properties = PROPERTIES}: {
-  view?: EditorView; disabled?: boolean; customColors?: string[]; properties?: readonly ColorProperty[];
+export default function ColorControls({view, inMenu = false, disabled = false, customColors = [], properties = PROPERTIES}: {
+  view?: EditorView; inMenu?: boolean; disabled?: boolean; customColors?: string[]; properties?: readonly ColorProperty[];
 }) {
   const [popup, setPopup] = useState<{
     property: ColorProperty; left: number; top: number; anchor: DOMRect; view: EditorView;
@@ -74,12 +74,15 @@ export default function ColorControls({view, disabled = false, customColors = []
   useLayoutEffect(() => {
     if (!popup) return;
     const reposition = () => {
-      const rect = palette.current?.getBoundingClientRect(), viewport = window.visualViewport;
+      const viewport = window.visualViewport;
       const minX = viewport?.offsetLeft ?? 0, minY = viewport?.offsetTop ?? 0;
       const width = viewport?.width ?? innerWidth, height = viewport?.height ?? innerHeight;
+      if(palette.current){palette.current.style.maxHeight=Math.max(0,height-16)+'px';palette.current.style.maxWidth=Math.max(0,width-16)+'px';}
+      const rect=palette.current?.getBoundingClientRect();
       const left = Math.max(minX + 8, Math.min(popup.anchor.left, minX + width - (rect?.width ?? 240) - 8));
-      const actualHeight = Math.min(rect?.height ?? 240, height - 16);
-      const top = popup.anchor.bottom + actualHeight + 6 < minY + height ? popup.anchor.bottom + 6 : Math.max(minY + 8, popup.anchor.top - actualHeight - 6);
+      const actualHeight = Math.min(rect?.height ?? 240, Math.max(0,height - 16));
+      const preferred=popup.anchor.bottom+actualHeight+6<minY+height?popup.anchor.bottom+6:popup.anchor.top-actualHeight-6;
+      const top=Math.max(minY+8,Math.min(preferred,minY+height-actualHeight-8));
       setPopup(current => current && (current.left !== left || current.top !== top) ? {...current, left, top} : current);
     };
     reposition();
@@ -103,7 +106,7 @@ export default function ColorControls({view, disabled = false, customColors = []
     if (popup?.property === property) { setPopup(null); return; }
     const target = view ?? getActiveEditor(); if (!target || target.state.readOnly || !target.dom.isConnected) return;
     window.dispatchEvent(new Event('toolbar-close-colors'));
-    window.dispatchEvent(new Event('toolbar-open-color'));
+    window.dispatchEvent(new CustomEvent('toolbar-open-color', {detail:{inMenu}}));
     const stored = readRecent();
     setRecent(previous => ({color: stored.color.length ? stored.color : previous.color, 'background-color': stored['background-color'].length ? stored['background-color'] : previous['background-color']}));
     setCustom(stored[property][0] || lastColor(property));

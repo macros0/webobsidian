@@ -1,5 +1,5 @@
 import ToolbarSurface from './toolbar/ToolbarSurface';
-import { useEffect, useState } from 'react';
+import {useVisualViewport} from '../lib/useVisualViewport';
 import type { EditorView } from '@codemirror/view';
 
 export function FormattingButtons({size,view,compact=false,disabled=false}:{size:number;view?:EditorView;compact?:boolean;disabled?:boolean}) {
@@ -12,30 +12,10 @@ export function FormattingButtons({size,view,compact=false,disabled=false}:{size
  * - desktop: an in-flow strip rendered right under the view header.
  */
 export default function FormatToolbar({ mobile = false, disabled = false }: { mobile?: boolean; disabled?: boolean }) {
-  const [bottom, setBottom] = useState(0);
-
-  useEffect(() => {
-    if (!mobile) return;
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const update = () => {
-      // Gap between the layout-viewport bottom and the visual-viewport bottom =
-      // height of the on-screen keyboard (0 when hidden).
-      const gap = window.innerHeight - (vv.height + vv.offsetTop);
-      setBottom(Math.max(0, gap));
-    };
-    update();
-    vv.addEventListener('resize', update);
-    vv.addEventListener('scroll', update);
-    return () => {
-      vv.removeEventListener('resize', update);
-      vv.removeEventListener('scroll', update);
-    };
-  }, [mobile]);
-
+  const viewport=useVisualViewport();
   if (mobile) {
     return (
-      <div className="mobile-toolbar" role="toolbar" aria-label="Formatting" style={{ bottom }}>
+      <div className="mobile-toolbar" role="toolbar" aria-label="Formatting" style={{ bottom:viewport.bottom,left:viewport.left,right:viewport.right }}>
         <ToolbarSurface layout="mobile" disabled={disabled} />
       </div>
     );

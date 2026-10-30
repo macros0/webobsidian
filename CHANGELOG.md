@@ -1,5 +1,44 @@
 # Changelog
 
+## Plugin runtime and diagnostics — 2026-10-30
+
+- Load authenticated same-origin CommonJS factories as ESM under the existing CSP,
+  replacing browser string evaluation. Validate syntax without server execution.
+- Show per-plugin lifecycle/failure state and one summary instead of overlapping
+  generic incompatibility notices; dispose resources on disable and vault/logout.
+- Protect plugin note writes with content versions and store web plugin data/code
+  separately from desktop `.obsidian` files.
+- Document the verified API subset and exact real-plugin limitations in
+  [PLUGIN_COMPATIBILITY](docs/PLUGIN_COMPATIBILITY.md).
+
+## Cached startup and resilient indexing — 2026-10-30
+
+- Restore a versioned server cache, then verify file metadata in the background;
+  SHA-256 hashes avoid reparsing unchanged notes. Markdown remains the source of truth.
+- Queue watcher and application changes, periodically reconcile metadata and audit
+  content hashes, and preserve the last successful records on filesystem errors.
+- Add index status and maintenance endpoints, readiness errors for index consumers,
+  settings controls and automatic refresh of active search results/snippets.
+- Keep local stdio and remote MCP on the same search index. Document NAS delays,
+  cache migration, recovery and a synthetic benchmark in [INDEXING](docs/INDEXING.md).
+
+## Fresh search index on startup — 2026-10-30
+
+- Rebuild search from current vault files before accepting requests, instead of
+  trusting an old non-empty snapshot. Notes added or edited while the server was
+  stopped now appear in web and MCP search; deleted notes no longer remain in results.
+- Added regression coverage for additions, edits, deletions and the refreshed snapshot.
+
+## Remote MCP — 2026-10-30
+
+- Added opt-in stateless Streamable HTTP at `/mcp`, using existing scoped API keys,
+  per-request authentication, shared REST rate limits and explicit Host/Origin checks.
+- Preserved local stdio commands and all ten tools; REST and MCP share note operations.
+- Fixed double decoding of Agent API paths containing literal percent signs.
+- Added HTTP/stdio integration checks, Docker runtime CI smoke and a
+  [Perplexity Pro setup guide](docs/MCP_REMOTE.md). Live Perplexity/HTTPS acceptance
+  remains to be performed on the deployed instance.
+
 ## Literal identifiers use body text color — 2026-10-29
 
 - Display `<LS_BEN>` and other underscore identifiers in the normal text color in

@@ -43,7 +43,7 @@ test('themed root is never looked up with the `.theme-light, .theme-dark` shortc
 });
 
 test('popups opened over the editor mount inside the themed root', () => {
-  const mountSites = ['lib/suggest.ts', 'lib/livePreview.ts', 'lib/plugins.ts'];
+  const mountSites = ['lib/suggest.ts', 'lib/livePreview.ts', 'lib/plugins/obsidianApi.ts'];
   for (const rel of mountSites) {
     const text = readFileSync(`${SRC}/${rel}`, 'utf8');
     assert.match(text, /themedPopupHost\(\)\.appendChild\(/, `${rel} should mount via themedPopupHost()`);

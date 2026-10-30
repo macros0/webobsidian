@@ -43,7 +43,7 @@ const ToolbarLayoutSchema=z.object({
 export const EditingToolbarSchema=z.object({
   version:z.literal(1),
   layouts:z.object({top:ToolbarLayoutSchema.optional().catch(undefined),following:ToolbarLayoutSchema.optional().catch(undefined),fixed:ToolbarLayoutSchema.optional().catch(undefined),mobile:ToolbarLayoutSchema.optional().catch(undefined)}),
-  appearance:z.object({iconSize:z.number().min(12).max(32).optional(),density:z.enum(['comfortable','compact']).optional(),showLabels:z.boolean().optional(),tooltips:z.boolean().optional(),overflow:z.enum(['scroll','wrap']).optional(),style:z.enum(['standard','compact']).optional(),backgroundColor:ToolbarColorSchema.optional().catch(undefined),iconColor:ToolbarColorSchema.optional().catch(undefined)}).optional(),
+  appearance:z.object({iconSize:z.number().min(12).max(32).optional(),density:z.enum(['comfortable','compact']).optional(),showLabels:z.boolean().optional(),tooltips:z.boolean().optional(),overflow:z.enum(['menu','scroll','wrap']).optional(),style:z.enum(['standard','compact']).optional(),backgroundColor:ToolbarColorSchema.optional().catch(undefined),iconColor:ToolbarColorSchema.optional().catch(undefined)}).optional(),
   customCommands:z.array(z.object({id:z.string().max(120).regex(/^custom:[\w:-]+$/),label:z.string().min(1).max(120),icon:ToolbarIconSchema,prefix:z.string().max(4096),suffix:z.string().max(4096)})).max(100).refine(items=>new Set(items.map(i=>i.id)).size===items.length,'Custom command IDs must be unique').optional(),
   customColors:z.array(ToolbarColorSchema).max(100).optional(),
 });

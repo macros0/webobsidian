@@ -1,3 +1,10 @@
+> Review fixes 2026-10-30: CLI must not install a permanent well-known recovery password;
+> closing a dirty tab awaits successful persistence; rename rejects occupied destinations;
+> browser and Agent API version checks and writes share one in-process vault transaction;
+> recursive copies validate every resolved path and publish only complete copies;
+> text writes use exclusive unique temporary files. Transactions cover one server process,
+> not independent filesystem writers or concurrent external symlink replacement.
+
 # PRD — WebObsidian
 
 > FR-2 clarification 2026-10-29: literal angle identifiers containing underscores
@@ -1241,3 +1248,28 @@ GET    /api/v1/tasks?folder=&status=&priority=&owner=&q=   # board tasks, scope 
 5. Tạo API key, AI Agent gọi `/api/v1` đọc/ghi/search thành công.
 6. Cài & bật ít nhất 1 community plugin đơn giản.
 7. `docker compose up` chạy toàn bộ stack.
+
+
+## 2026-10-30: adaptive toolbar, drafts and conflicts
+
+Status: in progress. Execution order: container-sized one-row toolbar with More menu, then persistent local drafts, then version-conflict resolution. Existing explicit scroll/wrap layouts remain supported. See `docs/superpowers/plans/2026-10-30-drafts-conflicts-adaptive-toolbar.md`.
+
+
+### FR extension — local recovery and container-adaptive toolbar (2026-10-30)
+
+- Authenticated `GET /api/files/draft-scope` returns a stable opaque `scopeId` for the canonical current vault within this installation. Registry is private JSON in the configured data directory.
+- Browser drafts are IndexedDB records keyed by scope/path/writer, with monotonic revisions and conditional acknowledgement deletion. Local journal failure is visible and does not prohibit an explicit CAS server save. Draft content is excluded from shared UI-state and broadcast messages.
+- Normal editor PUT includes the read `baseVersion`. Server rejection preserves local data and pauses that document's automatic saves. Recovery and conflict comparison require an explicit save; subsequent server changes require a new review rather than unconditional overwrite. Copy uses create-only version `''`.
+- Unified comparison shows server changes against an editable local result, with base/local/server details. Canvas is whole-document JSON; interactive diff is disabled above 1 MiB or 20,000 lines.
+- Toolbar `appearance.overflow` accepts `menu`, `scroll`, `wrap`. `menu` is the default for new configuration; explicit legacy values persist. Menu mode measures the available editor container, keeps group/color items atomic and puts the ordered suffix into More without shrinking buttons.
+- Local storage can be cleared/evicted by the browser. The feature is not a complete offline app and does not implement Git merge resolution.
+
+### Review follow-up (2026-10-30)
+
+Browser recovery reads and writes may carry an optional `draftScopeId` (query for GET, JSON field for PUT). The server captures vault settings and verifies the scope inside the same vault operation; mismatch returns `409 draft_scope_changed` before reading/writing content. Existing callers omitting the field retain their API contract. Document sessions receive a fresh writer identity on reopen; successful conflict acknowledgements update the live base without a required reread. IndexedDB cleanup failure is reported separately from successful server persistence.
+
+Viewport geometry is shared across formatting/recovery UI. Actual browser zoom 100/125/150/200% and emulated overlay/resizing keyboard layouts are covered by `web/tests/toolbarViewportBrowser.test.ts`. Physical mobile keyboard acceptance remains a separate manual check.
+
+### Remote MCP transport (2026-10-30)
+
+Optional `/mcp` Streamable HTTP, disabled by default, alongside unchanged stdio. Ten identical tools, request-scoped key/scopes, common operations and version conflicts. See [remote MCP contract](docs/superpowers/specs/2026-10-30-remote-mcp-design.md) and [operator/Perplexity guide](docs/MCP_REMOTE.md). Live Perplexity compatibility requires deployment acceptance.

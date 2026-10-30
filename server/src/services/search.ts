@@ -3,17 +3,17 @@ import MiniSearch from 'minisearch';
 import { getSettings } from './settings.js';
 import { INDEX_FILE, config } from '../config.js';
 import { listMarkdownFiles, readFileText } from './vault.js';
-import { parseNote } from './markdown.js';
+import { parseNote, type ParsedNote } from './markdown.js';
 import { taskRecordFrom, type TaskRecord } from './tasks.js';
 
 /**
  * QMD — the WebObsidian search engine.
  * A thin, opinionated layer over MiniSearch giving fielded, fuzzy, prefix and
  * boolean queries over the vault's markdown, with incremental updates and a
- * persisted on-disk index for fast cold starts. (PRD FR-7)
+ * persisted on-disk snapshot. Startup rebuilds from the current vault. (PRD FR-7)
  */
 
-interface QmdDoc {
+export interface QmdDoc {
   id: string; // vault-relative path
   title: string;
   headings: string;
@@ -111,8 +111,12 @@ export class QmdEngine {
 
   private async toDoc(rel: string): Promise<QmdDoc> {
     const raw = await readFileText(rel);
-    const note = parseNote(rel, raw);
-    const snippet = note.body.replace(/\s+/g, ' ').trim().slice(0, 280);
+    return this.parsedToDoc(rel, parseNote(rel, raw));
+  }
+
+  private parsedToDoc(rel: string, note: ParsedNote): QmdDoc {
+    // Copy the short snippet so a V8 sliced string cannot retain a huge body.
+    const snippet = Buffer.from(note.body.replace(/\s+/g, ' ').trim().slice(0, 280)).toString('utf8');
     this.snippets.set(rel, snippet);
     this.tagSet.set(rel, note.tags);
     const meta: Record<string, string> = {};
@@ -131,6 +135,33 @@ export class QmdEngine {
       body,
     };
   }
+
+  applyParsed(rel: string, note: ParsedNote): void {
+    const doc = this.parsedToDoc(rel, note);
+    if (this.mini.has(rel)) this.mini.replace(doc);
+    else this.mini.add(doc);
+    this.ready = true;
+  }
+
+  get documentCount(): number { return this.mini.documentCount; }
+
+  exportState(): QmdState {
+    return { mini: this.mini.toJSON(), snippets: [...this.snippets], tags: [...this.tagSet],
+      propMeta: [...this.propMeta], tasks: [...this.tasks] };
+  }
+
+  static fromState(state: QmdState): QmdEngine {
+    const engine = new QmdEngine();
+    engine.mini = MiniSearch.loadJSON<QmdDoc>(JSON.stringify(state.mini), {
+      fields: [...FIELDS], storeFields: ['title', 'path', 'tags'], autoVacuum: false,
+    });
+    engine.snippets = new Map(state.snippets); engine.tagSet = new Map(state.tags);
+    engine.propMeta = new Map(state.propMeta); engine.tasks = new Map(state.tasks);
+    engine.ready = true;
+    return engine;
+  }
+
+  markReady(): void { this.ready = true; }
 
   /** Full (re)build from the vault. Adds incrementally so we never hold every
    *  note's full text in a single array (keeps peak memory bounded). */
@@ -159,7 +190,7 @@ export class QmdEngine {
       if (this.mini.has(rel)) this.mini.replace(doc);
       else this.mini.add(doc);
     } catch {
-      this.remove(rel);
+      // Preserve the last successful document during transient filesystem errors.
     }
   }
 
@@ -289,16 +320,14 @@ export class QmdEngine {
   }
 
   /**
-   * Rebuild the tasks map from the vault. Unlike the search index (whose
-   * staleness after a restart is pre-existing/out of scope — served from the
-   * persisted `mini`/`snippets`/etc until the next edit or /api/reindex), the
-   * Tasks board's contract is "source of truth stays the markdown vault": a
+   * Rebuild the tasks map from the vault after explicitly restoring a snapshot.
+   * The Tasks board's contract is "source of truth stays the markdown vault": a
    * note edited while the server was down (or a deploy's `git pull`, which the
    * watcher's `ignoreInitial` never reports) must show its current column
    * right after boot, not whatever was true at the last full build.
    *
-   * Called once at boot after a successful restore() (see initSearch()) — NOT
-   * per request. One vault walk, same shape as buildLinkGraph(). Replaces the
+   * Normal startup now rebuilds the entire search index. Callers explicitly
+   * using restore() can use this method to refresh tasks. Replaces the
    * map atomically at the end so a concurrent allTasks() never observes a
    * partially-rebuilt map.
    */
@@ -384,15 +413,14 @@ export class QmdEngine {
       // A persisted *empty* index (e.g. a prior build ran while the vault was
       // briefly unreadable) must not be trusted — restoring it would leave the
       // engine ready=true with zero docs, so every query returns nothing and we
-      // never rebuild. Treat it as a cache miss so initSearch() builds fresh.
+      // never rebuild. Treat it as a cache miss for callers explicitly restoring snapshots.
       if (this.mini.documentCount === 0) return false;
       this.snippets = new Map(payload.snippets);
       this.tagSet = new Map(payload.tags);
       this.propMeta = new Map(payload.propMeta ?? []);
       // this.tasks is intentionally left alone here — restore() doesn't load a
-      // persisted tasks map (there isn't one any more); initSearch() calls
-      // refreshTasks() right after a successful restore to populate it from
-      // the vault as it is right now.
+      // persisted tasks map. Explicit snapshot callers must refreshTasks();
+      // normal startup rebuilds every field through build().
       this.ready = true;
       return true;
     } catch {
@@ -428,14 +456,22 @@ function parseFielded(query: string): { filterText: string; fields: string[] } {
   return { filterText: rest.join(' '), fields: [...fields] };
 }
 
-export const qmd = new QmdEngine();
+export interface QmdState {
+  mini: ReturnType<MiniSearch<QmdDoc>['toJSON']>;
+  snippets: [string, string][];
+  tags: [string, string[]][];
+  propMeta: [string, Record<string, string>][];
+  tasks: [string, TaskRecord][];
+}
 
-/** Initialize the engine: restore from disk or build fresh. build() already
- *  fills the tasks map (via toDoc); a successful restore() doesn't (tasks
- *  aren't persisted — see refreshTasks()), so refresh it once here, from the
- *  vault as it is right now — not per request. */
+export let qmd = new QmdEngine();
+export function publishQmd(engine: QmdEngine): void { qmd = engine; }
+
+/** Reconcile search with the current vault before accepting requests.
+ * A persisted snapshot can miss files added/changed/deleted while stopped;
+ * ignoreInitial watchers will never report those changes. The former boot
+ * task refresh already read every note, so rebuild all indexed fields in the
+ * same pass instead of trusting a non-empty but arbitrarily old snapshot. */
 export async function initSearch(): Promise<void> {
-  const restored = await qmd.restore();
-  if (!restored) await qmd.build();
-  else await qmd.refreshTasks();
+  await qmd.build();
 }

@@ -4,10 +4,9 @@
 
 # WebObsidian
 
-> **This repository is a community-maintained fork of WebObsidian.** The original project
-> appears to be inactive, so this fork continues development, fixes, and releases
-> independently.
-> **Original project:** [xnohat/webobsidian](https://github.com/xnohat/webobsidian)
+> **This repository is a community-maintained fork of WebObsidian.**
+> Repository: `macros0/webobsidian`. Original project: [xnohat/webobsidian](https://github.com/xnohat/webobsidian).
+> It combines community contributions with continued fixes and releases.
 
 **A self-hosted, Obsidian-compatible web app for your Markdown "second brain".**
 
@@ -21,12 +20,12 @@ GitHub sync (incl. Git LFS), an API for AI agents, and community-plugin support.
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
 
-[Quick start](#-quick-start-docker) · [This fork](#-this-fork) · [Features](#-features) · [Configuration](#-configuration) · [Agent API](#-agent-api) · [Development](#-local-development) · [Architecture](#-architecture)
+[Quick start](#-quick-start-docker) · [Community integration](#-community-integration) · [Features](#-features) · [Configuration](#-configuration) · [Agent API](#-agent-api) · [Development](#-local-development) · [Architecture](#-architecture)
 
 > 📐 Design: [PRD.md](PRD.md) · 📋 Progress: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 
 > 🔀 **This repository is `macros0/webobsidian`.** It combines the `phamtruonghung`
-> and `lakylekidd` forks with their Git histories intact. See
+> and `lakylekidd` forks with contributor attribution. See
 > [integration provenance and verification](docs/FORK_INTEGRATION.md).
 
 </div>
@@ -50,9 +49,9 @@ stack runs from a single `docker compose up`.
 
 ---
 
-## 🔀 This fork
+## 🔀 Community integration
 
-`macros0/webobsidian` combines these community forks:
+This contribution was assembled in `macros0/webobsidian` from these community forks:
 
 - [phamtruonghung/webobsidian](https://github.com/phamtruonghung/webobsidian): auth/path safeguards,
   PDF and binary downloads, vault locks, tasks/timeline, templates, preview tabs, CLI and MCP.
@@ -112,6 +111,23 @@ gh run list --repo macros0/webobsidian --workflow CI --limit 3
   comments, dark-mode text contrast, images whose name contains a space, and `DB_NAME_v2`-style table
   cells no longer rendering as italics.
 
+### Data safety and CLI upgrade notes
+
+Review fixes: closing a dirty tab waits for its latest save; save failures keep the
+tab and edits available. Rename/move refuses occupied destinations with
+`409 destination_exists`. Recursive copies validate nested link targets and publish
+only complete copies. Temporary copies are excluded from watcher indexes and application
+Git snapshots. Text writes use exclusive unique temporary files.
+
+The CLI no longer installs `123456` as a permanent recovery override. Existing
+`WEBOBSIDIAN_PASSWORD=123456` values are treated as no override, so the normal
+first-run password change applies; a previously chosen password remains effective.
+Strong recovery overrides and Electron's generated secret continue to work.
+
+Browser and Agent API read/check/write operations share a transaction queue in one
+server process. Independent Obsidian, Git or other filesystem writers do not join
+that queue; concurrent multi-process access is not a transactional storage system.
+
 ### Never sync the vault to this repository
 
 The app's **Settings → GitHub Sync** must not be pointed at this source repository: it pulls the
@@ -170,7 +186,7 @@ scripts/merge-upstream-pr.sh <n>           # fetch refs/pull/<n>/head and merge 
 - 🔗 **Backlinks & outline** — right sidebar tab strip: Backlinks (linked **and** unlinked
   mentions), Outgoing links (resolved/unresolved), Tags and Outline.
 - 🔍 **QMD search** — fast full-text + fielded search (`tag:`, `path:`, `title:`), fuzzy +
-  prefix matching, incremental indexing, persisted to disk for fast startup.
+  prefix matching and incremental indexing. A saved cache enables startup while background reconciliation checks offline changes. A shared queue, file hashes and periodic audits recover missed changes. For NFS/SMB vaults, set `WEBOBSIDIAN_WATCH=polling`. See [indexing, freshness and recovery](docs/INDEXING.md).
 - 🔄 **GitHub sync** — native `git` pull / commit / push with **Git LFS** for large
   attachments, optional auto-sync, and per-file **version history** (browse & restore).
 - 🔐 **Login gate** — a single master password (scrypt-hashed) protects everything; JWT in
@@ -183,7 +199,7 @@ scripts/merge-upstream-pr.sh <n>           # fetch refs/pull/<n>/head and merge 
   find/replace and `/note-matches` greps a note with line numbers. Bundled **MCP server** for
   MCP hosts. See [docs/AGENT_API.md](docs/AGENT_API.md).
 - 🧩 **Community plugins** — install Obsidian plugins from GitHub; loaded against an
-  Obsidian-API compatibility shim (subset support).
+  Obsidian-API compatibility shim (subset support). See [plugin compatibility and diagnostics](docs/PLUGIN_COMPATIBILITY.md).
 - 📱 **Responsive / mobile** — drawer sidebars, edge-swipe, an on-keyboard formatting
   toolbar, and touch-friendly targets, à la Obsidian Mobile.
 - 🗃️ **Pure-JSON config** — everything lives in `data/settings.json`. No database.
@@ -206,7 +222,7 @@ Out of the box it serves the bundled `./sample-vault`, so the stack boots immedi
 deployment settings live in **`.env`** (git-ignored) — you never edit the tracked
 `docker-compose.yml`, so a `git pull` / redeploy keeps your config and vault mapping intact.
 
-No healthcheck override is needed in this fork: the probe targets `127.0.0.1` (upstream probed
+No healthcheck override is needed: the probe targets `127.0.0.1` (earlier versions probed
 `localhost`, which resolves to `::1` inside the image while the server binds IPv4 only, so the
 container reported `unhealthy` forever). `build` in `/healthz` tells you which commit you are
 running; `docker compose build --build-arg GIT_SHA=$(git rev-parse --short HEAD)` bakes it in.
@@ -214,9 +230,9 @@ running; `docker compose build --build-arg GIT_SHA=$(git rev-parse --short HEAD)
 ## 🖥️ Desktop app (no server setup)
 
 Prefer a native app? Grab an installer from the
-[**upstream Releases**](https://github.com/xnohat/webobsidian/releases) page — available for
-**macOS / Windows / Linux** (arm64 · x64 · ia32). This fork publishes no installers of its own yet;
-build one from here with `npm run desktop:dist`:
+[**Releases**](https://github.com/xnohat/webobsidian/releases) page — available for
+**macOS / Windows / Linux** (arm64 · x64 · ia32). Build an installer locally with
+`npm run desktop:dist`:
 
 | Platform | Download |
 |----------|----------|
@@ -353,6 +369,8 @@ event and branch/PR. No additional secrets are needed.
 | `HTTP_PORT` | `8787` | Host port mapped to container `8787` |
 | `WEBOBSIDIAN_PASSWORD` | – | Seed/override the master password |
 | `WEBOBSIDIAN_WATCH` | `auto` | `auto` (native + polling fallback) or `polling` |
+| `WEBOBSIDIAN_RECONCILE_INTERVAL_MS` | `60000` | Metadata inventory interval; positive integer milliseconds |
+| `WEBOBSIDIAN_HASH_AUDIT_INTERVAL_MS` | `1800000` | Background Markdown SHA-256 audit interval; positive integer milliseconds |
 
 ### App-level env (read by the server; Docker sets these inside the container)
 
@@ -395,6 +413,10 @@ npm run build && npm run mcp        # needs WEBOBSIDIAN_BASE_URL + WEBOBSIDIAN_A
 
 See [`mcp-server/README.md`](mcp-server/README.md) for the host config snippet.
 
+**Remote MCP:** optional Streamable HTTP at `/mcp`, using the same API keys/scopes.
+Existing stdio configuration remains supported. See [remote setup and Perplexity Pro example](docs/MCP_REMOTE.md).
+HTTP MCP is disabled by default. Perplexity Pro registration was verified on 2026-10-30; see the deployment guide for the policy-routing fix required on this installation.
+
 ### 🧩 Drop-in agent skill (no clone needed)
 
 Want your coding agent (Claude Code, Codex, OpenCode, Cursor…) to work with your vault
@@ -412,7 +434,7 @@ STEP 1 — Download the skill into your runtime's skills directory
   (Claude Code: ~/.claude/skills · Codex: ~/.codex/skills · OpenCode: ~/.opencode/skills):
       SKILLS_DIR=~/.claude/skills        # change for your runtime
       mkdir -p "$SKILLS_DIR/webobsidian"
-      curl -fsSL https://raw.githubusercontent.com/phamtruonghung/webobsidian/main/docs/agent-skill/webobsidian/SKILL.md \
+      curl -fsSL https://raw.githubusercontent.com/xnohat/webobsidian/main/docs/agent-skill/webobsidian/SKILL.md \
         -o "$SKILLS_DIR/webobsidian/SKILL.md"
 
 STEP 2 — Set up credentials (ASK ME; never echo the key back). Ask me for my WebObsidian
@@ -614,3 +636,12 @@ That is intentional, so prefer a branch + PR over pushing straight to `main`, an
 <div align="center">
 <sub>Built for people who want to own their notes. Not affiliated with Obsidian.md.</sub>
 </div>
+
+
+### Local drafts, conflict recovery and toolbar width
+
+The formatting toolbar measures the editor container, including changes caused by sidebars and split panes. New layouts use **One row + More**: buttons that do not fit remain available in the More menu. Existing explicitly saved Scroll/Wrap preferences are preserved; select **Settings → Editing Toolbar → Overflow → One row + More** to enable the adaptive layout.
+
+Edits to Markdown, text and Canvas documents are journaled in browser IndexedDB. **Saved locally** means the local transaction completed; **Saved on server** means the server confirmed that revision. Open **Local drafts** to recover/compare an interrupted edit. Drafts are isolated by installation, vault and browser tab, and retained until confirmed saved or explicitly discarded. Browser storage may be unavailable, cleared or evicted; local storage errors are shown. This does not provide a complete offline application.
+
+Normal editor saves include the base content version. A conflict preserves local text and opens an editable comparison, with a separate copy path available. If the server changes during review, review the refreshed comparison before saving again. Canvas uses whole-document selection and validates JSON. This UI resolves content-version conflicts; Git merge conflicts remain a separate future feature.

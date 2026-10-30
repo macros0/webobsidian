@@ -39,6 +39,7 @@ COPY packages/webo/package.json ./packages/webo/
 RUN npm ci --omit=dev --workspace server
 
 # Copy built artifacts
+COPY --from=build /app/mcp-server/dist ./mcp-server/dist
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/public ./server/public
 

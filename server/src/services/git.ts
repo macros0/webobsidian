@@ -366,10 +366,19 @@ async function commitAllImpl(message?: string): Promise<string> {
   const g = await git();
   await configureIdentity(g);
   await ensureLfsAttributes();
-  await g.add('.');
+  // A vault copy and atomic text write remain private until their final rename.
+  // Match only the reserved staging namespace and writer UUID suffix, retaining
+  // normal dotfiles and user documents such as `notes.tmp-draft`.
+  const uuidGlob = [8, 4, 4, 4, 12].map((length) => '[0-9a-f]'.repeat(length)).join('-');
+  await g.add([
+    '--all', '--', '.',
+    ':(exclude,glob)**/.webobsidian-copy-*/**',
+    `:(exclude,glob)**/*.tmp-${uuidGlob}`,
+  ]);
   const st = await g.status();
-  if (st.staged.length === 0 && st.isClean()) return 'Nothing to commit';
-  const { subject, body } = describeChanges(st);
+  if (st.staged.length === 0) return 'Nothing to commit';
+  const staged = new Set(st.staged);
+  const { subject, body } = describeChanges({ ...st, files: st.files.filter((file) => staged.has(file.path)) });
   // A caller-supplied message (e.g. a manual commit with a typed message) wins
   // as the subject; otherwise auto-derive one naming the notes. The file list
   // always goes in the body so `git log` shows precisely what was synced.

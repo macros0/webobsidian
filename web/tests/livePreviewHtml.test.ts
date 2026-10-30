@@ -317,7 +317,9 @@ for (const mode of ['live', 'reading']) {
       assert.doesNotMatch(result.text, /`/);
       assert.doesNotMatch(result.html, /class="cm-inline-code cm-code"/);
       assert.match(result.text, /<LS_BEN>/);
-      assert.equal(result.source, fixtures[name]);
+      // CodeMirror normalizes line endings when creating its initial document.
+      // Compare before/after editor state even when Git checked out the fixture as CRLF.
+      assert.equal(result.source, result.initialSource);
     }
   });
   for (const name of ['inline', 'standalone', 'indented', 'closing', 'quote', 'list', 'code', 'mixed'] as const) {

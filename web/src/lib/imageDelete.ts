@@ -52,7 +52,7 @@ export async function deleteEmbeddedImage({ target, view: v, remove }: ImageDele
   if (!ok || !mayEdit()) return;
   remove();
   try {
-    await api.remove(file, true);
+    await useStore.getState().deletePath(file, true);
     await loadTree();
     notify(`Deleted ${file}`);
   } catch (e: any) {

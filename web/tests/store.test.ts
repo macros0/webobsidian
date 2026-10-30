@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, mock, test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 import { ApiError, api, setUnlock, type TreeNode } from '../src/lib/api';
-import { GRAPH_PATH, TASKS_PATH, isViewPath, useStore } from '../src/lib/store';
+import { GRAPH_PATH, TASKS_PATH, isViewPath, resetDraftScope, useStore } from '../src/lib/store';
 
 // Workspace persistence uses browser timers; run them deterministically in Node.
 Object.defineProperty(globalThis, 'window', {
@@ -18,12 +18,14 @@ const paths = () => state().tabs.map((t) => t.path);
 
 beforeEach(() => {
   mock.timers.enable({ apis: ['setTimeout'] });
+  resetDraftScope();
+  mock.method(api,'draftScope',async()=>({scopeId:'test-scope'}));
   useStore.setState(useStore.getInitialState(), true);
-  mock.method(api, 'read', async (path: string) => ({ content: `# ${path}` }));
-  mock.method(api, 'write', async () => ({ ok: true }));
+  mock.method(api, 'read', async (path: string) => ({ version:'v1', content: `# ${path}` }));
+  mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));
   mock.method(api, 'tree', async () => ({ name: '', path: '', type: 'folder', children: [] }));
   mock.method(api, 'getUiState', async () => ({}));
-  mock.method(api, 'putUiState', async () => ({ ok: true }));
+  mock.method(api, 'putUiState', async () => ({ ok: true, version:'v1' }));
 });
 
 afterEach(() => {
@@ -40,7 +42,7 @@ test('rename hook preserves manual sorting alongside preview tabs and unlock hea
   const request = mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {
     assert.equal(new Headers(init?.headers).get('x-unlock-locked'), '1');
     assert.equal(new Headers(init?.headers).get('x-unlock-password'), 'test-only');
-    return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ ok: true, version:'v1' }), { headers: { 'content-type': 'application/json' } });
   });
   await api.rename('folder', 'renamed');
   assert.equal(request.mock.callCount(), 1);
@@ -114,12 +116,12 @@ test('keeping a preview open preserves it and reuses the next preview in place',
 });
 
 test('editing a preview keeps it open even after saving', async () => {
-  const writes = mock.method(api, 'write', async () => ({ ok: true }));
+  const writes = mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));
   await state().openFile('Edited.md');
   state().setContent('Local edits');
   assert.equal(state().tabs[0].preview, false);
   await state().openFile('Next.md');
-  assert.deepEqual(writes.mock.calls[0].arguments, ['Edited.md', 'Local edits']);
+  assert.deepEqual(writes.mock.calls[0].arguments, ['Edited.md', 'Local edits', 'v1','test-scope']);
   assert.deepEqual(paths(), ['Edited.md', 'Next.md']);
   assert.equal(state().dirty, false);
 });
@@ -141,13 +143,14 @@ test('opening a missing note leaves the current preview intact', async () => {
 });
 
 test('out-of-order reads cannot replace the most recently selected note', async () => {
-  let finishSlow!: (value: { content: string }) => void;
+  let finishSlow!: (value: { version:'v1', content: string }) => void;
   mock.method(api, 'read', (path: string) => path === 'Slow.md'
-    ? new Promise<{ content: string }>((resolve) => { finishSlow = resolve; })
-    : Promise.resolve({ content: '# Fast' }));
+    ? new Promise<{ version:'v1', content: string }>((resolve) => { finishSlow = resolve; })
+    : Promise.resolve({ version:'v1', content: '# Fast' }));
   const slow = state().openFile('Slow.md');
+  await setImmediate();
   await state().openFile('Fast.md');
-  finishSlow({ content: '# Slow' });
+  finishSlow({ version:'v1', content: '# Slow' });
   await slow;
   assert.deepEqual(paths(), ['Fast.md']);
   assert.equal(state().activePath, 'Fast.md');
@@ -174,11 +177,12 @@ test('isViewPath is true only for the Graph/Tasks sentinel tab paths', () => {
 });
 
 test('opening Graph view cancels an older pending note selection', async () => {
-  let finishRead!: (value: { content: string }) => void;
-  mock.method(api, 'read', () => new Promise<{ content: string }>((resolve) => { finishRead = resolve; }));
+  let finishRead!: (value: { version:'v1', content: string }) => void;
+  mock.method(api, 'read', () => new Promise<{ version:'v1', content: string }>((resolve) => { finishRead = resolve; }));
   const pending = state().openFile('Slow.md');
+  await setImmediate();
   await state().openGraph();
-  finishRead({ content: '# Slow' });
+  finishRead({ version:'v1', content: '# Slow' });
   await pending;
   assert.deepEqual(paths(), [GRAPH_PATH]);
   assert.equal(state().activePath, GRAPH_PATH);
@@ -186,14 +190,15 @@ test('opening Graph view cancels an older pending note selection', async () => {
 
 test('edits made while the next preview loads are saved and kept open', async () => {
   await state().openFile('Edited.md');
-  let finishRead!: (value: { content: string }) => void;
-  mock.method(api, 'read', () => new Promise<{ content: string }>((resolve) => { finishRead = resolve; }));
-  const writes = mock.method(api, 'write', async () => ({ ok: true }));
+  let finishRead!: (value: { version:'v1', content: string }) => void;
+  mock.method(api, 'read', () => new Promise<{ version:'v1', content: string }>((resolve) => { finishRead = resolve; }));
+  const writes = mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));
   const pending = state().openFile('Next.md');
+  await setImmediate();
   state().setContent('Typed while loading');
-  finishRead({ content: '# Next' });
+  finishRead({ version:'v1', content: '# Next' });
   await pending;
-  assert.deepEqual(writes.mock.calls[0].arguments, ['Edited.md', 'Typed while loading']);
+  assert.deepEqual(writes.mock.calls[0].arguments, ['Edited.md', 'Typed while loading', 'v1','test-scope']);
   assert.deepEqual(paths(), ['Edited.md', 'Next.md']);
   assert.equal(state().tabs[0].preview, false);
 });
@@ -231,7 +236,7 @@ test('workspace reload preserves preview state and treats legacy tabs as permane
     activePath: 'Preview.md',
   };
   mock.method(api, 'getUiState', async () => saved);
-  const writes = mock.method(api, 'putUiState', async () => ({ ok: true }));
+  const writes = mock.method(api, 'putUiState', async () => ({ ok: true, version:'v1' }));
   await state().loadUiState();
   await state().openFile('Next.md');
   assert.deepEqual(paths(), ['Legacy.md', 'Next.md']);
@@ -302,8 +307,8 @@ test('newFromTemplate creates the dated, filled note and opens it', async () => 
   freeze(2026, 9, 26, 7, 30);
   useStore.setState({ tree: VAULT_TREE });
   mock.method(api, 'tree', async () => VAULT_TREE);
-  const writes = mock.method(api, 'write', async () => ({ ok: true }));
-  mock.method(api, 'read', async () => ({ content: MEETING_TEMPLATE }));
+  const writes = mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));
+  mock.method(api, 'read', async () => ({ version:'v1', content: MEETING_TEMPLATE }));
 
   const path = await state().newFromTemplate(
     'Wiki/templates/meeting.md',
@@ -352,8 +357,8 @@ test('newFromTemplate never overwrites — an existing same-day note moves to -2
   };
   useStore.setState({ tree });
   mock.method(api, 'tree', async () => tree);
-  const writes = mock.method(api, 'write', async () => ({ ok: true }));
-  mock.method(api, 'read', async () => ({ content: MEETING_TEMPLATE }));
+  const writes = mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));
+  mock.method(api, 'read', async () => ({ version:'v1', content: MEETING_TEMPLATE }));
 
   const path = await state().newFromTemplate('Wiki/templates/meeting.md', 'QMS review with Ban', 'Wiki/meetings');
 
@@ -365,7 +370,7 @@ test('newFromTemplate retries the next suffix when a concurrent writer wins the 
   freeze(2026, 9, 26, 7, 30);
   useStore.setState({ tree: VAULT_TREE });
   mock.method(api, 'tree', async () => VAULT_TREE);
-  mock.method(api, 'read', async () => ({ content: MEETING_TEMPLATE }));
+  mock.method(api, 'read', async () => ({ version:'v1', content: MEETING_TEMPLATE }));
   let first = true;
   const writes = mock.method(api, 'write', async (path: string) => {
     if (first) {
@@ -386,7 +391,7 @@ test('newFromTemplate retries the next suffix when a concurrent writer wins the 
 
 test('newFromTemplate refuses a title that yields no filename, and writes nothing', async () => {
   useStore.setState({ tree: VAULT_TREE });
-  const writes = mock.method(api, 'write', async () => ({ ok: true }));
+  const writes = mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));
   await assert.rejects(
     () => state().newFromTemplate('Wiki/templates/meeting.md', '   ', 'Wiki/meetings'),
     /title is required/i,
@@ -396,8 +401,8 @@ test('newFromTemplate refuses a title that yields no filename, and writes nothin
 
 test('newFromTemplate refuses an empty folder — a template note never lands in the vault root', async () => {
   useStore.setState({ tree: VAULT_TREE });
-  const writes = mock.method(api, 'write', async () => ({ ok: true }));
-  mock.method(api, 'read', async () => ({ content: MEETING_TEMPLATE }));
+  const writes = mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));
+  mock.method(api, 'read', async () => ({ version:'v1', content: MEETING_TEMPLATE }));
   await assert.rejects(
     () => state().newFromTemplate('Wiki/templates/document.md', 'QMS review', ''),
     /target folder is required/i,
@@ -407,7 +412,7 @@ test('newFromTemplate refuses an empty folder — a template note never lands in
 
 test('newFromTemplate refuses a folder that does not exist, and writes nothing', async () => {
   useStore.setState({ tree: VAULT_TREE });
-  const writes = mock.method(api, 'write', async () => ({ ok: true }));
+  const writes = mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));
   await assert.rejects(
     () => state().newFromTemplate('Wiki/templates/meeting.md', 'QMS review', 'Wiki/nope'),
     /Folder not found: Wiki\/nope/,
@@ -417,7 +422,7 @@ test('newFromTemplate refuses a folder that does not exist, and writes nothing',
 
 test('newFromTemplate lets a failed template read through, writing nothing', async () => {
   useStore.setState({ tree: VAULT_TREE });
-  const writes = mock.method(api, 'write', async () => ({ ok: true }));
+  const writes = mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));
   mock.method(api, 'read', async () => {
     throw new Error('Not found');
   });
@@ -433,7 +438,7 @@ test('newFromTemplate lets a failed template read through, writing nothing', asy
 // notes keep the create-on-click behaviour.
 test('an unresolved attachment link creates no note', async () => {
   mock.method(api, 'resolve', async () => ({ path: null }));
-  const writes = mock.method(api, 'write', async () => ({ ok: true }));
+  const writes = mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));
   await state().openWikilink('missing.pdf');
   assert.equal(writes.mock.calls.length, 0);
   assert.deepEqual(paths(), []);
@@ -442,7 +447,7 @@ test('an unresolved attachment link creates no note', async () => {
 
 test('an unresolved note link still offers to create it', async () => {
   mock.method(api, 'resolve', async () => ({ path: null }));
-  const writes = mock.method(api, 'write', async () => ({ ok: true }));
+  const writes = mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));
   await state().openWikilink('Fresh');
   assert.equal(writes.mock.calls.length, 1);
   assert.deepEqual(paths(), ['Fresh.md']);
@@ -450,7 +455,7 @@ test('an unresolved note link still offers to create it', async () => {
 
 test('a resolved pdf link opens the file itself, not a new note', async () => {
   mock.method(api, 'resolve', async () => ({ path: 'relats/raw/documents/report.pdf' }));
-  const writes = mock.method(api, 'write', async () => ({ ok: true }));
+  const writes = mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));
   await state().openWikilink('report.pdf');
   assert.equal(writes.mock.calls.length, 0);
   assert.deepEqual(paths(), ['relats/raw/documents/report.pdf']);

@@ -1,6 +1,7 @@
+import DraftRecovery from './components/DraftRecovery';
 import { useEffect, useState } from 'react';
 import { api, ApiError } from './lib/api';
-import { useStore } from './lib/store';
+import { useStore,resetDraftScope } from './lib/store';
 import Login from './components/Login';
 import ForceChangePassword from './components/ForceChangePassword';
 import Ribbon from './components/Ribbon';
@@ -16,10 +17,11 @@ import ContextMenu from './components/ContextMenu';
 import FolderPicker from './components/FolderPicker';
 import TemplatePicker from './components/TemplatePicker';
 import ConfirmDialog from './components/ConfirmDialog';
-import { loadPlugins } from './lib/plugins';
+import { loadPlugins,stopPlugins } from './lib/plugins';
 import { initUrlSync } from './lib/urlsync';
 import { useIsMobile } from './lib/useIsMobile';
 import { themeClass } from './lib/theme';
+import {applyIndexStatus,refreshIndexStatus,resetIndexStatus,useIndexStatus,indexStatusMessage} from './lib/indexStatus';
 
 export default function App() {
   const authed = useStore((s) => s.authed);
@@ -37,6 +39,7 @@ export default function App() {
   const save = useStore((s) => s.save);
   const toast = useStore((s) => s.toast);
   const [checking, setChecking] = useState(true);
+  const {status:indexStatus}=useIndexStatus();
   const theme = useStore((s) => s.theme);
   const setTheme = useStore((s) => s.setTheme);
 
@@ -54,19 +57,19 @@ export default function App() {
   }, [setAuthed, setMustChangePassword]);
 
   useEffect(() => {
-    if (!authed) return;
-    loadTree();
+    if (!authed) {resetDraftScope();resetIndexStatus();return;}
+    const treeReady=loadTree();
     // Deep link (/note/<path>) wins over the restored workspace's active note.
     const deepLink = initUrlSync();
-    useStore
+    const workspaceReady=useStore
       .getState()
-      .loadUiState() // restore workspace from server + open note(s)
+      .loadUiState(true) // restore workspace from server + open note(s)
       .then(() => {
         if (deepLink && deepLink !== useStore.getState().activePath) {
           return useStore.getState().openFile(deepLink);
         }
       })
-      .catch(() => {});
+      ;
     api
       .getSettings()
       .then((s) => {
@@ -75,7 +78,10 @@ export default function App() {
       })
       .catch(() => {});
     useStore.getState().loadShares(); // badge shared notes in the file tree
-    loadPlugins().catch(() => {});
+    const pluginReady=Promise.all([treeReady,workspaceReady]).then(()=>{if(!useStore.getState().tree)throw new Error('Vault tree could not be restored');});
+    void loadPlugins(pluginReady);
+    const pluginScopeChange=()=>{void stopPlugins().then(()=>loadPlugins(Promise.all([loadTree(),useStore.getState().loadUiState(true)])));};
+    window.addEventListener('draft-scope-change',pluginScopeChange);
     // websocket live updates. Reconnects with backoff: the socket drops on every
     // redeploy, laptop sleep or proxy idle-timeout, and without this live updates
     // silently stopped until a full reload. After a reconnect the tree is reloaded
@@ -88,6 +94,7 @@ export default function App() {
     let hadConnection = false;
     let closed = false;
     const onMessage = (ev: MessageEvent) => {
+      if(closed)return;
       try {
         const msg = JSON.parse(ev.data);
         if (msg.type === 'fs') {
@@ -96,6 +103,8 @@ export default function App() {
           treeTimer = window.setTimeout(() => loadTree(), 800);
           // let other views (e.g. the Tasks board) react to the raw event themselves
           window.dispatchEvent(new CustomEvent('wo-fs', { detail: msg }));
+        } else if (msg.type === 'index') {
+          applyIndexStatus(msg.status);
         } else if (msg.type === 'uistate') {
           // another tab/device changed the workspace → sync live
           useStore.getState().applyRemoteState(msg.state, msg.originId);
@@ -109,6 +118,7 @@ export default function App() {
       ws = new WebSocket(`${proto}://${location.host}/ws`);
       ws.onopen = () => {
         retryDelay = 1000;
+        refreshIndexStatus().catch(()=>{});
         if (hadConnection) loadTree();
         hadConnection = true;
       };
@@ -122,6 +132,8 @@ export default function App() {
     connect();
     return () => {
       closed = true;
+      window.removeEventListener('draft-scope-change',pluginScopeChange);
+      void stopPlugins();
       window.clearTimeout(treeTimer);
       window.clearTimeout(retryTimer);
       ws?.close();
@@ -207,6 +219,7 @@ export default function App() {
 
   return (
     <div className={theme}>
+      {indexStatusMessage(indexStatus)&&<div role="status" style={{position:'fixed',bottom:28,right:16,zIndex:60,maxWidth:360,padding:'6px 10px',background:'var(--background-secondary)',border:'1px solid var(--background-modifier-border)',borderRadius:6,fontSize:12}}>{indexStatusMessage(indexStatus)}</div>}
       <div className={appCls}>
         <Ribbon onTheme={() => setTheme(theme === 'theme-dark' ? 'theme-light' : 'theme-dark')} />
         {showLeft && <Sidebar />}
@@ -225,6 +238,7 @@ export default function App() {
       <FolderPicker />
       <TemplatePicker />
       <ConfirmDialog />
+      <DraftRecovery />
       {toast && <div className="toast">{toast}</div>}
     </div>
   );

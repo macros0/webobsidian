@@ -89,6 +89,9 @@ jobs:
       - name: Test (server, web and Electron browser fixtures)
         run: xvfb-run --auto-servernum npm test
 
+      - name: HTTP and stdio MCP integration (disposable vault)
+        run: npm run test:mcp
+
       - name: Merged fork integration smoke test
         run: node scripts/integration-smoke.mjs
 
@@ -114,3 +117,6 @@ jobs:
 
       - name: Build image
         run: docker build -t webobsidian:ci .
+
+      - name: Docker MCP runtime smoke
+        run: bash scripts/docker-mcp-smoke.sh webobsidian:ci

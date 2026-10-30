@@ -91,6 +91,8 @@ export default function Workspace() {
   const activePath = useStore((s) => s.activePath);
   const openFile = useStore((s) => s.openFile);
   const closeTab = useStore((s) => s.closeTab);
+  const renamePath = useStore((s) => s.renamePath);
+  const deletePath = useStore((s) => s.deletePath);
   const keepTab = useStore((s) => s.keepTab);
   const dirty = useStore((s) => s.dirty);
   const viewMode = useStore((s) => s.viewMode);
@@ -162,7 +164,11 @@ export default function Workspace() {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const path = activePath;
     const baseName = path.split('/').pop() ?? path;
-    const closeOthers = () => tabs.filter((t) => t.path !== path).forEach((t) => closeTab(t.path));
+    const closeOthers = async () => {
+      for (const tab of tabs.filter((t) => t.path !== path)) {
+        if (!(await closeTab(tab.path))) break;
+      }
+    };
     const tabItems: ContextMenuItem[] = [
       { label: 'Close tab', icon: 'x', onClick: () => closeTab(path) },
       { label: 'Close other tabs', onClick: closeOthers },
@@ -187,10 +193,8 @@ export default function Workspace() {
         onClick: async () => {
           const to = prompt('Rename / move to (vault-relative path):', path);
           if (to && to !== path) {
-            await api.rename(path, to);
-            closeTab(path);
+            await renamePath(path, to);
             await loadTree();
-            await openFile(to);
           }
         },
       };
@@ -282,8 +286,7 @@ export default function Workspace() {
           icon: 'trash',
           onClick: async () => {
             if (confirm(`Delete "${baseName}"?`)) {
-              const r = await api.remove(path);
-              closeTab(path);
+              const r = await deletePath(path);
               await loadTree();
               notify(r.deleted ? 'Deleted permanently' : 'Moved to trash');
             }
@@ -363,7 +366,7 @@ export default function Workspace() {
               className={`tab ${activePath === t.path ? 'active' : ''} ${t.preview ? 'preview' : ''}`}
               onClick={() => openFile(t.path)}
               onDoubleClick={() => keepTab(t.path)}
-              onAuxClick={(e) => e.button === 1 && closeTab(t.path)}
+              onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); void closeTab(t.path); } }}
               title={t.preview ? `${t.path} (preview — double-click to keep open)` : t.path}
             >
               {t.path === GRAPH_PATH && (
@@ -380,7 +383,7 @@ export default function Workspace() {
                   className="close"
                   onClick={(e) => {
                     e.stopPropagation();
-                    closeTab(t.path);
+                    void closeTab(t.path);
                   }}
                 >
                   <Icon name="x" size={14} />

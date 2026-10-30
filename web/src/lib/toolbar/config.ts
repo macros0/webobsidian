@@ -9,7 +9,7 @@ export interface ToolbarLayout { enabled: boolean; items: ToolbarNode[]; positio
 export interface CustomToolbarCommand { id: string; label: string; icon: string; prefix: string; suffix: string }
 export interface ToolbarAppearance {
   iconSize: number; density: 'comfortable' | 'compact'; showLabels: boolean; tooltips: boolean;
-  overflow: 'scroll' | 'wrap'; style: 'standard' | 'compact'; backgroundColor?: string; iconColor?: string;
+  overflow: 'menu' | 'scroll' | 'wrap'; style: 'standard' | 'compact'; backgroundColor?: string; iconColor?: string;
 }
 export interface ToolbarConfigV1 {
   version: 1; layouts: Record<ToolbarSurface, ToolbarLayout>; appearance: ToolbarAppearance;
@@ -56,7 +56,7 @@ export function getDefaultToolbarConfig(): ToolbarConfigV1 {
   compactFollowing.push({type:'group',instanceId:'following-more',label:'More',icon:'more-horizontal',style:'menu',children:followingItems});
   compactFollowing.push(...['change-font-color','change-background-color'].map((id,i):ToolbarNode=>({type:'command',instanceId:`following-color-${i}`,commandId:`editing-toolbar:${id}`,label:i===0?'Text color':'Highlight color',icon:'palette'})));
   return {version:1,layouts:{top:{enabled:true,items:makeItems('top')},following:{enabled:true,items:compactFollowing},fixed:{enabled:false,items:makeItems('fixed'),position:{x:0.5,y:0.85}},mobile:{enabled:true,items:makeItems('mobile')}},
-    appearance:{iconSize:18,density:'comfortable',showLabels:false,tooltips:true,overflow:'scroll',style:'standard'},customCommands:[],customColors:[]};
+    appearance:{iconSize:18,density:'comfortable',showLabels:false,tooltips:true,overflow:'menu',style:'standard'},customCommands:[],customColors:[]};
 }
 export function record(value: unknown): Record<string,unknown> { return value && typeof value==='object' && !Array.isArray(value) ? value as Record<string,unknown> : {}; }
 function text(value:unknown,max:number): string | undefined { return typeof value==='string' && value.length<=max ? value : undefined; }
@@ -99,7 +99,7 @@ export function parseToolbarConfig(input: unknown): ToolbarConfigV1 {
   if(typeof a.iconSize==='number'&&Number.isFinite(a.iconSize)) out.appearance.iconSize=Math.max(12,Math.min(32,Math.round(a.iconSize)));
   if(a.density==='compact') out.appearance.density='compact';
   if(a.style==='compact') out.appearance.style='compact';
-  if(a.overflow==='wrap') out.appearance.overflow='wrap';
+  if(a.overflow==='wrap'||a.overflow==='scroll'||a.overflow==='menu') out.appearance.overflow=a.overflow;
   if(typeof a.showLabels==='boolean') out.appearance.showLabels=a.showLabels;
   if(typeof a.tooltips==='boolean') out.appearance.tooltips=a.tooltips;
   for(const key of ['backgroundColor','iconColor'] as const) { const color=toolbarColor(a[key]); if(color) out.appearance[key]=color; }

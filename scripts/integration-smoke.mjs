@@ -99,6 +99,21 @@ try {
   assert.equal((await write(original.version, '# Stale')).status, 409);
   assert.equal(await fs.readFile(path.join(vault, 'notes', 'locked.md'), 'utf8'), '# Locked');
   assert.equal(await fs.readFile(path.join(vault, 'notes', 'editable.md'), 'utf8'), '# Updated');
+  const staging = path.join(vault, '.webobsidian-copy-smoke', 'payload');
+  await fs.mkdir(staging, { recursive: true });
+  await fs.writeFile(path.join(staging, 'partial.md'), '# reviewstagingsecret');
+  await delay(1200); // Longer than the watcher's 300ms stability window.
+  const stagedSearch = await (await request('/api/search?q=reviewstagingsecret')).json();
+  assert.equal(stagedSearch.hits.length, 0, 'unfinished copy must not enter search indexes');
+  const parallelCas = await Promise.all(['one', 'two'].map(content => request('/api/files/content', {
+    method: 'PUT', body: JSON.stringify({ path: 'notes/concurrent.md', content, baseVersion: '' }),
+  })));
+  assert.deepEqual(parallelCas.map(response => response.status).sort(), [200, 409]);
+  const collision = await request('/api/files/rename', { method: 'PATCH',
+    body: JSON.stringify({ from: 'notes/concurrent.md', to: 'notes/editable.md' }) });
+  assert.equal(collision.status, 409);
+  assert.equal((await collision.json()).error, 'destination_exists');
+  assert.equal(await fs.readFile(path.join(vault, 'notes', 'editable.md'), 'utf8'), '# Updated');
   assert.equal((await request('/')).status, 200);
   const uploadFile = async (dir, name = 'upload.txt') => {
     const body = new FormData();

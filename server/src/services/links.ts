@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { listMarkdownFiles, readFileText } from './vault.js';
-import { parseNote, linkKey } from './markdown.js';
+import { parseNote, linkKey, type ParsedNote } from './markdown.js';
 
 interface LinkGraph {
   /** outgoing[rel] = set of target keys */
@@ -19,6 +19,39 @@ let graph: LinkGraph = {
   rawLinks: new Map(),
   tags: new Map(),
 };
+
+export interface LinkState { notes: [string, { links: string[]; tags: string[] }][] }
+/** Synchronous companion of an incremental search update; never rereads Markdown. */
+export function applyPublishedLink(rel:string,note?:ParsedNote):void {
+  const key=rel.replace(/\.(md|markdown)$/i,'').toLowerCase();
+  const base=path.posix.basename(key);
+  if(note){
+    graph.rawLinks.set(rel,note.links);graph.tags.set(rel,note.tags);
+    graph.outgoing.set(rel,new Set(note.links.map(linkKey)));graph.keyToPath.set(key,rel);
+    const previous=graph.keyToPath.get(base);
+    if(!previous||rel.split('/').length<previous.split('/').length||(rel.split('/').length===previous.split('/').length&&rel.localeCompare(previous)<0))graph.keyToPath.set(base,rel);
+  }else{
+    graph.rawLinks.delete(rel);graph.tags.delete(rel);graph.outgoing.delete(rel);
+    if(graph.keyToPath.get(key)===rel)graph.keyToPath.delete(key);
+    if(graph.keyToPath.get(base)===rel)graph.keyToPath.delete(base);
+    if(!graph.keyToPath.has(base)){
+      const candidates=[...graph.rawLinks.keys()].filter(p=>path.posix.basename(p).replace(/\.(md|markdown)$/i,'').toLowerCase()===base).sort((a,b)=>a.split('/').length-b.split('/').length||a.localeCompare(b));
+      if(candidates[0])graph.keyToPath.set(base,candidates[0]);
+    }
+  }
+}
+export function publishLinkState(state: LinkState): void {
+  const next: LinkGraph = { outgoing: new Map(), keyToPath: new Map(), rawLinks: new Map(), tags: new Map() };
+  // Choose the shortest path, then lexical order, for colliding basenames.
+  const notes = [...state.notes].sort(([a], [b]) => b.split('/').length - a.split('/').length || b.localeCompare(a));
+  for (const [rel, note] of notes) {
+    next.keyToPath.set(path.basename(rel).replace(/\.(md|markdown)$/i, '').toLowerCase(), rel);
+    next.keyToPath.set(rel.replace(/\.(md|markdown)$/i, '').toLowerCase(), rel);
+    next.outgoing.set(rel, new Set(note.links.map(linkKey)));
+    next.rawLinks.set(rel, note.links); next.tags.set(rel, note.tags);
+  }
+  graph = next;
+}
 
 export async function buildLinkGraph(): Promise<void> {
   const files = await listMarkdownFiles();

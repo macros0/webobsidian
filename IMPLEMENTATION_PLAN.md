@@ -1,30 +1,52 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Review fixes — 2026-10-30
+
+- [x] R1: CLI default recovery password, including old installations.
+- [x] R2: preserve dirty tabs across close/rename/delete.
+- [x] R3/R4/R6: no-clobber rename, transactional versions and unique temporary files.
+- [x] R5: validate nested copy targets and publish complete copies.
+- [x] Regression tests, builds and integration verification.
+
+Progress 2026-10-30: all six review fixes implemented. Regression tests first reproduced default override login, dirty-tab loss, rename clobbering, concurrent CAS/append loss, nested outside-link copy, and temporary-file collisions. Independent review additionally closed Git-metadata aliases, unsupported-tab close loops, and temporary-copy exposure through watcher indexes and application Git snapshots. Final validation: 224 server tests passed / 9 Windows file-symlink skips; 388 web tests passed; all workspace and desktop typechecks, full build, desktop build, and disposable integration smoke passed. Linux-only smoke and manual browser interaction were not run.
+
+
+## Upstream contribution preparation — 2026-10-29
+
+- [x] Consolidate the reviewed community integration and preserve contributor attribution.
+- [x] Restore upstream README, desktop release and contributor-routing references.
+- [x] Reproduce the Windows CRLF fixture assertion failure and compare editor state before/after rendering.
+- [x] Complete fresh validation and review the portability overlay for a PR to `xnohat/webobsidian:main`.
+
+Progress 2026-10-29: the upstream contribution uses one consolidated commit directly on
+upstream `c41967a`. Source provenance and contributor credits accompany the result.
+Source-fork deployment and scheduled issue workflows retain their repository guards.
+
+Validation: all workspace and desktop typechecks/builds pass; 188 server and 364 web tests
+pass, with seven Windows symlink capability skips. The browser fixture assertion first failed
+on a CRLF checkout and passed after correction. Disposable HTTP integration smoke passes;
+the dependency guard accepts 27 copies and a fresh npm audit reports zero vulnerabilities.
+Independent overlay review found no critical/important issues; historical routing was clarified.
+
 ## Live code block selection — 2026-10-29
 
 - [x] Keep code backgrounds below the selection layer, including the active line.
 - [x] Move horizontal note margins outside the content box so multiline selection stays within block edges.
 - [x] Add real browser pixel checks for wrapped, empty and active code lines, unselected margins, themes and viewport widths.
-- [x] Validate the isolated patch against the fork's main branch and prepare the pull request.
 
-Progress 2026-10-29: the corrected CSS is deployed and verified. Existing readable
-line width and centering are retained; the browser regression covers three themes
-and two viewport widths. Release verification passed 188 server and 364 web tests
-(seven Windows symlink skips), the production build and disposable HTTP smoke.
-Isolated-branch verification repeats the full suite with the Contract fixture's
-repository LF line endings; its unchanged Windows CRLF assertion otherwise fails.
+The browser regression covers three themes and two viewport widths while retaining
+readable line width and centering. The upstream contribution also retains the cross-platform
+fixture assertion that compares the editor's source before and after rendering.
 
 ## Literal color correction and Live mode verification — 2026-10-29
 
 - [x] Reproduce red `<LS_BEN>` and replace it with body text color across modes/themes.
 - [x] Exercise the real React Editor through Source/Live/Reading and verify unchanged note text.
-- [x] Validate and deploy the corrected snapshot to CT102; verify actual served build/assets.
 
 Progress 2026-10-29: exact multiline-backtick example compared in hidden Obsidian,
 including blank paragraphs. Live now conceals delimiters and retains ordinary literal
 body lines; underscore angle identifiers use body color. 188 server +363 web tests,
-typecheck/build/HTTP smoke passed. CT102 build `cc8b061-worktree-a14ad1ae6b77` verified;
-backup `/opt/webobsidian/backups/20261029T135417Z-literal-live/`.
+typecheck/build/HTTP smoke passed.
 
 ## CI and dependency vulnerability audit — 2026-10-29
 
@@ -45,11 +67,11 @@ Cập nhật lần cuối: 2026-10-29.
 - [x] Tasks 1–3: pinned behavior fixtures, shared command registry and all overlay types.
 - [x] Tasks 4–7: basic/block formatting, colors/alignment/rendering, brush/eraser, insert/clipboard.
 - [x] Tasks 8–9: all 15 text tools, layouts, settings/import and focus/fullscreen.
-- [x] Task 10: complete parity matrix, regression checks, review and CT102 release including finished parallel changes.
+- [x] Task 10: complete parity matrix, regression checks and review including finished parallel changes.
 
 Design: `docs/superpowers/specs/2026-10-29-full-editing-toolbar-design.md`.
 Plan: `docs/superpowers/plans/2026-10-29-full-editing-toolbar.md`.
-Progress log 2026-10-29: planning requested by user; second screenshot explicitly adds popup subpanels to acceptance. Implementation subsequently completed and deployed: cc8b061-worktree-4b3d33dba0da;188 server+359 web PASS,7 Windows skips; backup20261029T133149Z-toolbar-full. Detailed implementation record: docs/superpowers/plans/2026-10-29-full-editing-toolbar-progress.md.
+Progress log 2026-10-29: planning requested by user; second screenshot explicitly adds popup subpanels to acceptance. Implementation subsequently completed; 188 server +359 web tests passed, with seven Windows skips. Detailed implementation record: docs/superpowers/plans/2026-10-29-full-editing-toolbar-progress.md.
 
 ## Rendering compatibility audit and implementation — 2026-10-29
 
@@ -65,15 +87,7 @@ Follow-up 2026-10-29: shared policy and basic block targets are implemented; ext
 
 Background follow-up 2026-10-29: a separate hidden Obsidian 1.14.5 now supplies PNG/DOM/computed-style references without OS focus or input. Quoted/list tables (including empty columns and edit/Undo prefixes), compound heading paths and the observed six-level embed limit are implemented. Typography corrections are covered by measured-style assertions. Full visual acceptance across themes/widths and advanced container cases remain open.
 
-Deployment verification 2026-10-29: user requested deployment. CT102 already runs `cc8b061-worktree-4b3d33dba0da` with identical hashes for all 159 current runtime sources/manifests. Runtime checksums, exact image ID, health/build, served index and service/retry timer passed; no redundant restart or vault mutation was needed.
-
 Progress log 2026-10-29: user authorized implementation. Critical fixes include regression fixtures, real CodeMirror browser checks and independent review; note source remains unchanged during rendering. Detailed evidence, scope and remaining work: `docs/superpowers/plans/2026-10-29-rendering-parity-progress.md`. No deployment in this batch.
-
-## CT102 deployment of toolbar and literal-text fix — 2026-10-29
-
-- [x] Package the current source snapshot including both finished FR-2 changes; build a Linux runtime image without copying Windows dependencies.
-- [x] Back up runtime configuration and app data, switch only WebObsidian, verify health/build/assets/auth/settings and resume the retry timer.
-- [x] Record installed snapshot/image and rollback backup in `docs/INSTALLATION_CT102.md`. Installed `ec98d13-worktree-c7914377d6f8`; both toolbar and literal `<LS_BEN>` fixes included. Backup `/opt/webobsidian/backups/20261029T113133Z-toolbar/`; previous image retained. No Git commit/push.
 
 ## Color and selection formatting — 2026-10-29
 
@@ -81,7 +95,7 @@ Cập nhật lần cuối: 2026-10-29.
 
 - [x] FR-2: text/background palettes and reset on existing toolbars; Obsidian-compatible source and safe preview rendering.
 - [x] FR-2: floating selection toolbar, selection preservation, viewport placement, Escape and read-only guards.
-- [x] Verify commands, rendering, browser interactions, full tests, typecheck and build. Final run: 186 server + 205 web tests pass (7 Windows symlink skips); 48 browser assertions across desktop/mobile, typecheck, build and disposable HTTP smoke pass. Independent review findings fixed with regressions for nested spans, Markdown block prefixes and inline code. Subsequently deployed with the literal-text fix at the user's request (see CT102 deployment above).
+- [x] Verify commands, rendering, browser interactions, full tests, typecheck and build. Final run: 186 server + 205 web tests pass (7 Windows symlink skips); 48 browser assertions across desktop/mobile, typecheck, build and disposable HTTP smoke pass. Independent review findings fixed with regressions for nested spans, Markdown block prefixes and inline code.
 
 Design/implementation: `docs/superpowers/plans/2026-10-29-color-toolbar.md`.
 
@@ -2159,3 +2173,31 @@ Cập nhật lần cuối: 2026-10-16 (issue #36 reveal active file in explorer;
 - 2026-10-16: Floating scroll-aware document outline (issue #32, PRD 1.11) — `DocOutline.tsx` (parse heading bỏ qua frontmatter/code fence, marker theo cấp, active theo scroll qua `lineBlockAtHeight`, hover mở panel, click cuộn mượt), gắn trong `Editor.tsx`, style `.doc-outline` trong `obsidian.css`. Verify: typecheck sạch; chưa kiểm tra thủ công trên trình duyệt.
 - 2026-10-16: Sửa click outline nổi (issue #32) cuộn thiếu ở note dài — `DocOutline.tsx` `go()` dùng `EditorView.scrollIntoView(pos, {y:'start', yMargin})` + 1 lượt chốt lại sau 150ms thay cho `scrollTo(lineBlockAt().top, smooth)`: dòng nằm xa viewport chỉ có chiều cao ƯỚC LƯỢNG tới khi được render/đo, nên offset tính một lần bị thiếu và animation smooth bị CodeMirror huỷ khi đo lại (dừng cách heading hàng nghìn px, section active sai). Verify: click chuột thật trên 5 heading (xa xuôi, xa ngược, giữa, tiêu đề trùng, gần) đều tới đúng heading + đúng section active; typecheck/build sạch.
 - 2026-10-16: Outline nổi — cuộn có easing (ease-in-out cubic) khi click heading (issue #32): `DocOutline.tsx` `go()` chạy animation rAF tự viết (chậm → nhanh → chậm; thời lượng 300–900ms theo khoảng cách; tôn trọng `prefers-reduced-motion`; huỷ khi người dùng wheel/touch/click/phím hoặc khi outline unmount). Mỗi frame đi đúng phần quãng đường CÒN LẠI tính từ vị trí hiện tại tới đích, đích tính lại mỗi frame (ước lượng chiều cao dòng của CodeMirror đổi khi dòng được render/đo; khi heading đã render thì nhắm vị trí thật) → không giật khi CodeMirror re-measure và không còn cú giật cuối. Verify (click chuột thật + lấy mẫu scrollTop mỗi frame): xuống xa tốc độ 1→~130→0 px/frame ~870ms, lên xa tới H1 mượt, wheel giữa chừng dừng ngay, reduced-motion nhảy tức thì, chuyển Source giữa chừng không lỗi; typecheck/build sạch.
+
+
+## 2026-10-30: adaptive toolbar, drafts and conflicts
+
+Status: in progress. Execution order: container-sized one-row toolbar with More menu, then persistent local drafts, then version-conflict resolution. Existing explicit scroll/wrap layouts remain supported. See `docs/superpowers/plans/2026-10-30-drafts-conflicts-adaptive-toolbar.md`.
+
+
+### 2026-10-30 — drafts/conflicts/toolbar implementation
+
+- [x] Adaptive one-row toolbar measured against its editor container, with More menu and existing Scroll/Wrap compatibility.
+- [x] Persistent scoped local drafts, revision-aware acknowledgements, recovery/export/discard, lifecycle integration.
+- [x] CAS for normal editor saves and editable conflict comparison with explicit retry and create-only copies.
+- [ ] Manual actual browser zoom 125/150/200%, mobile keyboard and packaged desktop visual acceptance.
+
+Verification and scope: `docs/superpowers/plans/2026-10-30-drafts-conflicts-adaptive-toolbar-progress.md`. Git merge UI remains a separate future stage.
+
+### 2026-10-30 — follow-up review
+
+- [x] Исправить подтверждённые проблемы сохранности журнала, scope и запоздалых подтверждений.
+- [x] Проверить настоящий browser zoom 100/125/150/200% при трёх ширинах боковой области.
+- [x] Проверить геометрию overlay/resizing клавиатуры, панорамирования, меню/палитр и диалога конфликтов.
+- [ ] Проверить физическую iOS/Android клавиатуру на устройстве; доступного устройства в этой среде нет.
+
+Отчёт: `docs/superpowers/plans/2026-10-30-drafts-conflicts-adaptive-toolbar-review.md`.
+
+## Remote MCP (2026-10-30)
+
+Implementation and validation ledger: [remote MCP plan](docs/superpowers/plans/2026-10-30-remote-mcp.md). Local stdio compatibility, shared operations, HTTP auth, packaging and docs are tracked there. Public HTTPS deployment and live Perplexity Pro smoke are separate acceptance steps.

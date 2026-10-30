@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { indexing } from '../services/indexing/coordinator.js';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import { qmd } from '../services/search.js';
@@ -26,6 +27,7 @@ export function filterFromQuery(query: Record<string, unknown>): TaskFilter {
 /** Shared by GET /api/tasks (web) and GET /api/v1/tasks (agent) — one place
  *  that loads the index and applies the filter, so both routes stay identical. */
 export async function listTasks(query: Record<string, unknown>): Promise<{ tasks: TaskRecord[] }> {
+  if (indexing.isStarted) indexing.assertReady();
   const tasks = await qmd.allTasks();
   return { tasks: filterTasks(tasks, filterFromQuery(query)) };
 }
