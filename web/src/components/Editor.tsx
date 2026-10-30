@@ -1,17 +1,17 @@
 import {captureContext,executeCommand,commands as toolbarCommands} from '../lib/toolbar/registry';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import DocOutline from './DocOutline';
 import { Compartment, EditorState, Prec } from '@codemirror/state';
 import { EditorView, keymap, highlightActiveLine, drawSelection, rectangularSelection, crosshairCursor } from '@codemirror/view';
 import { defaultKeymap, simplifySelection, history, historyKeymap } from '@codemirror/commands';
-import { editorStructure } from '../lib/editorStructure';
+import { editorStructure, outlineMarkdown, persistentFolding } from '../lib/editorStructure';
 import { search, searchKeymap } from '@codemirror/search';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { yamlFrontmatter } from '@codemirror/lang-yaml';
 import { languages } from '@codemirror/language-data';
 import { syntaxHighlighting } from '@codemirror/language';
 import { obsidianHighlightStyle, literalAngleColors } from '../lib/highlight';
-import { useStore } from '../lib/store';
+import { useStore, documentSessions } from '../lib/store';
 import type { TreeNode } from '../lib/api';
 import { obsidianKeymap } from '../lib/editorCommands';
 import Icon from './Icon';
@@ -55,6 +55,11 @@ import { humanizeTitle } from '../lib/title';
 import { deleteEmbeddedImage } from '../lib/imageDelete';
 
 const titleOf = (path: string | null) => (path ? humanizeTitle(path) : '');
+const subscribeDocumentScope = (listener:()=>void) => {
+  window.addEventListener('draft-status',listener);
+  window.addEventListener('draft-scope-change',listener);
+  return ()=>{window.removeEventListener('draft-status',listener);window.removeEventListener('draft-scope-change',listener);};
+};
 
 // Reading mode = the same Live Preview editor, made read-only via this compartment.
 const readonlyExt = (reading: boolean) =>
@@ -70,6 +75,7 @@ export default function Editor() {
   const readonlyComp = useRef(new Compartment()).current;
   const applyingExternal = useRef(false);
   const activePath = useStore((s) => s.activePath);
+  const documentScope=useSyncExternalStore(subscribeDocumentScope,()=>activePath?documentSessions.get(activePath)?.key.scopeId??'':'',()=> '');
   const content = useStore((s) => s.content);
   const setContent = useStore((s) => s.setContent);
   const save = useStore((s) => s.save);
@@ -204,10 +210,11 @@ export default function Editor() {
         search({ top: true }),
         keymap.of([{ key: 'Escape', run: simplifySelection }, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
         editorStructure,
+        persistentFolding(documentScope,activePath??''),
         // GFM base so Strikethrough/Table/TaskList nodes exist (Obsidian dialect);
         // codeLanguages lazy-loads grammars for fenced blocks (Obsidian: Prism).
         // YAML front matter (--- … ---) is parsed as YAML; the rest stays Markdown.
-        yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: languages }) }),
+        yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: languages,extensions:[outlineMarkdown] }) }),
         suggesterPlugin,
         // Obsidian token palette via CSS vars (works in both themes); markdown
         // structure styling is owned by the Live Preview decorations.
@@ -252,7 +259,7 @@ export default function Editor() {
       v.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePath]);
+  }, [activePath,documentScope]);
 
   // Sync the editor doc when `content` changes from OUTSIDE the editor — e.g. the
   // active note's content arrives asynchronously after reload/hydrate, or is

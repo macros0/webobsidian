@@ -3,14 +3,16 @@
 ## Editor indentation and folding — 2026-10-30
 
 - [x] Add four-column tab stops, literal Tab insertion and list/selection indentation with Shift-Tab outdent.
-- [x] Add clickable folding for headings, nested indentation, complete fenced code blocks and individual indented code statements; preserve code text literally and stop at the enclosing fence.
+- [x] Add clickable folding for headings and nested indentation, including individual indented code statements; preserve code text literally and stop at the enclosing fence.
 - [x] Indent/outdent a folded parent together with its hidden descendants; keep folding visual and support undo.
 - [x] Add fenced-code indentation guides, standard folding shortcuts and command-palette fold/unfold actions.
 - [x] Verify structural boundaries, readonly protection, mixed indentation and actual Editor keyboard/click behavior in Live Preview and Source.
 
-Progress 2026-10-30: five unit tests and the actual React Editor browser regression passed; web typecheck passed. Full tests/build recorded in the task result. Fold state is local to the current editor instance.
+Progress 2026-10-30: structural unit tests and the actual React Editor browser regression passed; web typecheck passed. Full tests/build recorded in the task result.
 
 Follow-up 2026-10-30: the original ABAP screenshot requires folding inside fenced code, not only the enclosing block. Removed the code-interior exclusion, bounded nested folds by code syntax nodes, and added independent fold/unfold clicks for both ABAP calls in Live Preview and Source. Seven structural unit tests and the browser regression passed before full verification.
+
+Original comparison 2026-10-30: inspected installed Obsidian 1.14.5 in an isolated synthetic vault. Measurements in `tests/fixtures/rendering/obsidian-folding.json` confirm inline controls at the first non-whitespace character (no left gutter), no generic paragraph or enclosing code-fence folds, and saved fold state after reopening. Four typed spaces remain four spaces; both tabs and spaces participate in indentation folding. Web now follows those rules and saves view state in browser storage scoped by vault and path, without storing note text. Browser regressions cover document recreation, vault isolation and a deep heading restored after asynchronous hydration of a 5,000-line note.
 
 ## Draft recovery usability — 2026-10-30
 

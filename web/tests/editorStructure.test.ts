@@ -1,11 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { EditorState } from '@codemirror/state';
 import { markdown } from '@codemirror/lang-markdown';
 import { foldable, foldEffect, foldedRanges } from '@codemirror/language';
-import { indentFold, editorStructure, tabIndent, outdentOutline } from '../src/lib/editorStructure';
+import { indentFold, editorStructure, tabIndent, outdentOutline, outlineMarkdown } from '../src/lib/editorStructure';
 
-const state = (doc: string, anchor = 0) => EditorState.create({doc, selection:{anchor}, extensions:[markdown(), editorStructure]});
+const state = (doc: string, anchor = 0) => EditorState.create({doc, selection:{anchor}, extensions:[markdown({extensions:[outlineMarkdown]}), editorStructure]});
+test('fold controls match measured original Obsidian for spaces, tabs and ABAP',()=>{
+  const original=JSON.parse(readFileSync(new URL('../../tests/fixtures/rendering/obsidian-folding.json',import.meta.url),'utf8'));
+  for(const sample of original.observations){
+    const s=state(sample.text),actual=[];
+    for(let n=1;n<=s.doc.lines;n++){const line=s.doc.line(n);if(foldable(s,line.from,line.to))actual.push({line:n,offset:line.text.match(/^[\t ]*/)![0].length});}
+    assert.deepEqual(actual,sample.indicators.map((row:{line:number;offset:number})=>({line:row.line,offset:row.offset})),sample.name);
+    assert.equal(s.doc.toString(),sample.text,'folding does not normalize pasted whitespace');
+  }
+});
 test('indent folding stops at siblings and keeps intervening blank lines', () => {
   const s=state('parent\n\tchild\n\n\t\tgrandchild\nsibling');
   assert.deepEqual(indentFold(s,0,s.doc.line(1).to),{from:6,to:s.doc.line(4).to});
@@ -26,10 +36,11 @@ test('tabs use four columns and spaces may form nested text too',()=>{
   assert.equal(s.tabSize,4);
   assert.equal(indentFold(s,s.doc.line(2).from,s.doc.line(2).to)?.to,s.doc.line(3).to);
 });
-test('Markdown headings and whole fenced code blocks fold alongside nested code lines',()=>{
+test('Obsidian folds headings and indentation without extra whole-code or paragraph folds',()=>{
   const s=state('# Title\nbody\n## Child\nchild body\n# Next\n```abap\nparent\n\tchild\n```');
   assert.equal(foldable(s,0,s.doc.line(1).to)?.to,s.doc.line(4).to);
-  assert.ok(foldable(s,s.doc.line(6).from,s.doc.line(6).to));
+  assert.equal(foldable(s,s.doc.line(6).from,s.doc.line(6).to),null);
+  const plain=state('first line\nsecond line');assert.equal(foldable(plain,0,plain.doc.line(1).to),null);
   assert.deepEqual(indentFold(s,s.doc.line(7).from,s.doc.line(7).to),{from:s.doc.line(7).to,to:s.doc.line(8).to});
 });
 test('ABAP call continuation folds independently of the next call and the enclosing code fence',()=>{
