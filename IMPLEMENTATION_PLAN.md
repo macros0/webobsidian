@@ -1,5 +1,45 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+CI follow-up 2026-10-30: the fork-main PR reproduced a hidden Electron selection-pixel timing race. The fixture now isolates its profile, disables background throttling, waits for the exact viewport and measured selection coverage, then waits up to four seconds for the selected compositor frame. All original theme, width, selected-pixel, unselected-background and margin assertions remain intact; no runtime/CSS changes are involved.
+
+The next CI run passed the complete test suite and exposed a smoke-startup race: `/healthz` was ready before the asynchronous initial index scan, so missing-file resolution correctly returned `503` rather than `404`. The smoke fixture now waits on authenticated `/api/index/status` availability and initial-scan completion before its existing resolver assertions.
+
+## Editor indentation and folding — 2026-10-30
+
+- [x] Add four-column tab stops, literal Tab insertion and list/selection indentation with Shift-Tab outdent.
+- [x] Add clickable folding for headings and nested indentation, including individual indented code statements; preserve code text literally and stop at the enclosing fence.
+- [x] Indent/outdent a folded parent together with its hidden descendants; keep folding visual and support undo.
+- [x] Add fenced-code indentation guides, standard folding shortcuts and command-palette fold/unfold actions.
+- [x] Verify structural boundaries, readonly protection, mixed indentation and actual Editor keyboard/click behavior in Live Preview and Source.
+
+Progress 2026-10-30: structural unit tests and the actual React Editor browser regression passed; web typecheck passed. Full tests/build recorded in the task result.
+
+Follow-up 2026-10-30: the original ABAP screenshot requires folding inside fenced code, not only the enclosing block. Removed the code-interior exclusion, bounded nested folds by code syntax nodes, and added independent fold/unfold clicks for both ABAP calls in Live Preview and Source. Seven structural unit tests and the browser regression passed before full verification.
+
+Original comparison 2026-10-30: inspected installed Obsidian 1.14.5 in an isolated synthetic vault. Measurements in `tests/fixtures/rendering/obsidian-folding.json` confirm inline controls at the first non-whitespace character (no left gutter), no generic paragraph or enclosing code-fence folds, and saved fold state after reopening. Four typed spaces remain four spaces; both tabs and spaces participate in indentation folding. Web now follows those rules and saves view state in browser storage scoped by vault and path, without storing note text. Browser regressions cover document recreation, vault isolation and a deep heading restored after asynchronous hydration of a 5,000-line note.
+
+## Draft recovery usability — 2026-10-30
+
+- [x] Replace the persistent draft counter with an actionable unsaved-text recovery list; hide empty lists and ordinary live autosaves.
+- [x] Explain browser copies and provide Review text, Download copy and Remove browser copy actions with vault-safe removal confirmation.
+- [x] Explain deleted originals and require an explicit separate copy to recover their text.
+- [x] Extend real-browser coverage for recovery, removal, deleted originals, normal autosaves and mobile keyboard/zoom positioning.
+
+Progress 2026-10-30: recovery/viewport browser regressions, web typecheck, full `npm test` (288 server + 417 web passed; 10 server skips) and production build passed. Independent code review reported no actionable findings.
+
+## Remote MCP, indexing and editor recovery integration — 2026-10-30
+
+- [x] Integrate authenticated remote MCP alongside local stdio and scoped keys.
+- [x] Integrate cached indexing, reconciliation/hash audits and automatic search refresh.
+- [x] Integrate module-based plugins, draft recovery, conflict resolution and adaptive toolbar layouts.
+- [x] Preserve data-safety and authentication fixes with regression coverage.
+
+The upstream contribution retains one consolidated commit and source attribution.
+Runtime sources and configuration match the reviewed integrated source tree;
+upstream repository routing is applied separately in documentation and desktop metadata.
+The viewport regression waits for exact expected dimensions before its unchanged zoom
+and toolbar assertions, avoiding reads of the previous asynchronous layout.
+
 ## Review fixes — 2026-10-30
 
 - [x] R1: CLI default recovery password, including old installations.

@@ -841,6 +841,7 @@ export const useStore = create<AppState>()(
           const recent = isFolder ? s.recent : [path, ...s.recent.filter((p) => p !== path)].slice(0, 20);
           return { tabs, activePath: path, content, locked, lockReason, unlockMode, dirty: false, recent, ...pushHistory(s, path) };
         });
+        refreshSaveStatus();
       },
 
       keepTab: (path) => set((s) => ({

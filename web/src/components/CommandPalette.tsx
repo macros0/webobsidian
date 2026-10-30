@@ -1,6 +1,7 @@
 import {pluginCommands,usePluginRevision} from '../lib/plugins/registry';
 import {commands as editorToolbarCommands,captureContext,executeCommand} from '../lib/toolbar/registry';
 import {getActiveEditor} from '../lib/activeEditor';
+import {foldAll,unfoldAll,foldCode,unfoldCode} from '@codemirror/language';
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../lib/store';
 import { api, type TreeNode } from '../lib/api';
@@ -84,6 +85,12 @@ export default function CommandPalette() {
       { id: 'reading', title: 'View: Reading mode', run: () => setViewMode('reading') },
       { id: 'live', title: 'View: Live edit', run: () => setViewMode('live') },
       { id: 'source', title: 'View: Source', run: () => setViewMode('source') },
+      ...([
+        ['fold-more','Fold more',foldCode],['fold-less','Fold less',unfoldCode],
+        ['fold-all','Fold all headings and lists',foldAll],['unfold-all','Unfold all headings and lists',unfoldAll],
+      ] as const).map(([id,title,command])=>({id,title,run:()=>{
+        const view=getActiveEditor();if(view){command(view);view.focus();}
+      }})),
       { id: 'reindex', title: 'Rebuild search index', run: async () => {
           notify('Rebuilding search index…', 0);
           try {

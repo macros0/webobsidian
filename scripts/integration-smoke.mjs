@@ -64,6 +64,20 @@ try {
   const request = (url, options = {}) => fetch(`${base}${url}`, {
     ...options, headers: { cookie, 'content-type': 'application/json', ...options.headers },
   });
+  // /healthz means the process is listening. Resolver assertions require the
+  // asynchronous initial index scan to finish before a missing file is a 404.
+  let indexStatus;
+  const indexDeadline = Date.now() + 10_000;
+  do {
+    const response = await request('/api/index/status');
+    assert.equal(response.status, 200);
+    indexStatus = await response.json();
+    if (indexStatus.initialScanComplete && indexStatus.available) break;
+    if (server.exitCode !== null) throw new Error(`server exited during indexing: ${output}`);
+    await delay(25);
+  } while (Date.now() < indexDeadline);
+  assert.ok(indexStatus?.initialScanComplete && indexStatus.available,
+    `initial index did not become ready: ${JSON.stringify(indexStatus)}\n${output}`);
   const settings = await (await request('/api/settings')).json();
   assert.equal(settings.vault.trashRetentionDays, 0);
   const locked = await (await request('/api/files/content?path=notes/locked.md')).json();

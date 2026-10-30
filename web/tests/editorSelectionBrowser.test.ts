@@ -30,7 +30,7 @@ test('Live code block selection paints over the block background, including wrap
           selection:{anchor:doc.indexOf('first code')},
           extensions:[markdown(), drawSelection(), highlightActiveLine(), EditorView.lineWrapping,
             livePreviewState, livePreviewPlugin, livePreviewTheme]})});
-        view.focus(); await settle();
+        view.focus(); await document.fonts.ready; await settle();
         const lines = [...view.contentDOM.querySelectorAll('.HyperMD-codeblock-bg')];
         const point = (line, bottom=false) => {
           const r = line.getBoundingClientRect();
@@ -49,10 +49,18 @@ test('Live code block selection paints over the block background, including wrap
           clientWidth:view.scrollDOM.clientWidth,
           backgroundPixel, wrappedHeight:lines[2].getBoundingClientRect().height, lineHeight:lines[1].getBoundingClientRect().height};
       };
-      window.selectCode = async () => {
+      window.selectCode = async (points) => {
         view.dispatch({selection:{anchor:doc.indexOf('first code'), head:doc.indexOf('last code line')+'last code line'.length}});
-        await settle();
-        if (!view.dom.querySelector('.cm-selectionBackground')) throw Error('Selection did not render');
+        // Wait for CodeMirror's measured selection rectangles, not just for a
+        // decoration node to exist. Hidden Linux surfaces can paint later.
+        const deadline=performance.now()+4000;
+        let covered=false;
+        do {
+          await settle();
+          const rects=[...view.dom.querySelectorAll('.cm-selectionBackground')].map(el=>el.getBoundingClientRect());
+          covered=['wrapped','empty','active'].every(key=>rects.some(r=>points[key].x>=r.left&&points[key].x<r.right&&points[key].y>=r.top&&points[key].y<r.bottom));
+        } while(!covered&&performance.now()<deadline);
+        if (!covered) throw Error('Selection geometry did not cover the code sample points');
         if (!view.contentDOM.querySelector('.HyperMD-codeblock-bg.cm-activeLine')) throw Error('Missing active code line');
       };
     ` }, bundle: true, format: 'iife', platform: 'browser', loader: { '.woff2': 'file', '.woff': 'file', '.ttf': 'file' }, define: { 'import.meta.env.DEV': 'false' },
@@ -60,18 +68,35 @@ test('Live code block selection paints over the block background, including wrap
     await writeFile(join(dir, 'index.html'), '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><script src="fixture.js"></script>');
     await writeFile(join(dir, 'runner.cjs'), `
       const {app,BrowserWindow}=require('electron');
+      app.setPath('userData',${JSON.stringify(join(dir,'profile'))});
       app.whenReady().then(async()=>{
-        const win=new BrowserWindow({show:false,width:1000,height:800,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
+        const win=new BrowserWindow({show:false,width:1000,height:800,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
         await win.loadFile(${JSON.stringify(join(dir, 'index.html'))});
         win.webContents.debugger.attach('1.3');
         await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {width:1000,height:800,deviceScaleFactor:1,mobile:false});
+        const deadline=Date.now()+4000;
+        let size;
+        do {
+          size=await win.webContents.executeJavaScript('[innerWidth,innerHeight]');
+          if(size[0]===1000&&size[1]===800)break;
+          await new Promise(resolve=>setTimeout(resolve,10));
+        }while(Date.now()<deadline);
+        if(size[0]!==1000||size[1]!==800)throw Error('Viewport mismatch '+JSON.stringify(size));
         const results=[];
         for(const theme of ['theme-light','theme-dark','theme-ctp-mocha']) for(const width of [900,390]) {
           const points=await win.webContents.executeJavaScript('window.prepare('+JSON.stringify(theme)+','+width+')');
-          const pixel=async(p)=>Array.from((await win.webContents.capturePage({x:p.x,y:p.y,width:1,height:1})).toBitmap()).slice(0,3);
+          const pixel=async(p)=>Array.from((await win.webContents.capturePage({x:p.x,y:p.y,width:1,height:1},{stayHidden:true,stayAwake:true})).toBitmap()).slice(0,3);
           const before={}; for(const key of ['wrapped','empty','active','outside','leftMargin','rightMargin']) before[key]=await pixel(points[key]);
-          await win.webContents.executeJavaScript('window.selectCode()');
-          const after={}; for(const key of ['wrapped','empty','active','outside','leftMargin','rightMargin']) after[key]=await pixel(points[key]);
+          await win.webContents.executeJavaScript('window.selectCode('+JSON.stringify(points)+')');
+          // DOM geometry is necessary but the compositor may still hold the
+          // previous frame. Keep the pixel regression strict, with a bounded
+          // wait for the selected frame rather than accepting a stale capture.
+          let after={};const paintDeadline=Date.now()+4000;
+          do {
+            for(const key of ['wrapped','empty','active','outside','leftMargin','rightMargin']) after[key]=await pixel(points[key]);
+            if(['wrapped','empty','active'].every(key=>JSON.stringify(after[key])!==JSON.stringify(before[key])))break;
+            await new Promise(resolve=>setTimeout(resolve,16));
+          }while(Date.now()<paintDeadline);
           results.push({theme,width,before,after,backgroundPixel:points.backgroundPixel,blockLeft:points.blockLeft,blockWidth:points.blockWidth,clientWidth:points.clientWidth,wrappedHeight:points.wrappedHeight,lineHeight:points.lineHeight});
         }
         console.log('SELECTION_RESULTS:'+JSON.stringify(results));win.destroy();app.quit();
