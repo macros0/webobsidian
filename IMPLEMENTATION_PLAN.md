@@ -6,6 +6,8 @@
 - [x] Verify repeated navigation, single toolbar/notice/editor, Source/Live/Reading transitions and unmount in a browser regression test.
 - [x] Complete full test suite, web build and independent review: 345 server and 456 web tests passed, 10 server skips. Independent review reported no actionable findings.
 
+Fork PR validation follow-up: Linux headless Chromium initially selected a different viewport before mounting the first toolbar. The navigation fixture now sets and asserts an explicit 1440px desktop viewport through CDP and waits for the actual editor/notice/mode transitions. Exact toolbar/editor/notice counts and the duplicate-key regression assertions remain intact.
+
 ## Saved browser copy cleanup — 2026-11-01
 
 - [x] Compare recovery copies against scoped server reads and automatically remove only exact matching snapshots.
