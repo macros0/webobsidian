@@ -3,6 +3,7 @@ import { afterEach, beforeEach, mock, test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 import { ApiError, api, setUnlock, type TreeNode } from '../src/lib/api';
 import { GRAPH_PATH, TASKS_PATH, isViewPath, resetDraftScope, useStore } from '../src/lib/store';
+import {getCachedVaultPreferences} from '../src/lib/vaultPreferences';
 
 // Workspace persistence uses browser timers; run them deterministically in Node.
 Object.defineProperty(globalThis, 'window', {
@@ -20,6 +21,7 @@ beforeEach(() => {
   mock.timers.enable({ apis: ['setTimeout'] });
   resetDraftScope();
   mock.method(api,'draftScope',async()=>({scopeId:'test-scope'}));
+  mock.method(api,'vaultPreferences',async()=>getCachedVaultPreferences());
   useStore.setState(useStore.getInitialState(), true);
   mock.method(api, 'read', async (path: string) => ({ version:'v1', content: `# ${path}` }));
   mock.method(api, 'write', async () => ({ ok: true, version:'v1' }));

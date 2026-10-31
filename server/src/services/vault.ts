@@ -1,3 +1,4 @@
+import {getAttachmentFolderSetting} from './vaultPreferences.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -10,7 +11,7 @@ import { TRASH_INDEX_NAME, deletedAtFor, forgetTrashed, readDeletedAt, recordTra
 type VaultSettings = Awaited<ReturnType<typeof getSettings>>['vault'];
 const mutationSettings = new AsyncLocalStorage<{ vault: VaultSettings; active: boolean }>();
 
-async function getVaultSettings(): Promise<VaultSettings> {
+export async function getVaultSettings(): Promise<VaultSettings> {
   const context = mutationSettings.getStore();
   return context?.active ? context.vault : (await getSettings()).vault;
 }
@@ -37,6 +38,7 @@ export interface TreeNode {
   mtime?: number; // last-modified (ms) — for sort-by-modified-time
   ctime?: number; // created/birth (ms) — for sort-by-created-time
   children?: TreeNode[];
+  attachmentFolder?: boolean;
   /** Set by `services/locks.ts` on tree responses: the browser session must not edit this path. */
   locked?: boolean;
   /** Why it is locked — shown to the human in the editor banner. */
@@ -145,12 +147,30 @@ export function toRel(root: string, abs: string): string {
 export async function ensureVault(): Promise<void> {
   const root = await getVaultRoot();
   await fs.mkdir(root, { recursive: true });
+  const { recoverPendingRenames } = await import('./renameLinks.js');
+  await recoverPendingRenames();
 }
 
 /** Build the full tree (folders + files), skipping ignored dirs. */
 export async function listTree(): Promise<TreeNode> {
   const root = await getVaultRoot();
   await fs.mkdir(root, { recursive: true });
+  // Bad attachment configuration must not prevent browsing or repairing the vault.
+  const attachmentSetting = await attachmentFolderSetting().catch(() => null);
+  const attachmentSubdir = attachmentSetting && attachmentSetting !== '/' && attachmentSetting !== './'
+    ? path.posix.normalize(attachmentSetting).replace(/\/$/, '').toLowerCase() : '';
+  const markAttachments = (node: TreeNode): TreeNode => {
+    if (node.type === 'folder') {
+      const rel = node.path.toLowerCase();
+      node.attachmentFolder = !!attachmentSubdir && attachmentSubdir !== '.' && (
+        attachmentSetting?.startsWith('./')
+          ? rel === attachmentSubdir || rel.endsWith(`/${attachmentSubdir}`)
+          : rel === attachmentSubdir
+      );
+      node.children?.forEach(markAttachments);
+    }
+    return node;
+  };
 
   async function walk(absDir: string, visited: Set<string>): Promise<TreeNode[]> {
     // Symlink cycle guard: a link may point back into an ancestor or the root.
@@ -198,7 +218,7 @@ export async function listTree(): Promise<TreeNode> {
     return out;
   }
 
-  return { name: path.basename(root), path: '', type: 'folder', children: await walk(root, new Set()) };
+  return markAttachments({ name: path.basename(root), path: '', type: 'folder', children: await walk(root, new Set()) });
 }
 
 export function isTextFile(rel: string): boolean {
@@ -278,6 +298,38 @@ export async function createFolder(rel: string): Promise<void> {
   });
 }
 
+/** Obsidian paths are vault-relative, except ./ paths which are note-relative. */
+async function attachmentFolderSetting(): Promise<string> {
+  return getAttachmentFolderSetting(await getVaultRoot());
+}
+
+function checkedAttachmentPath(rel: string): string {
+  if (rel.includes('\\') || /^[a-z]:/i.test(rel) || path.posix.isAbsolute(rel) || rel.includes('\0')) {
+    throw Object.assign(new Error('Invalid attachment path'), { status: 400 });
+  }
+  const normalized = path.posix.normalize(rel);
+  if (normalized === '..' || normalized.startsWith('../')) {
+    throw Object.assign(new Error('Attachment path escapes vault'), { status: 400 });
+  }
+  return normalized === '.' ? '' : normalized;
+}
+
+export async function resolveAttachmentDir(sourcePath: string): Promise<string> {
+  const source = checkedAttachmentPath(sourcePath);
+  const setting = await attachmentFolderSetting();
+  const dir = setting === '/' || setting === '' ? '' : checkedAttachmentPath(
+    setting.startsWith('./') ? path.posix.join(path.posix.dirname(source), setting) : setting,
+  );
+  await resolveInVault(dir);
+  return resolveDirCaseInsensitive(dir);
+}
+
+/** Markdown URL relative to the source, preserving every path segment. */
+export function attachmentRelativeUrl(rel: string, sourcePath: string): string {
+  return path.posix.relative(path.posix.dirname(sourcePath || '.'), rel).split('/')
+    .map((segment) => encodeURIComponent(segment).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)).join('/');
+}
+
 /**
  * Resolve a directory path against the folders that already exist, matching each
  * segment case-insensitively. Prevents creating a case-duplicate folder (e.g. a
@@ -314,7 +366,13 @@ export async function exists(rel: string): Promise<boolean> {
   }
 }
 
-export async function rename(from: string, to: string): Promise<void> {
+export async function rename(from: string, to: string, options: import('./renameLinks.js').RenameOptions = {}): Promise<import('./renameLinks.js').RenameResult> {
+  const { renameWithLinks } = await import('./renameLinks.js');
+  return renameWithLinks({ from, to, ...options });
+}
+
+/** Internal primitive: use rename() for all user-facing renames. */
+export async function rawRename(from: string, to: string): Promise<void> {
   return withVaultMutation(async () => {
     const absFrom = await resolveInVault(from);
     const absTo = await resolveInVault(to);

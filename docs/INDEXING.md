@@ -4,6 +4,11 @@ WebObsidian maintains a server-side cache of full-text search, tags, properties,
 tasks, links and file names. Markdown files remain the source of truth. The cache
 is independent of Obsidian's IndexedDB and `.obsidian` configuration.
 
+If changes appear correctly in WebObsidian but the ordinary Obsidian desktop app
+only notices them after a restart, see [shared Synology/SMB vault troubleshooting](OBSIDIAN_NETWORK_VAULTS.md).
+The SMB Vault Watcher plugin described there runs in Obsidian; the settings below
+control the WebObsidian server.
+
 ## Startup and freshness
 
 The HTTP service starts before indexing finishes. A compatible

@@ -10,6 +10,7 @@ import { calloutIconSvg } from '../lib/callouts';
 import { openLightbox } from '../lib/imageLightbox';
 import { api } from '../lib/api';
 import { displayTitle } from '../lib/title';
+import {useVaultPreferences} from '../lib/vaultPreferences';
 
 /** Syntax-highlight a `<code class="language-x">` block with the SAME CodeMirror
  *  grammars Live Preview uses (token classes styled by the Obsidian palette). */
@@ -93,6 +94,7 @@ function setupHtmlPreview(codeEl: HTMLElement): void {
 }
 
 export default function Preview({ source }: { source?: string }) {
+  const preferences=useVaultPreferences();
   const pluginRevision=usePluginRevision();
   const storeContent = useStore((s) => s.content);
   const content = source ?? storeContent;
@@ -227,7 +229,13 @@ export default function Preview({ source }: { source?: string }) {
     if (target) {
       e.preventDefault();
       const link = target.getAttribute('data-wikilink');
-      if (link) openWikilink(link);
+      if (link) openWikilink(link, 'wiki');
+      return;
+    }
+    const markdownLink = (e.target as HTMLElement).closest('a[data-link-kind="markdown"]') as HTMLAnchorElement | null;
+    if (markdownLink) {
+      const href = markdownLink.getAttribute('href');
+      if (href) { e.preventDefault(); openWikilink(href, 'markdown'); }
       return;
     }
     // Foldable callout: clicking the title toggles its content.
@@ -270,7 +278,7 @@ export default function Preview({ source }: { source?: string }) {
   const showTitle = showInlineTitle && !!title && !(h1 && h1[1].trim().toLowerCase() === title.trim().toLowerCase());
 
   return (
-    <div className="markdown-preview" onClick={onClick} onContextMenu={onContextMenu}>
+    <div className={`markdown-preview${preferences.values.readableLineLength?' is-readable-line-width':''}`} onClick={onClick} onContextMenu={onContextMenu}>
       <div className="preview-inner">
         {showTitle && <div className="inline-title">{title}</div>}
         <div ref={bodyRef} dangerouslySetInnerHTML={{ __html: html }} />

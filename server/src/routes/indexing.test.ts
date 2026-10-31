@@ -18,7 +18,8 @@ const {updateSettingsMock}=vi.hoisted(()=>({updateSettingsMock:vi.fn()}));
 vi.mock('../services/settings.js',()=>({getSettings:async()=>settings,updateSettings:updateSettingsMock,redactSettings:(s:unknown)=>s,ensureVaultBrowsable:()=>{}}));
 vi.mock('../services/git.js',()=>({scheduleAutoCommitOnSave:()=>{}}));
 vi.mock('../middleware/auth.js',()=>({requireAuth:(req:any,res:any,next:()=>void)=>req.headers.authorization==='test'?next():res.status(401).json({error:'Unauthorized'})}));
-vi.mock('../services/search.js',()=>({qmd:{search:async()=>[],allTags:()=>[],allProperties:()=>[],queryTerms:()=>[],allTasks:async()=>[]}}));
+const {searchVaultMock}=vi.hoisted(()=>({searchVaultMock:vi.fn(async()=>[])}));
+vi.mock('../services/search.js',()=>({searchVault:searchVaultMock,qmd:{search:async()=>[],allTags:()=>[],allProperties:()=>[],queryTerms:()=>[],allTasks:async()=>[]}}));
 vi.mock('../services/links.js',()=>({backlinksFor:()=>[],graphData:()=>({nodes:[],edges:[]}),resolveLink:()=>undefined,buildLinkGraph:async()=>{}}));
 let server:Server; let base:string; let testRoot:string;
 beforeAll(async()=>{
@@ -49,6 +50,7 @@ it('validates jobs and responds without waiting for completion',async()=>{
 it('does not turn unready derived indexes into authoritative empty results',async()=>{
   for(const route of ['/api/tags','/api/properties','/api/backlinks?path=a.md','/api/graph','/api/resolve?target=a','/api/tasks'])expect((await get(route)).status).toBe(503);
   const search=await get('/api/search?q=ЕЦП');expect(search.status).toBe(200);expect(await search.json()).toMatchObject({hits:[],index:{revision:3}});
+  expect(searchVaultMock).toHaveBeenCalledWith('ЕЦП',0);
 });
 it('preserves the captured vault through a write and its completion notification',async()=>{
   const vault=await import('../services/vault.js');

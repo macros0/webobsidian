@@ -5,6 +5,10 @@ import {undo,redo,indentMore,indentLess,moveLineUp,moveLineDown,isolateHistory} 
 import {toggleInline,toggleChecklist} from '../editorCommands';
 import {applyColor} from '../colorFormatting';
 import {transformText} from './commands/textTools';
+import {useStore} from '../store';
+import {treeFilePaths} from '../tree';
+import {getCachedVaultPreferences} from '../vaultPreferences';
+import {formatInternalLink,resolveNewNoteDirectory} from '../vaultLinks';
 
 export interface ToolbarContext {view:EditorView;documentId:string;doc:Text;selection:EditorSelection}
 export type CommandResult={status:'applied'|'cancelled'|'unavailable';reason?:string};
@@ -70,7 +74,25 @@ for(const [id,label] of [['editor-copy','Copy'],['editor-cut','Cut'],['editor-pa
 },id!=='editor-copy','single');
 async function form(c:ToolbarContext,title:string,fields:DialogField[],build:(p:Record<string,string>,selected:string)=>string){const p=await services.prompt(title,fields,undefined,c);if(!p||!isContextCurrent(c))return {status:'cancelled'} as CommandResult;insert(c,build(p,c.doc.sliceString(c.selection.main.from,c.selection.main.to)));return ok;}
 add('insert-link','Link','link',c=>form(c,'Insert link',[{key:'url',label:'URL',value:'https://'},{key:'label',label:'Text',value:c.doc.sliceString(c.selection.main.from,c.selection.main.to)}],p=>'['+p.label.replace(/\]/g,'\\]')+']('+p.url.replace(/[\s()]/g,s=>encodeURIComponent(s))+')'),true,'single');
-for(const embed of [false,true])add(embed?'editor:insert-embed':'editor:insert-wikilink',embed?'Embed note':'Internal link','brackets',c=>form(c,embed?'Embed note':'Internal link',[{key:'target',label:'Note / file',value:c.doc.sliceString(c.selection.main.from,c.selection.main.to)}],p=>(embed?'!':'')+'[['+p.target.replace(/[\[\]\r\n]/g,'')+']]'),true,'single');
+for(const embed of [false,true])add(embed?'editor:insert-embed':'editor:insert-wikilink',embed?'Embed note':'Internal link','brackets',async c=>{
+ const sourcePath=useStore.getState().activePath,knownPaths=treeFilePaths(useStore.getState().tree),preferences=getCachedVaultPreferences().values;
+ const p=await services.prompt(embed?'Embed note':'Internal link',[{key:'target',label:'Note / file',value:c.doc.sliceString(c.selection.main.from,c.selection.main.to)}],undefined,c);
+ if(!p||!isContextCurrent(c)||c.view.state.readOnly||useStore.getState().activePath!==sourcePath)return {status:'cancelled'};
+ const [rawTarget,label]=p.target.trim().split('|',2);if(!rawTarget)return {status:'cancelled'};
+ const literal=knownPaths.find(path=>path.toLowerCase()===rawTarget.toLowerCase());
+ const hash=literal?-1:rawTarget.indexOf('#'),target=hash<0?rawTarget:rawTarget.slice(0,hash),fragment=hash<0?'':rawTarget.slice(hash+1);
+ const normalize=(value:string)=>{const parts:string[]=[];for(const segment of value.split('/')){if(segment==='..'){if(!parts.length)throw Error('Path must stay inside the vault');parts.pop();}else if(segment&&segment!=='.')parts.push(segment);}return parts.join('/');};
+ const sourceDir=sourcePath?.includes('/')?sourcePath.slice(0,sourcePath.lastIndexOf('/')):'';
+ const candidates:string[]=[];
+ for(const value of [...(target.startsWith('/')?[]:[(sourceDir?sourceDir+'/':'')+target]),target.replace(/^\//,'')]){try{candidates.push(normalize(value));}catch{/* a source-relative path may be valid only against its source */}}
+ const key=(value:string)=>value.toLowerCase().replace(/\.(md|markdown)$/i,'');
+ let targetPath=literal??candidates.map(candidate=>knownPaths.find(path=>key(path)===key(candidate))).find(Boolean);
+ if(!targetPath&&!target.includes('/'))targetPath=[...knownPaths].sort((a,b)=>a.split('/').length-b.split('/').length||a.localeCompare(b)).find(path=>key(path.split('/').pop()!)===key(target));
+ if(!targetPath){const directory=target.startsWith('.')?sourceDir:target.includes('/')?'':resolveNewNoteDirectory({sourcePath,preferences});const file=/\.[^./]+$/.test(target)?target:target+'.md';targetPath=normalize((directory?directory+'/':'')+file);}
+ let text=formatInternalLink({sourcePath,targetPath,label,embed,preferences,knownPaths});
+ if(fragment){if(text.includes(']('))text=text.slice(0,-1)+'#'+fragment.split('#').map(encodeURIComponent).join('#')+')';else text=text.replace(/(?=\||\]\])/,'#'+fragment);}
+ insert(c,text);return ok;
+},true,'single');
 add('insert-callout','Callout','message-square',c=>form(c,'Insert callout',[{key:'type',label:'Type',value:'note'},{key:'title',label:'Title',value:''}],(p,s)=>'> [!'+p.type.replace(/[^a-z-]/gi,'')+']'+(p.title?' '+p.title:'')+'\n'+s.split('\n').map(x=>'> '+x).join('\n')),true,'single');
 add('codeblock','Code block','code',c=>form(c,'Code block',[{key:'language',label:'Language',value:''}],(p,s)=>{const fence='`'.repeat(Math.max(3,...[...s.matchAll(/`+/g)].map(m=>m[0].length+1)));return fence+p.language.replace(/[\r\n`]/g,'')+'\n'+s+'\n'+fence;}),true,'single');
 add('editor:insert-mathblock','Math block','code',c=>insert(c,'$$\n'+c.doc.sliceString(c.selection.main.from,c.selection.main.to)+'\n$$'),true,'single');

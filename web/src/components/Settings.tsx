@@ -6,6 +6,7 @@ import { themeClass } from '../lib/theme';
 import Icon from './Icon';
 import ToolbarSettings from './toolbar/ToolbarSettings';
 import {useIndexStatus,indexStatusMessage,refreshIndexStatus,resetIndexStatus} from '../lib/indexStatus';
+import {useVaultPreferences,getVaultPreferences,resetVaultPreferences,importMobileToolbarCommands,mobileToolbarCommandMappings} from '../lib/vaultPreferences';
 
 type Section = 'vault' | 'git' | 'api' | 'sharing' | 'plugins' | 'appearance' | 'toolbar' | 'account' | 'about';
 
@@ -97,7 +98,8 @@ function IndexSettings(){
   </section>;
 }
 
-function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
+function VaultSettings({ s, reload }: { s: any; reload: () => Promise<unknown> }) {
+  const preferences=useVaultPreferences();
   const autoReveal = useStore((st) => st.autoReveal);
   const setAutoReveal = useStore((st) => st.setAutoReveal);
   const showAttachmentFolders = useStore((st) => st.showAttachmentFolders);
@@ -105,36 +107,71 @@ function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
   const [path, setPath] = useState(s.vault.path);
   const [deleteMode, setDeleteMode] = useState(s.vault.deleteMode ?? 'trash');
   const [retention, setRetention] = useState(String(s.vault.trashRetentionDays ?? 0));
+  const confirmedDeleteMode=useRef(s.vault.deleteMode??'trash');
+  const confirmedRetention=useRef(s.vault.trashRetentionDays??0);
+  const [following,setFollowing]=useState(!!s.vault.followObsidianDeletion);
   const [browser, setBrowser] = useState<any>(null);
+  const [saving,setSaving]=useState<string|null>(null);
+  const [errors,setErrors]=useState<Record<string,string>>({});
+  useEffect(()=>{confirmedDeleteMode.current=s.vault.deleteMode??'trash';setDeleteMode(confirmedDeleteMode.current);},[s.vault.deleteMode]);
+  useEffect(()=>{confirmedRetention.current=s.vault.trashRetentionDays??0;setRetention(String(confirmedRetention.current));},[s.vault.trashRetentionDays]);
+  useEffect(()=>{setPath(s.vault.path);},[s.vault.path]);
+  useEffect(()=>{setFollowing(!!s.vault.followObsidianDeletion);},[s.vault.followObsidianDeletion]);
+  const errorFor=(field:string,error:unknown)=>setErrors(e=>({...e,[field]:error instanceof Error?error.message:String(error)}));
+  const clearError=(field:string)=>setErrors(e=>({...e,[field]:''}));
   // Whole days, 0 (keep forever) … 3650. Invalid input snaps back to the saved value.
   const saveRetention = async () => {
     const n = Number(retention);
-    const saved = s.vault.trashRetentionDays ?? 0;
+    const saved = confirmedRetention.current;
     if (!Number.isInteger(n) || n < 0 || n > 3650) {
       setRetention(String(saved));
+      errorFor('retention','Enter whole days from 0 to 3650.');
       return;
     }
     if (n === saved) return;
-    await api.putSettings({ vault: { trashRetentionDays: n } });
-    await reload();
+    setSaving('retention');clearError('retention');
+    let committed=false;
+    try{await api.putSettings({ vault: { trashRetentionDays: n } });committed=true;confirmedRetention.current=n;await reload();}
+    catch(error){setRetention(String(confirmedRetention.current));errorFor('retention',committed?`Saved, but could not refresh: ${String(error)}`:error);}
+    finally{setSaving(null);}
   };
   const save = async () => {
+    if(!path.trim()){errorFor('path','Vault path must not be blank.');return;}
+    setSaving('path');clearError('path');
     try {
       await useStore.getState().save();
       await api.putSettings({ vault: { path } });
       resetIndexStatus();
       refreshIndexStatus().catch(()=>{});
       resetDraftScope();
+      resetVaultPreferences(path);
+      void getVaultPreferences().catch(()=>{});
       useStore.setState({tabs:[],activePath:null,content:'',dirty:false,splitPath:null,splitContent:''});
       await useStore.getState().loadTree();
       await reload();
       useStore.getState().notify('Vault changed. Local drafts remain scoped to the previous vault.');
-    }catch(error){useStore.getState().notify(String(error));}
+    }catch(error){errorFor('path',error);}
+    finally{setSaving(null);}
   };
   const saveDeleteMode = async (mode: string) => {
     setDeleteMode(mode);
-    await api.putSettings({ vault: { deleteMode: mode } });
-    await reload();
+    setSaving('deleteMode');clearError('deleteMode');
+    let committed=false;
+    try{await api.putSettings({ vault: { deleteMode: mode } });committed=true;confirmedDeleteMode.current=mode;await Promise.all([reload(),getVaultPreferences()]);}
+    catch(error){setDeleteMode(confirmedDeleteMode.current);errorFor('deleteMode',committed?`Saved, but could not refresh: ${String(error)}`:error);}
+    finally{setSaving(null);}
+  };
+  const followObsidianDeletion=async(follow:boolean)=>{
+    setSaving('deletionSource');clearError('deletionSource');
+    try{await api.putSettings({vault:{followObsidianDeletion:follow}});setFollowing(follow);await Promise.all([reload(),getVaultPreferences()]);}
+    catch(error){errorFor('deletionSource',error);}
+    finally{setSaving(null);}
+  };
+  const importToolbar=async()=>{
+    setSaving('toolbar');clearError('toolbar');
+    try{const imported=importMobileToolbarCommands(s.ui.editingToolbar,preferences.values.mobileToolbarCommands);await api.putSettings({ui:{editingToolbar:imported.config}});window.dispatchEvent(new CustomEvent('editing-toolbar-config',{detail:imported.config}));await reload();}
+    catch(error){errorFor('toolbar',error);}
+    finally{setSaving(null);}
   };
   const browse = async (dir?: string) => setBrowser(await api.browse(dir).catch((e) => ({ error: e.message })));
   return (
@@ -146,8 +183,9 @@ function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
       </Row>
       <div style={{ display: 'flex', gap: 8, margin: '8px 0' }}>
         <button className="btn secondary" onClick={() => browse()}>Browse…</button>
-        <button className="btn" onClick={save}>Save vault path</button>
+        <button className="btn" disabled={!!saving} onClick={save}>Save vault path</button>
       </div>
+      {errors.path&&<p role="alert">{errors.path}</p>}
       {browser && !browser.error && (
         <div style={{ border: '1px solid var(--bg-modifier-border)', borderRadius: 6, padding: 8, marginTop: 8 }}>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{browser.dir}</div>
@@ -173,15 +211,22 @@ function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
           className="text-input"
           style={{ width: 220 }}
           value={deleteMode}
+          disabled={!!saving||following}
           onChange={(e) => saveDeleteMode(e.target.value)}
         >
           <option value="trash">Move to .trash (recoverable)</option>
           <option value="permanent">Permanently delete</option>
         </select>
       </Row>
+      {errors.deleteMode&&<p role="alert">{errors.deleteMode}</p>}
+      <Row name="Follow Obsidian deletion" desc={`Explicit opt-in. Obsidian requests ${preferences.values.trashOption==='none'?'permanent deletion':preferences.values.trashOption==='system'?'system trash; this server uses recoverable .trash':'recoverable .trash'}. Your saved WebObsidian selection is retained when following is disabled.`}>
+        <input aria-label="Follow Obsidian deletion" type="checkbox" checked={following} disabled={!!saving||preferences.loading||!!preferences.error} onChange={e=>void followObsidianDeletion(e.target.checked)}/>
+      </Row>
+      {errors.deletionSource&&<p role="alert">{errors.deletionSource}</p>}
+      <p>Effective deletion: {preferences.values.deleteMode==='trash'?'move to .trash (recoverable)':'permanently delete'} · source: {preferences.sources.deleteMode}</p>
       <Row
         name="Show attachment folders"
-        desc={'Pasted images are stored in an "attachments" folder next to each note. Hidden in the file tree by default; folders that contain notes are never hidden.'}
+        desc={'Show existing folders named "attachments" and the separate attachment folder selected in Obsidian. This only changes visibility, not the upload location. The vault root and folders containing notes or canvases are always shown.'}
       >
         <input
           type="checkbox"
@@ -191,7 +236,7 @@ function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
       </Row>
       <Row
         name="Reveal active file in explorer"
-        desc="When enabled, opening or switching documents auto-expands parent folders, scrolls to the active file, and highlights it in the file explorer."
+        desc={showAttachmentFolders?'Opening or switching documents expands parent folders and reveals the active file.':'Opening or switching documents reveals visible files. Files inside hidden attachment folders cannot be revealed; enable Show attachment folders to reveal them.'}
       >
         <input
           type="checkbox"
@@ -211,6 +256,7 @@ function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
           step={1}
           style={{ width: 90 }}
           value={retention}
+          disabled={!!saving}
           onChange={(e) => setRetention(e.target.value)}
           onBlur={saveRetention}
           onKeyDown={(e) => {
@@ -218,6 +264,23 @@ function VaultSettings({ s, reload }: { s: any; reload: () => void }) {
           }}
         />
       </Row>
+      {errors.retention&&<p role="alert">{errors.retention}</p>}
+      {saving&&<p role="status">Saving…</p>}
+      <details open><summary>Effective vault preferences</summary>
+        <p>Portable rules are read from this vault’s .obsidian/app.json. Changes are checked every three seconds. WebObsidian interface visibility is saved separately.</p>
+        {preferences.loading&&<p role="status">Loading vault preferences…</p>}
+        {preferences.error&&<p role="alert">{preferences.error}</p>}
+        {preferences.warnings.map((warning,i)=><p role="alert" key={i}>{warning}</p>)}
+        <table className="vault-preferences-table"><thead><tr><th>Preference</th><th>Value</th><th>Source / behavior</th></tr></thead><tbody>
+          {Object.entries(preferences.values).map(([key,value])=><tr key={key}><td>{key}</td><td>{key==='attachmentFolderPath'&&preferences.blocked?.attachmentUpload?'Unavailable — uploads blocked':Array.isArray(value)?value.join(', ')||'(empty)':String(value)}</td><td>{key==='attachmentFolderPath'&&preferences.blocked?.attachmentUpload?'Configuration error':preferences.sources[key as keyof typeof preferences.sources]}{key==='deleteUnlinkedAttachments'?' · unused attachments when deleting a note':key==='mobileToolbarCommands'?' · explicit import below':''}</td></tr>)}
+        </tbody></table>
+      </details>
+      <details><summary>Import Obsidian mobile toolbar commands</summary>
+        <p>Explicitly add supported commands to the existing mobile toolbar. Existing commands, other layouts, appearance and custom commands are preserved. Unknown commands remain in Obsidian and are not imported.</p>
+        <table className="vault-preferences-table"><thead><tr><th>Obsidian command</th><th>WebObsidian command</th></tr></thead><tbody>{preferences.values.mobileToolbarCommands.map((id,i)=><tr key={i}><td>{id}</td><td>{mobileToolbarCommandMappings[id]?`editing-toolbar:${mobileToolbarCommandMappings[id]}`:'Unsupported'}</td></tr>)}</tbody></table>
+        <button className="btn secondary" disabled={!!saving||!preferences.values.mobileToolbarCommands.some(id=>mobileToolbarCommandMappings[id])} onClick={()=>void importToolbar()}>Add supported Obsidian mobile commands</button>
+        {errors.toolbar&&<p role="alert">{errors.toolbar}</p>}
+      </details>
     </div>
   );
 }

@@ -4,10 +4,13 @@ import path from 'node:path';
 import * as vault from '../services/vault.js';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
-import { qmd } from '../services/search.js';
+import { qmd, searchVault } from '../services/search.js';
 import { backlinksFor, graphData, resolveLink, buildLinkGraph } from '../services/links.js';
-import { resolveFile } from '../services/fileindex.js';
+import { resolveFile, indexedFilePaths } from '../services/fileindex.js';
+import { resolveReference } from '../services/fileReferences.js';
 import { readPropertyTypes, setPropertyType } from '../services/propertytypes.js';
+import { getVaultPreferences } from '../services/vaultPreferences.js';
+import { isUserIgnored, filterGraph } from '../services/vaultPreferencesFilters.js';
 
 export const searchRouter = Router();
 searchRouter.use(requireAuth);
@@ -19,7 +22,7 @@ searchRouter.get(
     const q = String(req.query.q ?? '');
     // limit omitted / 0 → return every match; the client renders them incrementally.
     const limit = Math.max(0, Number(req.query.limit ?? 0) || 0);
-    res.json({ query: q, hits: await qmd.search(q, limit), ...(indexing.isStarted ? { index: indexing.status() } : {}) });
+    res.json({ query: q, hits: await searchVault(q, limit), ...(indexing.isStarted ? { index: indexing.status() } : {}) });
   }),
 );
 
@@ -34,7 +37,8 @@ searchRouter.post(
     const terms = phrase
       ? [String(query ?? '').trim()].filter((t) => t.length >= 2)
       : qmd.queryTerms(String(query ?? ''));
-    const list = (Array.isArray(paths) ? paths : []).slice(0, 80).map((p) => String(p));
+    const { values } = await getVaultPreferences();
+    const list = (Array.isArray(paths) ? paths : []).map((p) => String(p)).filter(p => !isUserIgnored(p, values.userIgnoreFilters)).slice(0, 80);
     const matches = await Promise.all(
       list.map((p) => qmd.matchesFor(p, terms, { caseSensitive: !!matchCase })),
     );
@@ -92,6 +96,8 @@ searchRouter.get(
     if (indexing.isStarted) indexing.assertReady();
     const target = String(req.query.target ?? '');
     const from = typeof req.query.from === 'string' ? req.query.from : '';
+    const resolvedPath = resolveReference(target, from, indexedFilePaths(), req.query.kind === 'markdown' ? 'markdown' : 'wiki');
+    if (resolvedPath) { res.json({ target, path: resolvedPath }); return; }
     if (from && !target.startsWith('/')) {
       const relative = path.posix.normalize(path.posix.join(path.posix.dirname(from), target.split('#')[0]));
       if (!relative.startsWith('..') && !path.posix.isAbsolute(relative)) {
@@ -118,7 +124,8 @@ searchRouter.get(
   '/graph',
   asyncHandler(async (_req, res) => {
     if (indexing.isStarted) indexing.assertReady();
-    res.json(graphData());
+    const { values } = await getVaultPreferences();
+    res.json(filterGraph(graphData(), values.userIgnoreFilters));
   }),
 );
 

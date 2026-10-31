@@ -808,7 +808,10 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 /* Reading view */
 .markdown-preview { flex: 1; overflow-y: auto; padding: 28px 24px 40vh;
   font-family: var(--font-text); font-size: var(--font-text-size); line-height: var(--line-height-normal); color: var(--text-normal); }
-.markdown-preview .preview-inner { max-width: 750px; margin: 0 auto; }
+.markdown-preview .preview-inner { max-width: none; min-width: 0; margin: 0 auto; }
+.markdown-preview.is-readable-line-width .preview-inner { max-width: 750px; }
+.vault-preferences-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: var(--font-smaller); }
+.vault-preferences-table th, .vault-preferences-table td { text-align: left; padding: 6px; border-bottom: 1px solid var(--bg-modifier-border); overflow-wrap: anywhere; }
 
 /* PDF (FR-21): the pane hands the file to the browser's own viewer. */
 .pdf-view { flex: 1; min-height: 0; display: flex; padding: 8px; background: var(--background-primary); }
