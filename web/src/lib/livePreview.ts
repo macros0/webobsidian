@@ -13,7 +13,6 @@ import { syntaxTree } from '@codemirror/language';
 import { isEscaped, preserveLiteralTags, findObsidianComments, stripObsidianComments, footnoteRanges, type SourceRange } from '../../../server/src/services/markdownContext';
 import { editableFrontmatter } from '../../../server/src/services/frontmatterPolicy';
 import { CALLOUT_SLOT, CALLOUT_RE, calloutDefaultTitle, calloutIconSvg } from './callouts';
-import { fetchLinkPreview, createPreviewCard } from './linkPreview';
 import { openLightbox } from './imageLightbox';
 import { VIDEO_EXT_RE, AUDIO_EXT_RE, PDF_EXT_RE } from './media';
 import { optionsFor, type PropOption } from './propOptions';
@@ -198,24 +197,23 @@ class MdLinkWidget extends WidgetType {
   }
 }
 
-class LinkPreviewWidget extends WidgetType {
+class BareUrlWidget extends WidgetType {
   constructor(readonly url: string) {
     super();
   }
-  eq(o: LinkPreviewWidget) {
+  eq(o: BareUrlWidget) {
     return o.url === this.url;
   }
   toDOM() {
-    const wrap = document.createElement('span');
-    wrap.className = 'link-preview cm-link-preview';
     const a = document.createElement('a');
-    a.className = 'cm-md-link external-link';
+    a.className = 'cm-url external-link';
+    a.href = this.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
     a.textContent = this.url;
-    wrap.appendChild(a);
-    fetchLinkPreview(this.url).then((meta) => {
-      if (meta && wrap.isConnected) wrap.replaceChildren(createPreviewCard(meta));
-    });
-    return wrap;
+    a.onmousedown = event => event.preventDefault();
+    a.onclick = event => { event.preventDefault(); window.open(this.url, '_blank', 'noopener'); };
+    return a;
   }
   ignoreEvent() {
     return true;
@@ -2319,6 +2317,7 @@ function buildDecorations(view: EditorView): DecorationSet {
   };
 
   const tree = syntaxTree(view.state);
+  const bareUrls: { from: number; to: number; url: string }[] = [];
 
   for (const { from, to } of view.visibleRanges) {
     tree.iterate({
@@ -2337,6 +2336,13 @@ function buildDecorations(view: EditorView): DecorationSet {
 
         // Don't decorate inside a rendered table/HTML block — their fields own it.
         if (renderedTable(node.from, node.to) || renderedHtml(node.from, node.to) || renderedInlineHtml(node.from, node.to)) return;
+
+        if (name === 'URL' && !inCode(node.from, node.to)) {
+          let parent = node.node.parent;
+          while (parent && parent.name !== 'Link' && parent.name !== 'Image') parent = parent.parent;
+          const url = doc.sliceString(node.from, node.to);
+          if (!parent && /^https?:\/\//i.test(url)) bareUrls.push({ from: node.from, to: node.to, url });
+        }
 
         // Claim the whole link before its label's emphasis/code delimiters.
         // Otherwise those replacements make the later link widget overlap and
@@ -2878,11 +2884,6 @@ function buildDecorations(view: EditorView): DecorationSet {
         pushReplace(s, e, Decoration.replace({ widget: new MdLinkWidget(m[1], url) }));
       }
 
-      // Standalone bare URL line → rich preview card (raw text shown while editing).
-      if (/^https?:\/\/\S+$/i.test(text) && !lineActive(line.from) && !inCode(line.from, line.to)) {
-        pushReplace(line.from, line.to, Decoration.replace({ widget: new LinkPreviewWidget(text) }));
-      }
-
       // Markdown escapes `\.` `\*` … — conceal the backslash like Obsidian LP
       // (e.g. Trilium/turndown exports escape `2\.` to avoid list parsing).
       // MUST run LAST: pushReplace's overlap guard would otherwise block math/
@@ -2899,6 +2900,11 @@ function buildDecorations(view: EditorView): DecorationSet {
     }
   }
 
+  // Keep ordinary addresses compact. Embedded media and authored links retain
+  // ownership of their ranges; a bare address never requests metadata/cards.
+  for (const url of bareUrls) {
+    if (!touches(url.from, url.to)) pushReplace(url.from, url.to, Decoration.replace({ widget: new BareUrlWidget(url.url) }));
+  }
   return Decoration.set(all, true);
 }
 
@@ -3140,7 +3146,24 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
       }
     }
   },
-  { decorations: (v) => v.decorations },
+  {
+    decorations: (v) => v.decorations,
+    eventHandlers: {
+      click(event, view) {
+        if (!view.state.field(livePreviewState)) return false;
+        const target = event.target instanceof Element ? event.target.closest('.cm-url') : null;
+        if (!target || target.closest('a')) return false;
+        // The editing form is a CodeMirror mark, not a widget. It must stay
+        // clickable too when the caret reveals the literal address.
+        let node = syntaxTree(view.state).resolveInner(view.posAtDOM(target), 1);
+        while (node.parent && node.name !== 'URL') node = node.parent;
+        if (node.name !== 'URL') return false;
+        const url = view.state.doc.sliceString(node.from, node.to);
+        if (!/^https?:\/\//i.test(url)) return false;
+        event.preventDefault(); window.open(url, '_blank', 'noopener'); return true;
+      },
+    },
+  },
 );
 
 /**
