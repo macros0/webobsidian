@@ -5,6 +5,8 @@ import { INDEX_FILE, config } from '../config.js';
 import { listMarkdownFiles, readFileText } from './vault.js';
 import { parseNote, type ParsedNote } from './markdown.js';
 import { taskRecordFrom, type TaskRecord } from './tasks.js';
+import { getVaultPreferences } from './vaultPreferences.js';
+import { isUserIgnored } from './vaultPreferencesFilters.js';
 
 /**
  * QMD — the WebObsidian search engine.
@@ -208,7 +210,7 @@ export class QmdEngine {
   }
 
   /** `limit <= 0` returns every match (caller renders incrementally). */
-  async search(query: string, limit = 0): Promise<SearchHit[]> {
+  async search(query: string, limit = 0, excludeFilters: readonly string[] = []): Promise<SearchHit[]> {
     if (!this.ready) await this.build();
     const s = await getSettings();
     const { filterText, fields } = parseFielded(query);
@@ -223,7 +225,8 @@ export class QmdEngine {
     const q = filterText.trim() || query.trim();
     const results = q ? this.mini.search(q, opts) : [];
 
-    const picked = limit > 0 ? results.slice(0, limit) : results;
+    const visible = results.filter(r => !isUserIgnored(String(r.id), excludeFilters));
+    const picked = limit > 0 ? visible.slice(0, limit) : visible;
     return picked.map((r) => ({
       path: r.id as string,
       title: (r as any).title ?? r.id,
@@ -466,6 +469,12 @@ export interface QmdState {
 
 export let qmd = new QmdEngine();
 export function publishQmd(engine: QmdEngine): void { qmd = engine; }
+
+/** Runtime preference projection; the underlying engine stays restorable without a vault read. */
+export async function searchVault(query: string, limit = 0): Promise<SearchHit[]> {
+  const { values } = await getVaultPreferences();
+  return qmd.search(query, limit, values.userIgnoreFilters);
+}
 
 /** Reconcile search with the current vault before accepting requests.
  * A persisted snapshot can miss files added/changed/deleted while stopped;

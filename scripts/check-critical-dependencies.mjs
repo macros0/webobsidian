@@ -12,6 +12,7 @@ const floors = {
   '@hono/node-server': '2.1.3', hono: '4.13.11', 'fast-uri': '3.1.9',
   'ip-address': '10.7.4', qs: '6.16.1', esbuild: '0.25.0',
   katex: '0.18.2', mermaid: '12.2.0',
+  minimatch: '11.0.1', '@electron/asar': '4.3.1', '@electron/universal': '3.0.6', glob: '7.2.3',
 };
 const compare = (actual, minimum) => {
   assert.match(actual, /^\d+\.\d+\.\d+$/, `Unexpected dependency version: ${actual}`);
@@ -37,7 +38,9 @@ for (const [location, entry] of Object.entries(lock.packages)) {
       && compare(entry.version, '2.4.0') < 0;
     const vulnerableFastUri4 = name === 'fast-uri' && entry.version.startsWith('4.')
       && compare(entry.version, '4.2.3') < 0;
-    if (compare(entry.version, minimum) < 0 || vulnerableNextMajor || vulnerableBodyParser2 || vulnerableFastUri4) {
+    const vulnerableModernGlob = name === 'glob' && compare(entry.version, '9.0.0') >= 0
+      && compare(entry.version, '14.0.2') < 0;
+    if (compare(entry.version, minimum) < 0 || vulnerableNextMajor || vulnerableBodyParser2 || vulnerableFastUri4 || vulnerableModernGlob) {
       failures.push(`${location}: ${entry.version} (minimum secure baseline ${minimum})`);
     }
   }

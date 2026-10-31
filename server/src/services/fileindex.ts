@@ -15,6 +15,9 @@ let byBasename = new Map<string, string>();
 let byBasenameNoExt = new Map<string, string>();
 let allPaths = new Set<string>();
 
+/** Complete inventory, including user-excluded files; never a search projection. */
+export function indexedFilePaths(): string[] { return [...allPaths]; }
+
 export function publishFilePaths(paths: string[]): void {
   const maps = { b: new Map<string, string>(), bn: new Map<string, string>() };
   allPaths = new Set(paths);

@@ -8,9 +8,11 @@ import { requireAuth } from '../middleware/auth.js';
 import { getSettings, updateSettings, redactSettings, ensureVaultBrowsable } from '../services/settings.js';
 import { config } from '../config.js';
 import { purgeExpiredTrash } from '../services/trashretention.js';
+import {getVaultPreferences} from '../services/vaultPreferences.js';
 
 export const settingsRouter = Router();
 settingsRouter.use(requireAuth);
+settingsRouter.get('/vault-preferences',asyncHandler(async(_req,res)=>{res.json(await getVaultPreferences());}));
 
 settingsRouter.get(
   '/',
@@ -28,14 +30,14 @@ settingsRouter.put(
     // A changed vault.path turns the whole files API into read/write over that
     // tree, so constrain it to the allowed roots (same gate as Browse…) and
     // require it to be an existing directory before persisting.
-    if (body.vault && typeof body.vault.path === 'string' && body.vault.path) {
+    if (body.vault && Object.hasOwn(body.vault,'path')) {
+      if(typeof body.vault.path!=='string'||!body.vault.path.trim())throw Object.assign(new Error('Vault path must not be blank'),{status:400});
       await assertVaultPathAllowed(body.vault);
     }
     const requestedVault = { ...previousVault, ...(body.vault ? sanitizeVault(body.vault) : {}) };
     const changesVault = path.resolve(previousVault.path) !== path.resolve(requestedVault.path)
       || JSON.stringify(previousVault.allowedRoots) !== JSON.stringify(requestedVault.allowedRoots);
-    // updateSettings publishes its cache before persistence resolves. Hold index
-    // readiness throughout that window so derived results cannot cross vaults.
+    // Hold readiness until persistence and the corresponding index switch finish.
     const releaseTransition = indexing.isStarted && changesVault ? indexing.beginTransition() : () => {};
     try {
       const updated = await updateSettings((d) => {
@@ -64,9 +66,8 @@ settingsRouter.put(
       }
       res.json(redactSettings(updated));
     } catch (error) {
-      // Persistence can fail after the settings service has published its new
-      // cache. Keep derived indexes aligned with that actual active vault even
-      // though this HTTP request still reports the settings failure.
+      // A failed index switch can follow a successful settings persist. Align
+      // with the committed active vault; a persist failure retains the old root.
       if (indexing.isStarted && changesVault) {
         const active = (await getSettings()).vault;
         if (path.resolve(previousVault.path) !== path.resolve(active.path)
@@ -86,6 +87,7 @@ function sanitizeVault(v: any) {
   if (typeof v.path === 'string') out.path = v.path;
   if (typeof v.trash === 'string') out.trash = v.trash;
   if (v.deleteMode === 'trash' || v.deleteMode === 'permanent') out.deleteMode = v.deleteMode;
+  if (typeof v.followObsidianDeletion === 'boolean') out.followObsidianDeletion = v.followObsidianDeletion;
   if (typeof v.attachmentDir === 'string') out.attachmentDir = v.attachmentDir;
   // Whole days, 0 (keep forever) … 3650. Anything else is dropped rather than persisted.
   if (Number.isInteger(v.trashRetentionDays) && v.trashRetentionDays >= 0 && v.trashRetentionDays <= 3650) {
@@ -133,6 +135,9 @@ async function assertVaultPathAllowed(v: { path: unknown }): Promise<void> {
   if (!st || !st.isDirectory()) {
     throw Object.assign(new Error('Vault path is not an existing directory'), { status: 400 });
   }
+  const resolved=await fs.realpath(target);
+  const roots=await Promise.all(authorizedRoots().map(r=>fs.realpath(r).catch(()=>r)));
+  if(!isWithinRoots(resolved,roots))throw Object.assign(new Error('Vault path resolves outside the allowed roots'),{status:403});
 }
 
 

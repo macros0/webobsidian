@@ -1,3 +1,6 @@
+import {resolveNewNoteDirectory} from './vaultLinks';
+import {resetVaultPreferences} from './vaultPreferences';
+import {confirmDialog} from './confirm';
 import {DocumentSession} from './drafts/session';
 import {putDraft,deleteDraftIfRevision,remapDrafts} from './drafts/storage';
 import { create } from 'zustand';
@@ -19,7 +22,7 @@ export function draftScopeEpoch(){return scopeEpoch;}
 export function isDraftScopeCurrent(scope:string,epoch:number){return scope===currentDraftScope&&epoch===scopeEpoch;}
 export function assertDraftScope(scope:string,epoch:number){if(!isDraftScopeCurrent(scope,epoch))throw new Error('Draft scope changed. Reopen recovery in the current vault.');}
 export async function loadDraftScope(){const epoch=scopeEpoch;if(!draftScopeRequest)draftScopeRequest=api.draftScope().then(r=>{if(epoch!==scopeEpoch)throw new Error('Draft scope changed');currentDraftScope=r.scopeId;return r.scopeId;}).catch(error=>{if(epoch===scopeEpoch)draftScopeRequest=null;throw error;});return draftScopeRequest;}
-export function resetDraftScope(){scopeEpoch++;openRequest++;for(const s of documentSessions.values())s.dispose();documentSessions.clear();currentDraftScope='';draftScopeRequest=null;if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-scope-change'));}
+export function resetDraftScope(){resetVaultPreferences();scopeEpoch++;openRequest++;for(const s of documentSessions.values())s.dispose();documentSessions.clear();currentDraftScope='';draftScopeRequest=null;if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-scope-change'));}
 export function acceptResolvedDocument(path:string,content:string,version:string){const s=documentSessions.get(path);if(s){s.acceptServerResult(content,version);}else{const scopeId=currentDraftScope;documentSessions.set(path,new DocumentSession({scopeId,path,writerId:CLIENT_ID+':'+(++draftSessionSequence),content,version},{put:putDraft,remove:deleteDraftIfRevision,write:(p,t,v)=>api.write(p,t,v,scopeId)},refreshSaveStatus));}useStore.setState({content,dirty:false});}
 function refreshSaveStatus(){if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-status'));}
 export type ViewMode = 'live' | 'source' | 'reading';
@@ -254,13 +257,13 @@ interface AppState {
   /** Finish inline creation without replacing an existing preview tab. */
   openCreatedFile: (path: string) => Promise<void>;
   keepTab: (path: string) => void;
-  openWikilink: (target: string) => Promise<void>;
+  openWikilink: (target: string,kind?:'wiki'|'markdown') => Promise<void>;
   closeTab: (path: string) => Promise<boolean>;
   renamePath: (from: string, to: string) => Promise<void>;
   /** Discard state only after the server has confirmed removal. */
   forgetDeletedPath: (path: string) => void;
   /** Confirm deletion in the caller, then exclude saves until removal finishes. */
-  deletePath: (path: string, permanent?: boolean) => ReturnType<typeof api.remove>;
+  deletePath: (path: string, permanent?: boolean,confirmedMode?:'trash'|'permanent') => ReturnType<typeof api.remove>;
   setContent: (c: string) => void;
   /** Deliberately open the active locked note for editing — confirm dialog, or the operator
    *  password when the vault's locks config asks for one. Session-scoped; the agent keeps writing. */
@@ -848,9 +851,9 @@ export const useStore = create<AppState>()(
         tabs: s.tabs.map((t) => t.path === path && t.preview ? { ...t, preview: false } : t),
       })),
 
-      openWikilink: async (target) => {
+      openWikilink: async (target,kind='wiki') => {
         try {
-          const { path } = await api.resolve(target);
+          const { path } = await api.resolve(target,get().activePath??undefined,kind);
           if (path) await get().openFile(path);
           else if (isAttachmentTarget(target)) {
             // FR-21: a picture/media/PDF target the vault does not hold is a broken
@@ -860,7 +863,9 @@ export const useStore = create<AppState>()(
             // Only append `.md` when the target has no extension at all — a target
             // like `Foo.canvas` must stay `Foo.canvas`, not become `Foo.canvas.md`.
             const hasExt = /\.[^./]+$/.test(target);
-            const newPath = hasExt ? target : `${target}.md`;
+            const name=hasExt?target:`${target}.md`;
+            const directory=target.includes('/')?'':resolveNewNoteDirectory({sourcePath:get().activePath,preferences:(await api.vaultPreferences()).values});
+            const newPath=directory?`${directory}/${name}`:name;
             await get().createNote(newPath, `# ${target.replace(/\.md$/, '')}\n`);
           }
         } catch(error) {
@@ -909,8 +914,10 @@ export const useStore = create<AppState>()(
       renamePath: (from, to) => mutateFiles(async () => {
         if (from === to) return;
         ++openRequest;
-        while (withinPath(get().activePath, from) && get().dirty) await saveActiveDraft();
-        await api.rename(from, to);
+        while(get().dirty)await saveActiveDraft();
+        for(const session of documentSessions.values())if(session.content!==session.baseContent)await session.save();
+        const revisions=new Map([...documentSessions].map(([p,s])=>[p,s.revision]));
+        const renameResult=await api.rename(from, to);
         const remap = (path: string) => withinPath(path, from) ? `${to}${path.slice(from.length)}` : path;
         for(const [name,session] of documentSessions){if(withinPath(name,from)){documentSessions.delete(name);session.key.path=remap(name);documentSessions.set(session.key.path,session);}}
         if(currentDraftScope)await remapDrafts(currentDraftScope,from,to).catch(()=>get().notify('Rename succeeded; local draft paths could not be updated. Recover them from Local drafts.'));
@@ -929,14 +936,17 @@ export const useStore = create<AppState>()(
           shareDialogPath: remapNullable(s.shareDialogPath),
           clipboard: s.clipboard ? { ...s.clipboard, path: remap(s.clipboard.path) } : null,
         }));
+        for(const changed of renameResult?.changedPaths??[]){const session=documentSessions.get(changed);if(!session)continue;const old=[...revisions.keys()].find(p=>remap(p)===changed);if(old===undefined||session.revision!==revisions.get(old)){get().notify('Links changed on the server. Unsaved local text was kept; review before saving.');continue;}const current=await api.read(changed);if(session.revision!==revisions.get(old))continue;if(typeof current.content==='string'&&current.version){session.acceptServerResult(current.content,current.version);if(get().activePath===changed)set({content:current.content,dirty:false});if(get().splitPath===changed)set({splitContent:current.content});}}
       }),
 
-      deletePath: (path, permanent) => mutateFiles(async () => {
+      deletePath: (path, permanent,confirmedMode) => mutateFiles(async () => {
         ++openRequest;
         // Requests already sent must finish before deletion; queued autosaves wait for us.
         await Promise.all([...saves].filter(([file]) => withinPath(file, path)).map(([, pending]) => pending.catch(() => {})));
-        const result = await api.remove(path, permanent);
+        const result = await api.remove(path, permanent,confirmedMode);
         get().forgetDeletedPath(path);
+        if(result.cleanupWarning)get().notify(result.cleanupWarning,8000);
+        if(result.pendingAttachments?.length){let selected:string[]=[];const yes=await confirmDialog('Delete unused attachments from the deleted note?',{confirmLabel:'Delete selected attachments',detail:'Only selected files that are still unused will be removed using your deletion setting.',items:result.pendingAttachments,onSelection:paths=>{selected=paths;}});if(yes&&selected.length){await api.cleanupAttachments(path,selected,result.cleanupReceipt??'');await get().loadTree();}}
         return result;
       }),
 
@@ -999,7 +1009,7 @@ export const useStore = create<AppState>()(
 
       newNote: async (dir) => {
         // Pick the first free "Untitled" name in the target folder, like Obsidian.
-        const base = (dir ?? '').replace(/\/+$/, '');
+        const base = dir===undefined?resolveNewNoteDirectory({sourcePath:get().activePath,preferences:(await api.vaultPreferences()).values}):dir.replace(/\/+$/, '');
         const folder = base ? findNode(get().tree, base) : get().tree;
         const taken = new Set((folder?.children ?? []).map((c) => c.name.toLowerCase()));
         let name = 'Untitled.md';
@@ -1022,7 +1032,7 @@ export const useStore = create<AppState>()(
       },
 
       newCanvas: async (dir) => {
-        const base = (dir ?? '').replace(/\/+$/, '');
+        const base = dir===undefined?resolveNewNoteDirectory({sourcePath:get().activePath,preferences:(await api.vaultPreferences()).values}):dir.replace(/\/+$/, '');
         const folder = base ? findNode(get().tree, base) : get().tree;
         const taken = new Set((folder?.children ?? []).map((c) => c.name.toLowerCase()));
         let name = 'Untitled.canvas';
@@ -1051,7 +1061,7 @@ export const useStore = create<AppState>()(
       newFolder: async (dir) => {
         // Create an "Untitled" folder (unique name) and drop straight into inline
         // rename — same as Obsidian, no prompt.
-        const base = (dir ?? '').replace(/\/+$/, '');
+        const base = dir===undefined?resolveNewNoteDirectory({sourcePath:get().activePath,preferences:(await api.vaultPreferences()).values}):dir.replace(/\/+$/, '');
         const parent = base ? findNode(get().tree, base) : get().tree;
         const taken = new Set((parent?.children ?? []).map((c) => c.name.toLowerCase()));
         let name = 'Untitled';

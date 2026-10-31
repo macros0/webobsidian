@@ -28,6 +28,7 @@ export const markdownSchema = {
       ['className'],
       ['dataWikilink'],
       ['dataHref'],
+      ['dataLinkKind'],
     ],
     div: [...(defaultSchema.attributes?.div ?? []).filter(x=>!(Array.isArray(x)&&x[0]==='align')&&x!=='align'), ['align','left','center','right','justify'], ['className'], ['dataCallout'], ['dataCalloutFold']],
     span: [...(defaultSchema.attributes?.span ?? []), ['className'], ['dataTex'], ['dataTexDisplay'], ['dataCalloutIcon'], ['style', COLOR_STYLE_RE]],
@@ -43,10 +44,24 @@ export const markdownSchema = {
 
 interface MdNode {
   type: string;
+  url?: string;
   checked?: boolean | null;
   value?: string;
   data?: { hProperties?: Record<string, unknown> };
   children?: MdNode[];
+}
+
+function remarkInternalLinkKinds() {
+  return (tree: MdNode) => {
+    const visit = (node: MdNode) => {
+      if (node.type === 'link' && node.url && !/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(node.url)) {
+        node.data ??= {};
+        node.data.hProperties = { ...node.data.hProperties, 'data-link-kind': 'markdown' };
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
 }
 
 /**
@@ -99,6 +114,7 @@ const makeProcessor = (strictLineBreaks = false) => unified()
   .use(remarkSoftBreaks, { strictLineBreaks })
   .use(remarkCallouts)
   .use(remarkObsidianTasks as any)
+  .use(remarkInternalLinkKinds)
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(rehypeRaw)
   .use(rehypeSanitize, markdownSchema as any)

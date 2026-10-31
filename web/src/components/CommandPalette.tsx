@@ -5,6 +5,9 @@ import {foldAll,unfoldAll,foldCode,unfoldCode} from '@codemirror/language';
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../lib/store';
 import { api, type TreeNode } from '../lib/api';
+import { useVaultPreferences } from '../lib/vaultPreferences';
+import { isUserIgnored } from '../lib/vaultLinks';
+import { isSupportedVaultFile } from '../lib/media';
 
 interface Cmd {
   id: string;
@@ -17,7 +20,7 @@ function flatten(node: TreeNode | null): { path: string; title: string }[] {
   if (!node) return [];
   const out: { path: string; title: string }[] = [];
   const walk = (n: TreeNode) => {
-    if (n.type === 'file' && /\.(md|markdown)$/i.test(n.ext ?? '')) {
+    if (n.type === 'file') {
       out.push({ path: n.path, title: n.name.replace(/\.(md|markdown)$/, '') });
     }
     n.children?.forEach(walk);
@@ -27,6 +30,7 @@ function flatten(node: TreeNode | null): { path: string; title: string }[] {
 }
 
 export default function CommandPalette() {
+  const { values: preferences } = useVaultPreferences();
   const pluginRevision=usePluginRevision();
   const open = useStore((s) => s.paletteOpen);
   const mode = useStore((s) => s.paletteMode);
@@ -108,14 +112,16 @@ export default function CommandPalette() {
     const isCmd = mode === 'commands' || q.startsWith('>');
     const lc = q.replace(/^>/, '').trim().toLowerCase();
     const fileItems: Cmd[] = files
+      .filter(f => preferences.showUnsupportedFiles || isSupportedVaultFile(f.path))
       .filter((f) => !lc || f.title.toLowerCase().includes(lc) || f.path.toLowerCase().includes(lc))
+      .sort((a,b) => Number(isUserIgnored(a.path,preferences.userIgnoreFilters)) - Number(isUserIgnored(b.path,preferences.userIgnoreFilters)))
       .slice(0, 40)
       .map((f) => ({ id: `f:${f.path}`, title: f.title, hint: f.path, run: () => openFile(f.path) }));
     const cmdItems = commands.filter((c) => !lc || c.title.toLowerCase().includes(lc));
     if (isCmd) return cmdItems;
     if (mode === 'files') return fileItems;
     return [...cmdItems.slice(0, 3), ...fileItems];
-  }, [q, mode, files, commands, openFile]);
+  }, [q, mode, files, commands, openFile, preferences]);
 
   useEffect(() => setSel(0), [q, open]);
   useEffect(() => {

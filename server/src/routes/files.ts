@@ -1,3 +1,10 @@
+import {resolveReference} from '../services/fileReferences.js';
+import {indexedFilePaths} from '../services/fileindex.js';
+import {randomUUID} from 'node:crypto';
+import {collectNoteAttachmentCandidates,cleanupNoteAttachments} from '../services/noteAttachmentCleanup.js';
+import {fileReferenceReport,findFileReferences} from '../services/referenceScan.js';
+import {deleteUnreferencedAttachment} from '../services/attachmentDeletion.js';
+import {getVaultPreferences} from '../services/vaultPreferences.js';
 import {getDraftScope} from '../services/draftScopes.js';
 import { Router, type Request, type Response } from 'express';
 import { indexing } from '../services/indexing/coordinator.js';
@@ -17,6 +24,8 @@ import { sendFileWithRange } from '../services/httpfile.js';
 import { contentVersion, checkVersion } from '../services/noteversion.js';
 import { annotateTree, loadLocks, lockFor, sessionMayWrite, targetsOf } from '../services/locks.js';
 
+const cleanupReceipts=new Map<string,{root:string;sourcePath:string;candidates:string[];expires:number;confirmedMode:'trash'|'permanent'}>();
+function issueCleanupReceipt(root:string,sourcePath:string,candidates:string[],confirmedMode:'trash'|'permanent'){for(const [key,v] of cleanupReceipts)if(v.expires<Date.now())cleanupReceipts.delete(key);if(cleanupReceipts.size>=512)cleanupReceipts.delete(cleanupReceipts.keys().next().value!);const key=randomUUID();cleanupReceipts.set(key,{root,sourcePath,candidates,confirmedMode,expires:Date.now()+15*60*1000});return key;}
 export const filesRouter = Router();
 filesRouter.use(requireAuth);
 filesRouter.get('/draft-scope',asyncHandler(async(_req,res)=>{res.json({scopeId:await getDraftScope((await getSettings()).vault.path)});}));
@@ -92,7 +101,9 @@ async function resolveRef(target: string, from: string): Promise<string> {
   }
   if (!(await vault.exists(rel))) {
     if (indexing.isStarted) indexing.assertReady();
-    const resolved = resolveFile(rel);
+    let decoded=rel;try{decoded=decodeURIComponent(rel);}catch{}
+    const available=[...indexedFilePaths()];if(decoded!==rel){const dir=path.posix.dirname(from||'.');for(const p of [path.posix.normalize(path.posix.join(dir,decoded)),decoded])if(await vault.exists(p))available.push(p);}
+    const resolved = resolveReference(rel,from,available,'wiki')??resolveFile(rel);
     if (resolved) rel = resolved;
   }
   return rel;
@@ -218,18 +229,15 @@ filesRouter.post(
   '/upload',
   upload.single('file'),
   mutationHandler(async (req, res) => {
-    const dir = String(req.body?.dir ?? '');
+    const sourcePath = req.body?.sourcePath;
+    if (sourcePath !== undefined && typeof sourcePath !== 'string') {
+      res.status(400).json({ error: 'sourcePath must be a string' });
+      return;
+    }
+    const dir = sourcePath !== undefined ? await vault.resolveAttachmentDir(sourcePath) : String(req.body?.dir ?? '');
     const file = req.file;
     if (!file) {
       res.status(400).json({ error: 'file required' });
-      return;
-    }
-    // `dir` arrives in the multipart body, which only exists after multer has run — so unlike
-    // every other write route this one is checked here rather than in the router middleware.
-    const verdict = await sessionMayWrite(req, path.posix.join(dir, file.originalname));
-    if (!verdict.ok) {
-      const { unlock } = await loadLocks();
-      res.status(423).json({ error: 'locked', path: dir, reason: verdict.reason, unlock });
       return;
     }
     // Reuse an existing folder that differs only in case (e.g. an Obsidian vault's
@@ -244,11 +252,18 @@ filesRouter.post(
     for (let i = 1; await vault.exists(rel); i++) {
       rel = path.posix.join(resolvedDir, `${stem}-${i}${ext}`);
     }
+    // Multipart fields and the actual collision-free destination are only known here.
+    const verdict = await sessionMayWrite(req, rel);
+    if (!verdict.ok) {
+      const { unlock } = await loadLocks();
+      res.status(423).json({ error: 'locked', path: rel, reason: verdict.reason, unlock });
+      return null;
+    }
     await vault.writeFileBuffer(rel, file.buffer);
     await reindex({added:rel});
     return rel;
     });
-    res.json({ ok: true, path: rel, size: file.size });
+    if (rel !== null) res.json({ ok: true, path: rel, relativePath: vault.attachmentRelativeUrl(rel, sourcePath ?? ''), size: file.size });
   }),
 );
 
@@ -260,11 +275,13 @@ filesRouter.patch(
       res.status(400).json({ error: 'from and to required' });
       return;
     }
-    await vault.rename(from, to);
+    const renameResult=await vault.rename(from, to,{updateLinks:typeof req.body.updateLinks==='boolean'?req.body.updateLinks:undefined,mayWrite:async p=>(await sessionMayWrite(req,p)).ok});
     if (!indexing.isStarted) await qmd.rename(from, to);
     await onFileRenamed(from, to).catch(() => {}); // keep public share links pointing at the note
     await reindex({ added: to, removed: from });
-    res.json({ ok: true, from, to });
+    for(const p of renameResult.removedPaths??[])await reindex({removed:p});
+    for(const p of renameResult.changedPaths)await reindex({upsert:p,added:p});
+    res.json({ ok: true, from, to,...renameResult });
   }),
 );
 
@@ -341,42 +358,29 @@ filesRouter.get(
       res.status(400).json({ error: 'path required' });
       return;
     }
-    const abs = target.toLowerCase();
-    const base = (abs.split('/').pop() ?? abs).toLowerCase();
-    const refs: string[] = [];
-    for (const note of await vault.listMarkdownFiles()) {
-      if (note === exclude) continue;
-      let text: string;
-      try {
-        text = await vault.readFileText(note);
-      } catch {
-        continue;
-      }
-      const lower = text.toLowerCase();
-      if (!lower.includes(base) && !lower.includes(base.replace(/ /g, '%20'))) continue;
-      const dir = path.posix.dirname(note);
-      const targets: string[] = [];
-      for (const m of text.matchAll(/\[\[([^\]|#]+)[^\]]*\]\]/g)) targets.push(m[1]);
-      for (const m of text.matchAll(/\]\(([^)\s][^)]*?)(?:\s+"[^"]*")?\)/g)) targets.push(m[1]);
-      const hit = targets.some((raw) => {
-        let t = raw.trim().replace(/^<|>$/g, '').split('#')[0];
-        try {
-          t = decodeURIComponent(t);
-        } catch {
-          /* keep raw */
-        }
-        if ((t.split('/').pop() ?? t).toLowerCase() !== base) return false;
-        // Bare basename (wikilink / vault-wide lookup) → conservatively a reference.
-        if (!t.includes('/')) return true;
-        const fromRoot = path.posix.normalize(t.replace(/^\/+/, '')).toLowerCase();
-        const fromNote = path.posix.normalize(path.posix.join(dir === '.' ? '' : dir, t)).toLowerCase();
-        return fromRoot === abs || fromNote === abs;
-      });
-      if (hit) refs.push(note);
-    }
-    res.json({ references: refs });
+    await vault.resolveInVault(target);
+    const refs = await findFileReferences(target,exclude);
+    res.json({ references: refs, deleteMode:(await getVaultPreferences()).values.deleteMode });
   }),
 );
+
+filesRouter.post('/references',asyncHandler(async(req,res)=>{const {path:target,exclude,sourceContent}=req.body??{};if(typeof target!=='string'||typeof exclude!=='string'||typeof sourceContent!=='string'){res.status(400).json({error:'path, exclude and sourceContent required'});return;}await vault.resolveInVault(target);const report=await fileReferenceReport(target,exclude,sourceContent);res.json({...report,deleteMode:(await getVaultPreferences(await vault.getVaultRoot())).values.deleteMode});}));
+
+filesRouter.post('/attachments/cleanup',mutationHandler(async(req,res)=>{
+ const {sourcePath,selected,receipt}=req.body??{};if(typeof sourcePath!=='string'||!Array.isArray(selected)||selected.some(p=>typeof p!=='string')){res.status(400).json({error:'sourcePath and selected paths required'});return;}
+ const authorization=typeof receipt==='string'?cleanupReceipts.get(receipt):undefined;
+ if(!authorization||authorization.root!==await vault.getVaultRoot()||authorization.sourcePath!==sourcePath||authorization.expires<Date.now()||selected.some(p=>!authorization.candidates.includes(p))){res.status(409).json({error:'Attachment cleanup selection expired or changed. Files kept.'});return;}
+ const {values}=await getVaultPreferences(await vault.getVaultRoot());
+ const result=await cleanupNoteAttachments({sourcePath,candidates:authorization.candidates,policy:'ask',selected,deleteAttachment:async p=>{if(!(await sessionMayWrite(req,p)).ok)throw Object.assign(Error('Read-only attachment'),{status:423});if(values.deleteMode==='permanent'&&authorization.confirmedMode==='permanent')await vault.remove(p);else await vault.trash(p);await reindex({removed:p});}});cleanupReceipts.delete(receipt);res.json(result);
+}));
+
+filesRouter.post('/attachments/delete', mutationHandler(async(req,res)=>{
+ const {sourcePath,targetPath,sourceVersion,draftScopeId,confirmedMode}=req.body??{};
+ if([sourcePath,targetPath,sourceVersion].some(v=>typeof v!=='string'||!v)){res.status(400).json({error:'sourcePath, targetPath and sourceVersion required'});return;}
+ if(typeof draftScopeId!=='string'){res.status(400).json({error:'draftScopeId required'});return;}
+ const result=await withDraftScope(draftScopeId,()=>deleteUnreferencedAttachment({sourcePath,targetPath,sourceVersion,confirmedMode,mayWrite:async p=>(await sessionMayWrite(req,p)).ok}));
+ await reindex({removed:result.outcome==='kept'?undefined:result.path});res.json(result);
+}));
 
 filesRouter.delete(
   '/',
@@ -386,17 +390,20 @@ filesRouter.delete(
       res.status(400).json({ error: 'path required' });
       return;
     }
-    const s = await getSettings();
-    if (s.vault.deleteMode === 'permanent' || req.query.permanent === '1') {
+    const {values:prefs}=await getVaultPreferences(await vault.getVaultRoot());
+    const actionMode=req.query.confirmedMode==='trash'?'trash':(prefs.deleteMode==='permanent'||req.query.permanent==='1')?'permanent':'trash';
+    const candidates=await collectNoteAttachmentCandidates(rel);
+    const finishCleanup=async()=>cleanupNoteAttachments({sourcePath:rel,candidates,policy:prefs.deleteUnlinkedAttachments,deleteAttachment:async p=>{if(!(await sessionMayWrite(req,p)).ok)throw Object.assign(Error('Attachment is read-only'),{status:423});if(actionMode==='permanent')await vault.remove(p);else await vault.trash(p);await reindex({removed:p});}}).catch(()=>({pending:[] as string[],cleanupWarning:'The note was deleted, but attachment cleanup could not be completed. Check the remaining files.'}));
+    if (actionMode === 'permanent') {
       await vault.remove(rel);
       await vault.pruneEmptyAttachmentsDir(rel);
       await reindex({ removed: rel });
-      res.json({ ok: true, deleted: rel });
+      const cleanup=await finishCleanup();res.json({ ok: true, deleted: rel,pendingAttachments:cleanup.pending,...('cleanupWarning' in cleanup?{cleanupWarning:cleanup.cleanupWarning}:{}),...(cleanup.pending.length?{cleanupReceipt:issueCleanupReceipt(await vault.getVaultRoot(),rel,cleanup.pending,actionMode)}:{}) });
       return;
     }
     const dest = await vault.trash(rel);
     await vault.pruneEmptyAttachmentsDir(rel);
     await reindex({ removed: rel });
-    res.json({ ok: true, trashed: dest });
+    const cleanup=await finishCleanup();res.json({ ok: true, trashed: dest,pendingAttachments:cleanup.pending,...('cleanupWarning' in cleanup?{cleanupWarning:cleanup.cleanupWarning}:{}),...(cleanup.pending.length?{cleanupReceipt:issueCleanupReceipt(await vault.getVaultRoot(),rel,cleanup.pending,actionMode)}:{}) });
   }),
 );

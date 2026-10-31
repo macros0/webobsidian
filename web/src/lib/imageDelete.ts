@@ -1,19 +1,20 @@
 import { api } from './api';
-import { useStore } from './store';
+import {useStore,draftScopeEpoch,loadDraftScope} from './store';
 import { confirmDialog } from './confirm';
 import type { ImageDeleteRequest } from './livePreview';
 
 export async function deleteEmbeddedImage({ target, view: v, remove }: ImageDeleteRequest): Promise<void> {
   const initial = useStore.getState();
   const note = initial.activePath ?? '';
-  const originalDoc = v.state.doc;
+  const originalDoc = v.state.doc;const initialScopeEpoch=draftScopeEpoch();
   // Async resolution and confirmation can outlive navigation or a lock-mode change.
   const mayEdit = () => {
     const current = useStore.getState();
-    return !!note && current.activePath === note && !current.locked && current.viewMode !== 'reading'
+    return draftScopeEpoch()===initialScopeEpoch&&!!note && current.activePath === note && !current.locked && current.viewMode !== 'reading'
       && !v.state.readOnly && v.state.doc.eq(originalDoc);
   };
   if (!mayEdit()) return;
+  const scope=await loadDraftScope();if(!mayEdit())return;
   const { notify, loadTree } = useStore.getState();
   const file = target ? await api.resolveAttachment(target, note).then((r) => r.path).catch(() => null) : null;
   if (!mayEdit()) return;
@@ -21,16 +22,11 @@ export async function deleteEmbeddedImage({ target, view: v, remove }: ImageDele
     remove(); // web URL / missing file → only the reference can go
     return;
   }
-  const base = (file.split('/').pop() ?? file).toLowerCase();
-  const refs = (await api.references(file, note).catch(() => ({ references: [] as string[] }))).references;
+  let referenceCheck:Awaited<ReturnType<typeof api.references>>;
+  try{referenceCheck=await api.references(file,note,v.state.doc.toString());}catch{notify('Could not check image references. The image and file were kept. Try again.');return;}
+  const refs=referenceCheck.references;
   if (!mayEdit()) return;
-  // Other embeds of the same file left in THIS note (the one being removed counts once).
-  // The file name can appear raw or %20-encoded; count each distinct spelling once —
-  // names without spaces have identical spellings and must not be counted twice.
-  const doc = v.state.doc.toString().toLowerCase();
-  const spellings = Array.from(new Set([base, base.replace(/ /g, '%20')]));
-  const mentions = spellings.reduce((n, s) => n + (doc.split(s).length - 1), 0);
-  const inThisNote = mentions > 1;
+  const inThisNote=(referenceCheck.sourceReferences??0)>1;
   // Native confirm() is blocked or silently auto-cancelled in embedded browsers (the click
   // then does nothing), so use the in-app dialog.
   if (refs.length || inThisNote) {
@@ -44,18 +40,25 @@ export async function deleteEmbeddedImage({ target, view: v, remove }: ImageDele
     if (ok && mayEdit()) remove();
     return;
   }
-  const ok = await confirmDialog(`Remove this image and permanently delete "${file}"?`, {
-    detail: 'This cannot be undone: the file is deleted immediately, not moved to the trash.',
+  const permanent=referenceCheck.deleteMode==='permanent';
+  const ok = await confirmDialog(permanent?`Remove this image and permanently delete "${file}"?`:`Remove this image and move "${file}" to trash?`, {
+    detail: permanent?'This permanently deletes the unused file.':'The unused file will be moved to the vault trash and can be restored.',
     confirmLabel: 'Delete',
-    danger: true,
+    danger: permanent,
   });
   if (!ok || !mayEdit()) return;
   remove();
   try {
-    await useStore.getState().deletePath(file, true);
+    const removedDoc=v.state.doc;
+    await useStore.getState().save();
+    if(useStore.getState().activePath!==note||!v.state.doc.eq(removedDoc))return;
+    const saved=await api.read(note);
+    if(saved.content!==removedDoc.toString()||!saved.version)throw Error('The note changed. Attachment kept.');
+    const result=await api.deleteAttachment(note,file,saved.version,scope,referenceCheck.deleteMode??'trash');
+    notify(result.outcome==='kept'?'Image removed; the shared file was kept.':result.outcome==='trashed'?'Image moved to trash.':'Unused image permanently deleted.');
     await loadTree();
-    notify(`Deleted ${file}`);
+
   } catch (e: any) {
-    notify(e.message);
+    notify('The file was kept: '+e.message);
   }
 }

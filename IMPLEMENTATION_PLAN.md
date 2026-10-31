@@ -1,5 +1,19 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Obsidian vault preference compatibility — 2026-10-31
+
+- [x] Honor attachment/note destinations and link preferences, displaying effective values and their sources.
+- [x] Protect attachment deletion with complete reference scans, versions, captured vault scopes and explicit confirmations.
+- [x] Update resolved links and descendant shares during rename/move; retain recovery journals for interrupted changes.
+- [x] Apply excluded-file policies, readable line width and explicit mobile toolbar import.
+- [x] Reject dangling destination symlinks and refresh the secure Electron packaging chain with real ASAR regression coverage.
+- [x] Add synthetic native-Obsidian preference fixtures, server/browser regressions and generic network-vault guidance.
+
+Configuration, behavior and implementation details are recorded in PRD.md and
+`docs/superpowers/plans/2026-10-31-vault-settings-compatibility.md`.
+Existing notes and attachments are not migrated. External filesystem writers remain
+outside the process mutation queue; detected conflicts preserve recovery data.
+
 CI follow-up 2026-10-30: the fork-main PR reproduced a hidden Electron selection-pixel timing race. The fixture now isolates its profile, disables background throttling, waits for the exact viewport and measured selection coverage, then waits up to four seconds for the selected compositor frame. All original theme, width, selected-pixel, unselected-background and margin assertions remain intact; no runtime/CSS changes are involved.
 
 The next CI run passed the complete test suite and exposed a smoke-startup race: `/healthz` was ready before the asynchronous initial index scan, so missing-file resolution correctly returned `503` rather than `404`. The smoke fixture now waits on authenticated `/api/index/status` availability and initial-scan completion before its existing resolver assertions.

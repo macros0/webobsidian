@@ -7,6 +7,11 @@ import { renderNoteHtml, metaDescription, firstImage } from '../../server/src/se
 
 const cases: Record<string, string> = JSON.parse(readFileSync(new URL('../../tests/fixtures/rendering/cases.json', import.meta.url), 'utf8'));
 const rawUrl = (p: string) => `/raw/${encodeURIComponent(p)}`;
+test('rendered Markdown links retain their encoded target and declare their syntax kind',async()=>{
+ const html=await renderMarkdown('[Space](shot%20one.md) [[shot%20one]]',{rawUrl});
+ assert.match(html,/href="shot%20one.md"[^>]*data-link-kind="markdown"|data-link-kind="markdown"[^>]*href="shot%20one.md"/);
+ assert.match(html,/data-wikilink="shot%20one"/);
+});
 for (const [name, render] of [
   ['preview', (src: string) => renderMarkdown(src, { rawUrl })],
   ['public', (src: string) => renderNoteHtml(src, rawUrl)],

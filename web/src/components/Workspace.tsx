@@ -1,13 +1,14 @@
 import { useStore, GRAPH_PATH, TASKS_PATH, isViewPath, type ContextMenuItem } from '../lib/store';
 import { api } from '../lib/api';
-import { ATTACHMENT_DIR_NAME } from '../lib/attachments';
 import Editor from './Editor';
 import Preview from './Preview';
 import GraphView from './GraphView';
 import CanvasView from './CanvasView';
 import FolderView from './FolderView';
 import TasksView from './TasksView';
-import { isFolderPath } from '../lib/tree';
+import { isFolderPath, treeFilePaths } from '../lib/tree';
+import { formatInternalLink } from '../lib/vaultLinks';
+import { getVaultPreferences } from '../lib/vaultPreferences';
 import Icon from './Icon';
 import StatusBar from './StatusBar';
 import FormatToolbar from './FormatToolbar';
@@ -297,12 +298,9 @@ export default function Workspace() {
     openContextMenu({ x: Math.round(rect.right) - 220, y: Math.round(rect.bottom) + 6, items });
   };
 
-  // Paste / drop image → upload to an `attachments/` folder next to the note and
-  // insert a relative embed (`![](attachments/x.png)`) at the caret.
+  // The server selects the Obsidian attachment folder and returns a relative URL.
   const handleFiles = async (files: FileList | File[]) => {
     const isNote = !!activePath && /\.(md|markdown)$/i.test(activePath);
-    const noteDir = activePath && isNote ? activePath.split('/').slice(0, -1).join('/') : '';
-    const dir = isNote && noteDir ? `${noteDir}/${ATTACHMENT_DIR_NAME}` : ATTACHMENT_DIR_NAME;
     const uploadView = getActiveEditor();
     let uploadDoc = uploadView?.state.doc;
     let uploadSelection = uploadView?.state.selection;
@@ -311,13 +309,10 @@ export default function Workspace() {
     for (const file of Array.from(files)) {
       if (!file.type.startsWith('image/')) continue;
       try {
-        const { path } = await api.upload(file, dir);
-        const parts = path.split('/');
-        // the server may reuse a differently-cased existing folder → take the real name
-        const rel = parts.slice(-2).join('/');
-        const md = isNote
-          ? `![](${rel.replace(/ /g, '%20').replace(/\(/g, '%28').replace(/\)/g, '%29')})`
-          : `![[${path}]]`;
+        const { values: preferences } = await getVaultPreferences();
+        if (useStore.getState().activePath !== uploadPath || uploadView?.state.readOnly) continue;
+        const { path } = await api.upload(file, undefined, uploadPath ?? '');
+        const md = formatInternalLink({ sourcePath: uploadPath, targetPath: path, embed: true, preferences, knownPaths: treeFilePaths(useStore.getState().tree) });
         if(useStore.getState().activePath!==uploadPath || (uploadView && (uploadView!==getActiveEditor() || uploadView.state.readOnly || uploadView.state.doc!==uploadDoc))) {notify('Uploaded '+path+'; document changed, insert the link manually.');continue;}
         const ed = isNote ? uploadView : null;
         if (ed) {

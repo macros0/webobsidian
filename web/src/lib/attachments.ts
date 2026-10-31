@@ -1,9 +1,7 @@
 import type { TreeNode } from './api';
+import { isSupportedVaultFile } from './media';
 
-/**
- * Pasted/dropped images are stored in an `attachments/` folder next to the note. This is the
- * single source of truth for that name (uploads and the "hide attachment folders" tree option).
- */
+/** Existing attachment folders remain hideable after changing Obsidian's setting. */
 export const ATTACHMENT_DIR_NAME = 'attachments';
 
 const NOTE_RE = /\.(md|markdown|canvas)$/i;
@@ -17,21 +15,21 @@ function containsNotes(node: TreeNode): boolean {
 }
 
 /**
- * An auto-created attachment folder that can be hidden from the file tree: named `attachments`
- * (any case) AND free of notes/canvases. The second condition is the safeguard — a real folder
- * a user happens to call "attachments" that holds notes is never hidden.
+ * The server marks folders according to the active vault's Obsidian setting.
+ * Never hide a folder containing notes or canvases, including in nested folders.
  */
 export function isHiddenAttachmentFolder(node: TreeNode): boolean {
   return (
     node.type === 'folder' &&
-    node.name.toLowerCase() === ATTACHMENT_DIR_NAME &&
+    (node.attachmentFolder || node.name.trim().toLowerCase() === ATTACHMENT_DIR_NAME) &&
     !containsNotes(node)
   );
 }
 
 /** Children to display: attachment folders are dropped unless the user chose to show them. */
-export function displayChildren(children: TreeNode[], showAttachmentFolders: boolean): TreeNode[] {
-  return showAttachmentFolders ? children : children.filter((c) => !isHiddenAttachmentFolder(c));
+export function displayChildren(children: TreeNode[], showAttachmentFolders: boolean, showUnsupportedFiles = true): TreeNode[] {
+  return children.filter(c => (showAttachmentFolders || !isHiddenAttachmentFolder(c))
+    && (showUnsupportedFiles || c.type === 'folder' || isSupportedVaultFile(c.path)));
 }
 
 /** True if `path` lies inside a folder that is currently hidden by the option. */

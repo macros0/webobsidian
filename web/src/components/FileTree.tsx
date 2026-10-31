@@ -7,6 +7,7 @@ import Icon from './Icon';
 import { humanizeTitle } from '../lib/title';
 import { confirmDialog } from '../lib/confirm';
 import { displayChildren } from '../lib/attachments';
+import { useVaultPreferences } from '../lib/vaultPreferences';
 
 /** Inline rename box shown in place of a tree row's name (Obsidian-style). */
 function RenameInput({ node, onDone }: { node: TreeNode; onDone: () => void }) {
@@ -229,13 +230,14 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
   const doDeleteMany = async () => {
     const paths = pruneDescendants(useStore.getState().selected);
     if (!paths.length) return;
+    const {values:deletePreferences}=await api.vaultPreferences();
     const rootNode = useStore.getState().tree;
     const hasFolder = paths.some((p) => findNode(rootNode, p)?.type === 'folder');
     const detail = hasFolder ? 'Folders and everything inside them will be removed.' : undefined;
     if (!(await confirmDialog(`Delete ${paths.length} item${paths.length > 1 ? 's' : ''}?`, { confirmLabel: 'Delete', danger: true, detail }))) return;
     let n = 0;
     for (const p of paths) {
-      const r = await deletePath(p).catch(() => null);
+      const r = await deletePath(p,false,deletePreferences.deleteMode).catch(() => null);
       if (r) n++;
     }
     setSelected([]);
@@ -254,8 +256,9 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
         ? `The folder and its contents (${n} item${n === 1 ? '' : 's'}) will be removed.`
         : 'The empty folder will be removed.';
     }
-    if (await confirmDialog(`Delete "${node.name}"?`, { confirmLabel: 'Delete', danger: true, detail })) {
-      const r = await deletePath(node.path);
+    const {values:preferences}=await api.vaultPreferences();
+    if ((!preferences.promptDelete&&preferences.deleteMode!=='permanent'&&node.type==='file')||await confirmDialog(`Delete "${node.name}"?`, { confirmLabel: 'Delete', danger: true, detail })) {
+      const r = await deletePath(node.path,false,preferences.deleteMode);
       await loadTree();
       notify(r.deleted ? 'Deleted permanently' : 'Moved to trash');
     }
@@ -601,6 +604,7 @@ function sortTree(
   order: TreeSort,
   showAttachments: boolean,
   manualOrder: Record<string, string[]>,
+  showUnsupportedFiles: boolean,
 ): TreeNode {
   if (!node.children) return node;
   const folderKey = node.path || '';
@@ -628,19 +632,20 @@ function sortTree(
   };
   // Hidden attachment folders are dropped from this render copy only; the raw store tree
   // (used for name collisions, delete counts, etc.) still contains them.
-  const children = displayChildren(node.children, showAttachments)
-    .map((c) => (c.type === 'folder' ? sortTree(c, order, showAttachments, manualOrder) : c))
+  const children = displayChildren(node.children, showAttachments, showUnsupportedFiles)
+    .map((c) => (c.type === 'folder' ? sortTree(c, order, showAttachments, manualOrder, showUnsupportedFiles) : c))
     .sort(cmp);
   return { ...node, children };
 }
 
 export default function FileTree() {
+  const { values: preferences } = useVaultPreferences();
   const rawTree = useStore((s) => s.tree);
   const treeSort = useStore((s) => s.treeSort);
   const manualOrder = useStore((s) => s.manualOrder);
   const setManualOrderForParent = useStore((s) => s.setManualOrderForParent);
   const showAttachmentFolders = useStore((s) => s.showAttachmentFolders);
-  const tree = rawTree ? sortTree(rawTree, treeSort, showAttachmentFolders, manualOrder) : rawTree;
+  const tree = rawTree ? sortTree(rawTree, treeSort, showAttachmentFolders, manualOrder, preferences.showUnsupportedFiles) : rawTree;
   const loadTree = useStore((s) => s.loadTree);
   const notify = useStore((s) => s.notify);
   const renamePath = useStore((s) => s.renamePath);
