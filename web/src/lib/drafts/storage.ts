@@ -42,7 +42,7 @@ async function transaction<T>(mode: IDBTransactionMode, action: (store: IDBObjec
 export function putDraft(record: DraftRecord): Promise<void> { return transaction('readwrite', (store, set) => { const get = store.get(key(record)); get.onsuccess = () => { if (!get.result || get.result.revision <= record.revision)
     store.put(record); set(undefined); }; }); }
 export function listDrafts(scopeId: string): Promise<DraftRecord[]> { return transaction('readonly', (store, set) => { const get = store.getAll(); get.onsuccess = () => set((get.result as DraftRecord[]).filter(r => r.scopeId === scopeId)); }); }
-export function deleteDraftIfRevision(k: DraftKey, revision: number): Promise<boolean> { return transaction('readwrite', (store, set) => { const get = store.get(key(k)); get.onsuccess = () => { const matches = get.result?.revision === revision; if (matches)
+export function deleteDraftIfRevision(k: DraftKey, revision: number, canDelete: (record: DraftRecord) => boolean = () => true): Promise<boolean> { return transaction('readwrite', (store, set) => { const get = store.get(key(k)); get.onsuccess = () => { const matches = get.result?.revision === revision && canDelete(get.result); if (matches)
     store.delete(key(k)); set(matches); }; }); }
 export function remapDrafts(scopeId: string, from: string, to: string): Promise<void> { return transaction('readwrite', (store, set) => { const get = store.getAll(); get.onsuccess = () => { for (const r of get.result as DraftRecord[]) {
     if (r.scopeId !== scopeId || !(r.path === from || r.path.startsWith(from + '/')))

@@ -1,5 +1,21 @@
 # Changelog
 
+## Formatting toolbar navigation fix — 2026-11-01
+
+- Keep the formatting toolbar and external-change notice keyed independently so opening another article removes the previous toolbar instead of accumulating duplicate rows.
+- Add real Workspace navigation regression coverage across Live, Source and Reading modes.
+
+## Saved browser copy cleanup — 2026-11-01
+
+- Automatically remove browser recovery copies whose exact text already exists in the saved file.
+- Retain differing/unavailable copies and protect active edits, open comparisons and vault changes; update the recovery count after removal.
+
+## External article change indicator — 2026-11-01
+
+- Notify when an open Markdown article changes outside the browser, with an explicit refresh action.
+- Preserve browser edits and open version comparison when both copies changed; ignore own saves and stale replies after navigation or vault changes.
+- Recheck on filesystem events, return to the tab, and every 30 seconds while visible.
+
 ## Plugin runtime and diagnostics — 2026-10-30
 
 - Load authenticated same-origin CommonJS factories as ESM under the existing CSP,

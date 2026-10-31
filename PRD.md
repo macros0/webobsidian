@@ -447,6 +447,8 @@ webobsidian/
 
 ### FR-2 · Editor & rendering
 
+External-change notice (2026-11-01): for the active Markdown article, filesystem events, focus/visibility return, and a 30-second visible-tab fallback check the server's content version. A changed server version displays a notice without replacing the open text. Explicit refresh re-reads the latest content; if local edits exist, open the existing version comparison instead. Refresh and comparison must preserve edits made during pending reads and ignore replies from a previous document session or vault scope. Own saves and unchanged content must not produce notices. Split previews are outside this change.
+
 Vault compatibility (2026-10-31): the authenticated effective-preferences endpoint reads portable Obsidian settings with explicit value sources and warnings; upload placement uses the same strict rule as Settings. WebObsidian retains its saved deletion choice until the user explicitly follows Obsidian; unavailable client system trash maps visibly to recoverable vault trash. Settings publish only after persistence succeeds, reject blank vault paths, and roll back failed UI saves.
 
 Creation and internal-link generation honor note directory, Markdown/wiki and path-format settings; unsupported wiki delimiter filenames use Markdown URLs to preserve identity. Existing content is not reformatted automatically. Excluded files remain directly accessible/in the explorer and in reference safety inventory; search/graph/backlink results filter them and suggestions rank them lower. Readable line width follows the native preference; mobile toolbar commands import only through an explicit merge preserving existing configuration.
@@ -1265,6 +1267,8 @@ Status: in progress. Execution order: container-sized one-row toolbar with More 
 
 
 ### FR extension — local recovery and container-adaptive toolbar (2026-10-30)
+
+Saved-copy cleanup (2026-11-01): browser recovery copies whose complete text exactly matches the current saved file in their captured vault scope are removed automatically. Compare without trimming or normalizing line endings. Group reads by file; throttle ordinary cleanup to 30 seconds and recheck on focus, filesystem events and successful saves. Atomically recheck the browser record's revision/content and scope before deletion. Preserve active unsaved editor copies, copies under review, unavailable/deleted files, and all differing text. Cleanup never writes or deletes a vault file.
 
 - Authenticated `GET /api/files/draft-scope` returns a stable opaque `scopeId` for the canonical current vault within this installation. Registry is private JSON in the configured data directory.
 - Browser drafts are IndexedDB records keyed by scope/path/writer, with monotonic revisions and conditional acknowledgement deletion. Local journal failure is visible and does not prohibit an explicit CAS server save. Draft content is excluded from shared UI-state and broadcast messages.
