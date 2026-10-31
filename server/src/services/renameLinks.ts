@@ -142,7 +142,15 @@ export async function planRename({ from, to }: { from: string; to: string }): Pr
     from = checkedPath(from); to = checkedPath(to);
     if (to.startsWith(from + '/')) throw Object.assign(new Error('Cannot move a folder inside itself'), { status: 400 });
     const source = await vault.resolveInVault(from); await fs.lstat(source);
-    await vault.resolveInVault(to);
+    const destination = await vault.resolveInVault(to);
+    // lstat also detects dangling links; exists/stat would follow and miss them.
+    const destinationEntry = await fs.lstat(destination).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (from !== to && from.toLowerCase() !== to.toLowerCase() && destinationEntry) {
+      throw Object.assign(new Error('destination_exists'), { status: 409 });
+    }
     // Raw rename performs the authoritative case-only and destination collision check.
     if (from !== to && from.toLowerCase() !== to.toLowerCase() && await vault.exists(to)) throw Object.assign(new Error('destination_exists'), { status: 409 });
     if (from.toLowerCase() === to.toLowerCase() && from !== to && await exactExists(to)) throw Object.assign(new Error('destination_exists'), { status: 409 });
