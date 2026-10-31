@@ -16,6 +16,10 @@ test('browser: attachment visibility checkbox changes the real explorer for old 
       import React from 'react'; import {createRoot} from 'react-dom/client';
       import Settings from './src/components/Settings'; import FileTree from './src/components/FileTree';
       import {useStore} from './src/lib/store'; import {api} from './src/lib/api';
+      // Hidden Electron windows can suspend compositor frames on Linux. Keep
+      // the real reveal handler and DOM assertions, using a fixture frame clock.
+      window.requestAnimationFrame=callback=>window.setTimeout(()=>callback(performance.now()),0);
+      window.cancelAnimationFrame=id=>window.clearTimeout(id);
       api.getSettings=async()=>({vault:{path:'/vault',deleteMode:'trash',trashRetentionDays:0}});
       api.indexStatus=async()=>{throw Error('isolated fixture')};
       const folder=(name,path,attachmentFolder,children=[])=>({name,path,type:'folder',attachmentFolder,children});
