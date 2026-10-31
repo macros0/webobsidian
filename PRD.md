@@ -447,6 +447,8 @@ webobsidian/
 
 ### FR-2 · Editor & rendering
 
+Ordinary URLs (2026-11-01): bare HTTP(S) addresses remain compact, clickable URL text in Live, Reading and split preview. Do not automatically request metadata or replace ordinary address lines with rich cards. Inline addresses and the literal editable form under the caret remain clickable. Authored Markdown links, code literals and supported media embeds retain their existing semantics.
+
 External-change notice (2026-11-01): for the active Markdown article, filesystem events, focus/visibility return, and a 30-second visible-tab fallback check the server's content version. A changed server version displays a notice without replacing the open text. Explicit refresh re-reads the latest content; if local edits exist, open the existing version comparison instead. Refresh and comparison must preserve edits made during pending reads and ignore replies from a previous document session or vault scope. Own saves and unchanged content must not produce notices. Split previews are outside this change.
 
 Vault compatibility (2026-10-31): the authenticated effective-preferences endpoint reads portable Obsidian settings with explicit value sources and warnings; upload placement uses the same strict rule as Settings. WebObsidian retains its saved deletion choice until the user explicitly follows Obsidian; unavailable client system trash maps visibly to recoverable vault trash. Settings publish only after persistence succeeds, reject blank vault paths, and roll back failed UI saves.

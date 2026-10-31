@@ -1,5 +1,12 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Ordinary URL rendering and clicks — 2026-11-01
+
+- [x] Reproduce automatic card conversion and non-clickable bare addresses in the real Live/Reading pipeline.
+- [x] Render compact URL anchors with working clicks both outside and inside the active caret range; retain ordinary links in split preview without metadata requests.
+- [x] Add browser coverage using the reported standalone and inline URLs, code literals, named links and unchanged source text.
+- [x] Complete full tests, web build and independent review: 345 server and 457 web tests passed, 10 server skips; web build passed. No actionable review findings. Deployed separately at the user's request; healthy application and matching HTML/JS hashes verified through the public HTTPS endpoint.
+
 ## Formatting toolbar navigation fix — 2026-11-01
 
 - [x] Reproduce one extra formatting toolbar per article opened in the real Workspace; separate the external-change notice key from the toolbar key.

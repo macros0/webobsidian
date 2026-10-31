@@ -1,5 +1,10 @@
 # Changelog
 
+## Ordinary URL rendering and clicks — 2026-11-01
+
+- Keep ordinary standalone HTTP(S) addresses as compact text links in Live, Reading and split preview, without fetching metadata or replacing them with rich cards.
+- Make inline bare URLs clickable, including the editable form shown when the caret is inside an address. Preserve named Markdown links, literal code and media embeds.
+
 ## Formatting toolbar navigation fix — 2026-11-01
 
 - Keep the formatting toolbar and external-change notice keyed independently so opening another article removes the previous toolbar instead of accumulating duplicate rows.
