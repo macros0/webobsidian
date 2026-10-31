@@ -12,6 +12,7 @@ import { getVaultPreferences } from '../lib/vaultPreferences';
 import Icon from './Icon';
 import StatusBar from './StatusBar';
 import FormatToolbar from './FormatToolbar';
+import ExternalNoteNotice from './ExternalNoteNotice';
 import { useIsMobile } from '../lib/useIsMobile';
 import { editorFind, getActiveEditor } from '../lib/activeEditor';
 import { triggerAddProperty } from '../lib/livePreview';
@@ -460,6 +461,8 @@ export default function Workspace() {
       {!isMobile && activePath && !isViewPath(activePath) && isMd && viewMode !== 'reading' && (
         <FormatToolbar key={activePath} disabled={locked} />
       )}
+
+      {isMd && <ExternalNoteNotice key={`external-note:${activePath}`} />}
 
       <div className={`editor-area ${splitDirection === 'down' ? 'split-down' : ''}`}>
         {!activePath && (

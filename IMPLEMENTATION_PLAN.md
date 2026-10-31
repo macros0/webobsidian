@@ -1,5 +1,29 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Formatting toolbar navigation fix — 2026-11-01
+
+- [x] Reproduce one extra formatting toolbar per article opened in the real Workspace; separate the external-change notice key from the toolbar key.
+- [x] Verify repeated navigation, single toolbar/notice/editor, Source/Live/Reading transitions and unmount in a browser regression test.
+- [x] Complete full test suite, web build and independent review: 345 server and 456 web tests passed, 10 server skips. Independent review reported no actionable findings.
+
+Fork PR validation follow-up: Linux headless Chromium initially selected a different viewport before mounting the first toolbar. The navigation fixture now sets and asserts an explicit 1440px desktop viewport through CDP and waits for the actual editor/notice/mode transitions. Exact toolbar/editor/notice counts and the duplicate-key regression assertions remain intact.
+
+## Saved browser copy cleanup — 2026-11-01
+
+- [x] Compare recovery copies against scoped server reads and automatically remove only exact matching snapshots.
+- [x] Protect newer/same-revision rewrites, active unsaved editor copies, review dialogs and vault switches with transaction-time guards.
+- [x] Group reads by file, throttle ordinary cleanup and recheck on filesystem events, focus and successful saves.
+- [x] Complete full regression suite, build and independent review: 345 server and 455 web tests passed, 10 server skips; web build passed. Plan: `docs/superpowers/plans/2026-11-01-saved-draft-cleanup.md`. Deployed separately at the user's request with verified health and served asset hashes.
+
+## External article change indicator — 2026-11-01
+
+- [x] Show an explicit refresh notice when the active Markdown article changes outside the browser; detect filesystem events, tab return and missed events through a visible-tab fallback.
+- [x] Re-read on refresh and protect concurrent typing, document navigation and vault changes; route local edits to the existing comparison dialog.
+- [x] Verify behavior in a real browser and editor, including own saves, connection failures, stale replies and browser draft preservation.
+- [x] Complete full test suite, web build and independent review: 345 server tests and 454 web tests passed; 10 server tests skipped. Deployed separately at the user's request with verified health and served asset hashes.
+
+Implementation plan: `docs/superpowers/plans/2026-11-01-external-note-indicator.md`.
+
 ## Наблюдение Obsidian за изменениями на Synology — 2026-10-31
 
 Cập nhật lần cuối: 2026-10-31 (документация SMB Vault Watcher).
