@@ -27,6 +27,18 @@ afterEach(async () => {
 });
 
 describe('community integration: preserve existing trash by default', () => {
+  it('keeps disk and cache unchanged when persistence fails',async()=>{
+    const {getSettings,updateSettings}=await import('./settings.js');const before=await getSettings();
+    const rename=vi.spyOn(fs,'rename').mockRejectedValueOnce(new Error('fixture disk failure'));
+    await expect(updateSettings(d=>{d.vault.deleteMode='permanent';})).rejects.toThrow('fixture disk failure');rename.mockRestore();
+    expect((await getSettings()).vault.deleteMode).toBe(before.vault.deleteMode);
+    expect(JSON.parse(await fs.readFile(settingsFile,'utf8')).vault.deleteMode).toBe(before.vault.deleteMode);
+  });
+  it('serializes overlapping updates without losing independent fields',async()=>{
+    const {getSettings,updateSettings}=await import('./settings.js');await getSettings();
+    await Promise.all([updateSettings(async d=>{await new Promise(r=>setTimeout(r,20));d.vault.trashRetentionDays=7;}),updateSettings(d=>{d.ui.showInlineTitle=false;})]);
+    expect(await getSettings()).toMatchObject({vault:{trashRetentionDays:7},ui:{showInlineTitle:false}});
+  });
   it('bounds and sanitizes toolbar schema while recovering only a damaged layout', async () => {
     const {EditingToolbarSchema}=await import('./settings.js');
     const good={enabled:true,items:[{type:'command',instanceId:'one',commandId:'editing-toolbar:toggle-bold',icon:'<svg onload="bad()">',script:'bad()'}]};

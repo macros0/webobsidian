@@ -12,6 +12,7 @@ import { languages } from '@codemirror/language-data';
 import { syntaxHighlighting } from '@codemirror/language';
 import { obsidianHighlightStyle, literalAngleColors } from '../lib/highlight';
 import { useStore, documentSessions } from '../lib/store';
+import {useVaultPreferences} from '../lib/vaultPreferences';
 import type { TreeNode } from '../lib/api';
 import { obsidianKeymap } from '../lib/editorCommands';
 import Icon from './Icon';
@@ -69,6 +70,7 @@ const readonlyExt = (reading: boolean) =>
 const isReadonly = (viewMode: string, locked: boolean) => viewMode === 'reading' || locked;
 
 export default function Editor() {
+  const preferences=useVaultPreferences();
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const [editorView, setEditorView] = useState<EditorView | null>(null);
@@ -306,7 +308,7 @@ export default function Editor() {
     'markdown-source-view',
     'cm-s-obsidian',
     'mod-cm6',
-    'is-readable-line-width',
+    preferences.values.readableLineLength?'is-readable-line-width':'',
     viewMode !== 'source' ? 'is-live-preview live-preview' : '',
     viewMode === 'reading' ? 'is-reading-mode' : '',
     locked ? 'is-locked-note' : '',

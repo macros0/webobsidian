@@ -39,6 +39,9 @@ experience over a **real folder of Markdown files** living on your server. Your 
 100% compatible with an existing Obsidian vault (including the `.obsidian/` folder) — you
 can edit the same files from the Obsidian desktop app and from the web, side by side.
 
+If the desktop app shows stale notes or deleted files until restart when sharing
+a Synology/SMB vault, see [Obsidian network-vault refresh and SMB Vault Watcher](docs/OBSIDIAN_NETWORK_VAULTS.md).
+
 It is **single-user** and self-hosted: one master password protects the whole app, all
 configuration lives in a plain `data/settings.json` (no database engine), and the entire
 stack runs from a single `docker compose up`.

@@ -1,10 +1,12 @@
+import {confirmDialog} from './confirm';
+import {getVaultPreferences} from './vaultPreferences';
 // Thin fetch wrapper around the WebObsidian server API.
 import type {ToolbarConfigV1} from './toolbar/config';
 
 export interface Settings {
   version: number;
   auth: {hasCustomPassword:boolean;hasOverridePassword:boolean};
-  vault: {path:string;allowedRoots:string[];trash:string;deleteMode:'trash'|'permanent';trashRetentionDays:number;attachmentDir:string};
+  vault: {path:string;allowedRoots:string[];trash:string;deleteMode:'trash'|'permanent';trashRetentionDays:number;attachmentDir:string;followObsidianDeletion?:boolean};
   git: {enabled:boolean;remote:string;branch:string;token:string;authorName:string;authorEmail:string;autoSync:boolean;autoCommitOnSave:boolean;intervalSec:number;lfsPatterns:string[]};
   search: {fuzzy:number;prefix:boolean;indexFrontmatter:boolean};
   api: {rateLimitPerMin:number;keys:unknown[]};
@@ -21,6 +23,7 @@ export interface TreeNode {
   mtime?: number;
   ctime?: number;
   children?: TreeNode[];
+  attachmentFolder?: boolean;
   /** Set by the server from `_system/locks.json`: the browser must not edit this path. */
   locked?: boolean;
   lockReason?: string;
@@ -211,6 +214,7 @@ export const api = {
 
   // files
   draftScope: () => req<{scopeId:string}>('/api/files/draft-scope'),
+  vaultPreferences: getVaultPreferences,
   tree: () => req<TreeNode>('/api/files/'),
   read: (path: string, draftScopeId?: string) =>
     req<{
@@ -234,7 +238,12 @@ export const api = {
     renameHook?.start();
     let ok = false;
     try {
-      const r = await req<{ ok: true }>('/api/files/rename', { method: 'PATCH', body: JSON.stringify({ from, to }) });
+      const send=(updateLinks?:boolean)=>req<{ok:true;changedPaths?:string[];versions?:Record<string,string>}>('/api/files/rename',{method:'PATCH',body:JSON.stringify({from,to,...(updateLinks===undefined?{}:{updateLinks})})});
+      let r;try{r=await send();}catch(error){
+        if(!(error instanceof ApiError)||(error.data as {code?:string})?.code!=='rename_confirmation_required')throw error;
+        let keep=false;const update=await confirmDialog('Update links to the renamed file?',{confirmLabel:'Rename and update links',alternativeLabel:'Rename without updating links',onAlternative:()=>{keep=true;}});
+        if(!update&&!keep)throw new Error('Rename cancelled');r=await send(update);
+      }
       ok = true;
       return r;
     } finally {
@@ -243,9 +252,9 @@ export const api = {
   },
   copy: (from: string, to: string) =>
     req<{ ok: true }>('/api/files/copy', { method: 'POST', body: JSON.stringify({ from, to }) }),
-  remove: (path: string, permanent = false) =>
-    req<{ ok: true; trashed?: string; deleted?: string }>(
-      `/api/files/?path=${encodeURIComponent(path)}${permanent ? '&permanent=1' : ''}`,
+  remove: (path: string, permanent = false,confirmedMode?:'trash'|'permanent') =>
+    req<{ ok: true; trashed?: string; deleted?: string;pendingAttachments?:string[];cleanupReceipt?:string;cleanupWarning?:string }>(
+      `/api/files/?path=${encodeURIComponent(path)}${permanent ? '&permanent=1' : ''}${confirmedMode?'&confirmedMode='+confirmedMode:''}`,
       { method: 'DELETE' },
     ),
   resolveAttachment: (path: string, from: string) =>
@@ -253,10 +262,16 @@ export const api = {
       `/api/files/resolve?path=${encodeURIComponent(path)}&from=${encodeURIComponent(from)}`,
     ),
   // notes (other than `exclude`) still referencing an attachment
-  references: (path: string, exclude?: string) =>
-    req<{ references: string[] }>(
-      `/api/files/references?path=${encodeURIComponent(path)}${exclude ? `&exclude=${encodeURIComponent(exclude)}` : ''}`,
+  references: (path: string, exclude?: string,sourceContent?:string) =>
+    req<{ references: string[];sourceReferences?:number; deleteMode?: 'trash' | 'permanent' }>(
+      sourceContent===undefined?`/api/files/references?path=${encodeURIComponent(path)}${exclude ? `&exclude=${encodeURIComponent(exclude)}` : ''}`:'/api/files/references',
+      sourceContent===undefined?undefined:{method:'POST',body:JSON.stringify({path,exclude,sourceContent})},
     ),
+  cleanupAttachments:(sourcePath:string,selected:string[],receipt:string)=>req<{deleted:string[];kept:string[]}>('/api/files/attachments/cleanup',{method:'POST',body:JSON.stringify({sourcePath,selected,receipt})}),
+  deleteAttachment: (sourcePath:string,targetPath:string,sourceVersion:string,draftScopeId:string,confirmedMode:'trash'|'permanent') =>
+    req<{outcome:'kept'|'trashed'|'deleted';path:string}>('/api/files/attachments/delete',{
+      method:'POST',body:JSON.stringify({sourcePath,targetPath,sourceVersion,draftScopeId,confirmedMode}),
+    }),
   // trash (FR-1)
   listTrash: () => req<{ items: TrashItem[] }>('/api/files/trash'),
   restoreTrash: (path: string) =>
@@ -268,13 +283,14 @@ export const api = {
     req<{ ok: true }>(`/api/files/trash/item?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
   emptyTrash: () => req<{ ok: true }>('/api/files/trash', { method: 'DELETE' }),
   uploadUrl: () => '/api/files/upload',
-  upload: async (file: File, dir = 'attachments') => {
+  upload: async (file: File, dir = 'attachments', sourcePath?: string) => {
     const fd = new FormData();
-    fd.append('dir', dir);
+    if (sourcePath !== undefined) fd.append('sourcePath', sourcePath);
+    else fd.append('dir', dir);
     fd.append('file', file);
     const res = await fetch('/api/files/upload', { method: 'POST', credentials: 'include', body: fd });
     if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).error ?? 'Upload failed', res.status);
-    return res.json() as Promise<{ ok: true; path: string; size: number }>;
+    return res.json() as Promise<{ ok: true; path: string; relativePath: string; size: number }>;
   },
   rawUrl: (path: string, from?: string) => `/api/files/content?path=${encodeURIComponent(path)}${from ? `&from=${encodeURIComponent(from)}` : ''}`,
   /** Same route, but the server sends it as an attachment under its own name (FR-22). */
@@ -305,8 +321,8 @@ export const api = {
     }),
   backlinks: (path: string) =>
     req<{ backlinks: string[] }>(`/api/backlinks?path=${encodeURIComponent(path)}`),
-  resolve: (target: string, from?: string) =>
-    req<{ path: string | null }>(`/api/resolve?target=${encodeURIComponent(target)}${from ? `&from=${encodeURIComponent(from)}` : ''}`),
+  resolve: (target: string, from?: string,kind:'wiki'|'markdown'='wiki') =>
+    req<{ path: string | null }>(`/api/resolve?target=${encodeURIComponent(target)}&kind=${kind}${from ? `&from=${encodeURIComponent(from)}` : ''}`),
   graph: () =>
     req<{
       nodes: { id: string; label: string; kind: 'note' | 'attachment' | 'unresolved'; tags: string[] }[];

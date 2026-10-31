@@ -15,6 +15,13 @@ export const PDF_EXT_RE = /\.pdf$/i;
  */
 export const DOWNLOAD_EXT_RE = /\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf|zip|7z|tar|gz|tgz|bz2|xz)$/i;
 
+/** Explicit WebObsidian registry; downloadable documents are supported too. */
+export function isSupportedVaultFile(path: string): boolean {
+  return /\.(md|markdown|canvas|txt|json|csv|css|js|ya?ml)$/i.test(path)
+    || IMAGE_EXT_RE.test(path) || VIDEO_EXT_RE.test(path) || AUDIO_EXT_RE.test(path)
+    || PDF_EXT_RE.test(path) || DOWNLOAD_EXT_RE.test(path);
+}
+
 export type MediaKind = 'video' | 'audio';
 
 /** Media kind for an embed/file target (ignoring any `#fragment`), else null. */

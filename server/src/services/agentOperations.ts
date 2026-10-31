@@ -2,7 +2,7 @@ import type { AgentApi, NoteListOptions } from '@webobsidian/mcp-server/types';
 import { AgentApiError } from '@webobsidian/mcp-server/errors';
 import * as vault from './vault.js';
 import { indexing } from './indexing/coordinator.js';
-import { qmd } from './search.js';
+import { qmd, searchVault } from './search.js';
 import { backlinksFor, buildLinkGraph } from './links.js';
 import { parseNote } from './markdown.js';
 import { applyEdit } from './noteedit.js';
@@ -114,7 +114,7 @@ export const agentOperations = {
   },
   async search(q: string, limit?: number) {
     if (indexing.isStarted) indexing.assertReady();
-    return { query: q, hits: await qmd.search(q, Math.min(Number(limit ?? 20) || 20, 100)), ...(indexing.isStarted ? {index:indexing.status()} : {}) };
+    return { query: q, hits: await searchVault(q, Math.min(Number(limit ?? 20) || 20, 100)), ...(indexing.isStarted ? {index:indexing.status()} : {}) };
   },
   async backlinks(rel: string) {
     if (indexing.isStarted) indexing.assertReady();

@@ -142,6 +142,96 @@ try {
     assert.equal(await fs.readFile(path.join(vault, 'notes', 'attachments', expected), 'utf8'), 'upload fixture');
   }
   assert.equal((await uploadFile('notes/protected')).status, 423);
+  // Editor uploads must follow Obsidian rather than invent a local attachments folder.
+  await fs.mkdir(path.join(vault, '.obsidian'), { recursive: true });
+  await fs.mkdir(path.join(vault, 'Media', 'Existing'), { recursive: true });
+  const appConfig = path.join(vault, '.obsidian', 'app.json');
+  const uploadAttachment = async (sourcePath = 'second/deep/note.md', name = 'shot #1 (a).png') => {
+    const body = new FormData();
+    body.append('sourcePath', sourcePath);
+    body.append('file', new Blob(['attachment fixture']), name);
+    return fetch(`${base}/api/files/upload`, { method: 'POST', headers: { cookie }, body });
+  };
+  for (const [config, expected, relativePath] of [
+    [{ attachmentFolderPath: 'media/existing' }, 'Media/Existing/shot #1 (a).png', '../../Media/Existing/shot%20%231%20%28a%29.png'],
+    [{ attachmentFolderPath: '/' }, 'shot #1 (a).png', '../../shot%20%231%20%28a%29.png'],
+    [{ attachmentFolderPath: './' }, 'second/deep/shot #1 (a).png', 'shot%20%231%20%28a%29.png'],
+    [{ attachmentFolderPath: './Pictures/Nested' }, 'second/deep/Pictures/Nested/shot #1 (a).png', 'Pictures/Nested/shot%20%231%20%28a%29.png'],
+    [{}, 'shot #1 (a)-1.png', '../../shot%20%231%20%28a%29-1.png'],
+    [{ attachmentFolderPath: '' }, 'shot #1 (a)-2.png', '../../shot%20%231%20%28a%29-2.png'],
+  ]) {
+    await fs.writeFile(appConfig, JSON.stringify(config));
+    const response = await uploadAttachment();
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.path, expected);
+    assert.equal(result.relativePath, relativePath);
+    assert.equal(await fs.readFile(path.join(vault, expected), 'utf8'), 'attachment fixture');
+    const linked = await request(`/api/files/content?path=${encodeURIComponent(decodeURIComponent(result.relativePath))}&from=second/deep/note.md`);
+    assert.equal(linked.status, 200, 'the inserted relative URL must resolve back to the uploaded file');
+    assert.equal(await linked.text(), 'attachment fixture');
+    if (config.attachmentFolderPath === 'media/existing') {
+      const tree = await (await request('/api/files/')).json();
+      const find = (node, target) => node.path === target ? node : (node.children ?? []).map(c => find(c, target)).find(Boolean);
+      assert.equal(find(tree, 'Media/Existing').attachmentFolder, true);
+      assert.equal(find(tree, 'notes/attachments').attachmentFolder, false);
+      const encoded='Media/Existing/shot%20%231%20%28a%29.png';
+      await fs.writeFile(path.join(vault,'encoded-reference.md'),'![]('+encoded+')');
+      const refs=await (await request('/api/files/references?path='+encodeURIComponent(expected))).json();
+      assert.ok(refs.references.includes('encoded-reference.md'));
+      const repeated=await (await request('/api/files/references',{method:'POST',body:JSON.stringify({path:expected,exclude:'source.md',sourceContent:'![]('+encoded+') ![]('+encoded+')'})})).json();
+      assert.equal(repeated.sourceReferences,2);
+    }
+  }
+  assert.equal(await fs.stat(path.join(vault, 'second/deep/attachments')).then(() => true, () => false), false);
+  await fs.writeFile(appConfig, JSON.stringify({ attachmentFolderPath: 'notes/protected' }));
+  assert.equal((await uploadAttachment()).status, 423);
+  for (const attachmentFolderPath of ['../outside', '/absolute', 'C:\\outside', 42]) {
+    await fs.writeFile(appConfig, JSON.stringify({ attachmentFolderPath }));
+    assert.equal((await uploadAttachment()).status, 400);
+  }
+  await fs.writeFile(appConfig, '{broken');
+  assert.equal((await uploadAttachment()).status, 400);
+  await fs.writeFile(appConfig, JSON.stringify({ attachmentFolderPath: 'Media/Existing' }));
+  assert.equal((await uploadAttachment('../outside.md')).status, 400);
+  const canvasUpload = await uploadAttachment('second/board.canvas', 'canvas.png');
+  assert.equal(canvasUpload.status, 200);
+  assert.equal((await canvasUpload.json()).path, 'Media/Existing/canvas.png');
+  await fs.unlink(appConfig);
+  const legacy = await uploadAttachment('second/legacy.md', 'legacy.png');
+  assert.equal(legacy.status, 200);
+  assert.equal((await legacy.json()).path, 'second/attachments/legacy.png');
+  // Settings / rename / safe cleanup policies use a synthetic vault only.
+  for(const path of ['', '   ']) assert.equal((await request('/api/settings',{method:'PUT',body:JSON.stringify({vault:{path}})})).status,400);
+  await fs.writeFile(appConfig,JSON.stringify({attachmentFolderPath:'./',alwaysUpdateLinks:true,deleteUnlinkedAttachments:'ask'}));
+  await fs.writeFile(path.join(vault,'rename-target.md'),'# Target');
+  await fs.writeFile(path.join(vault,'rename-source.md'),'[[rename-target]] [Target](rename-target.md)');
+  const renamed=await request('/api/files/rename',{method:'PATCH',body:JSON.stringify({from:'rename-target.md',to:'rename-after.md'})});
+  assert.equal(renamed.status,200);assert.match(await fs.readFile(path.join(vault,'rename-source.md'),'utf8'),/rename-after/);
+  await fs.writeFile(path.join(vault,'cleanup-source.md'),'removed');
+  await fs.writeFile(path.join(vault,'cleanup #1.png'),'image');
+  const source=await (await request('/api/files/content?path=cleanup-source.md')).json();
+  const deletionScope=await (await request('/api/files/draft-scope')).json();
+  const clean=async(version)=>request('/api/files/attachments/delete',{method:'POST',body:JSON.stringify({sourcePath:'cleanup-source.md',targetPath:'cleanup #1.png',sourceVersion:version,draftScopeId:deletionScope.scopeId,confirmedMode:'trash'})});
+  assert.equal((await clean('stale')).status,409);
+  const cleaned=await clean(source.version);assert.equal(cleaned.status,200);assert.equal((await cleaned.json()).outcome,'trashed');
+  assert.equal(await fs.readFile(path.join(vault,'.trash','cleanup #1.png'),'utf8'),'image');
+  await fs.writeFile(path.join(vault,'unused.png'),'unused');
+  await fs.writeFile(path.join(vault,'ask-note.md'),'![](unused.png)');
+  const ask=await request('/api/files/?path=ask-note.md',{method:'DELETE'});assert.equal(ask.status,200);const receipt=await ask.json();
+  assert.deepEqual(receipt.pendingAttachments,['unused.png']);assert.ok(receipt.cleanupReceipt);
+  const select=async(token)=>request('/api/files/attachments/cleanup',{method:'POST',body:JSON.stringify({sourcePath:'ask-note.md',selected:['unused.png'],receipt:token})});
+  assert.equal((await select('invalid')).status,409);assert.equal((await select(receipt.cleanupReceipt)).status,200);
+  assert.equal(await fs.readFile(path.join(vault,'.trash','unused.png'),'utf8'),'unused');
+  // A confirmed recoverable deletion also caps automatic cleanup if policy changed.
+  assert.equal((await request('/api/settings',{method:'PUT',body:JSON.stringify({vault:{followObsidianDeletion:true}})})).status,200);
+  await fs.writeFile(appConfig,JSON.stringify({trashOption:'none',deleteUnlinkedAttachments:'always'}));
+  await fs.writeFile(path.join(vault,'cap.png'),'recoverable');
+  await fs.writeFile(path.join(vault,'cap-note.md'),'![](cap.png)');
+  const capped=await request('/api/files/?path=cap-note.md&confirmedMode=trash',{method:'DELETE'});assert.equal(capped.status,200);
+  assert.equal((await capped.json()).trashed,'.trash/cap-note.md');
+  assert.equal(await fs.readFile(path.join(vault,'.trash','cap.png'),'utf8'),'recoverable');
+  assert.equal((await request('/api/settings',{method:'PUT',body:JSON.stringify({vault:{followObsidianDeletion:false}})})).status,200);
   const malformed = await fetch(`${base}/api/files/upload`, { method: 'POST',
     headers: { cookie, 'content-type': 'multipart/form-data; boundary=fixture' },
     body: '--fixture\r\nContent-Disposition: form-data; name="file"; filename="broken.txt"\r\n\r\nunfinished',

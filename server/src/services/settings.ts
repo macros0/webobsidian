@@ -67,6 +67,7 @@ const SettingsSchema = z.object({
       // Delete behavior: 'trash' = move into the .trash folder (recoverable);
       // 'permanent' = delete immediately and permanently.
       deleteMode: z.enum(['trash', 'permanent']).default('trash'),
+      followObsidianDeletion: z.boolean().default(false),
       // Số ngày giữ item trong .trash (tính từ lúc item được chuyển vào trash) trước khi
       // tự xoá vĩnh viễn. 0 = giữ mãi, không tự dọn.
       trashRetentionDays: z.number().int().min(0).max(3650).default(0),
@@ -134,6 +135,8 @@ export type ApiKeyRecord = z.infer<typeof ApiKeySchema>;
 /** ---- Store --------------------------------------------------------------- */
 
 let cache: Settings | null = null;
+let loading: Promise<Settings> | null = null;
+let updates: Promise<unknown> = Promise.resolve();
 
 function defaults(): Settings {
   const base = SettingsSchema.parse({});
@@ -179,17 +182,25 @@ async function persist(s: Settings): Promise<void> {
   } catch {
     /* no previous file */
   }
-  await fs.rename(tmp, SETTINGS_FILE);
+  try { await fs.rename(tmp, SETTINGS_FILE); }
+  finally { await fs.rm(tmp, { force: true }).catch(() => undefined); }
 }
 
 export async function loadSettings(): Promise<Settings> {
   if (cache) return cache;
+  if (loading) return loading;
+  loading = initializeSettings();
+  try { return await loading; } finally { loading = null; }
+}
+
+async function initializeSettings(): Promise<Settings> {
   await ensureDataDir();
+  let parsed: Settings;
+  let dirty = false;
   try {
     const raw = await fs.readFile(SETTINGS_FILE, 'utf8');
-    const parsed = SettingsSchema.parse(JSON.parse(raw));
+    parsed = SettingsSchema.parse(JSON.parse(raw));
     // Backfill secrets that may be empty in older files.
-    let dirty = false;
     if (!parsed.auth.jwtSecret) {
       parsed.auth.jwtSecret = randomBytes(48).toString('hex');
       dirty = true;
@@ -205,12 +216,12 @@ export async function loadSettings(): Promise<Settings> {
     }
     // Heal older files whose allowedRoots predate the current vault path.
     if (ensureVaultBrowsable(parsed)) dirty = true;
-    cache = parsed;
-    if (dirty) await persist(cache);
   } catch {
-    cache = defaults();
-    await persist(cache);
+    parsed = defaults();
+    dirty = true;
   }
+  if (dirty) await persist(parsed);
+  cache = parsed;
   return cache;
 }
 
@@ -222,13 +233,17 @@ export async function getSettings(): Promise<Settings> {
 export async function updateSettings(
   mutator: (draft: Settings) => void | Promise<void>,
 ): Promise<Settings> {
-  const current = await getSettings();
-  const draft: Settings = JSON.parse(JSON.stringify(current));
-  await mutator(draft);
-  const validated = SettingsSchema.parse(draft);
-  cache = validated;
-  await persist(validated);
-  return validated;
+  const next = updates.then(async () => {
+    const current = await getSettings();
+    const draft: Settings = JSON.parse(JSON.stringify(current));
+    await mutator(draft);
+    const validated = SettingsSchema.parse(draft);
+    await persist(validated);
+    cache = validated;
+    return validated;
+  });
+  updates = next.catch(() => undefined);
+  return next;
 }
 
 /** Redact secrets for sending to the client. */

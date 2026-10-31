@@ -32,8 +32,8 @@ import { resolveExternalEmbed, createEmbedElement, type ExternalEmbed } from './
  * markup across the line. (PRD FR-2)
  */
 
-let openLink: (target: string) => void = () => {};
-export function setLivePreviewLinkHandler(fn: (target: string) => void) {
+let openLink: (target: string, kind?: 'wiki' | 'markdown') => void = () => {};
+export function setLivePreviewLinkHandler(fn: (target: string, kind?: 'wiki' | 'markdown') => void) {
   openLink = fn;
 }
 
@@ -182,7 +182,7 @@ class MdLinkWidget extends WidgetType {
       e.preventDefault();
       if (external) window.open(this.href, '_blank', 'noopener');
       else if (this.href.startsWith('#')) { /* in-note anchor — no-op */ }
-      else openLink(this.href.replace(/\.(md|markdown)$/i, ''));
+      else openLink(this.href, 'markdown');
     };
     return a;
   }
@@ -675,11 +675,11 @@ class NoteEmbedWidget extends WidgetType {
       }
       content.innerHTML = res.html; // sanitized upstream (rehype-sanitize)
       content.addEventListener('mousedown', (e) => {
-        const a = (e.target as HTMLElement).closest('[data-wikilink]') as HTMLElement | null;
+        const a = (e.target as HTMLElement).closest('[data-wikilink],a[data-link-kind="markdown"]') as HTMLAnchorElement | null;
         if (!a) return;
         e.preventDefault();
-        const t = a.getAttribute('data-wikilink');
-        if (t) openLink(t);
+        const t = a.getAttribute('data-wikilink') ?? a.getAttribute('href');
+        if (t) openLink(t, a.dataset.linkKind === 'markdown' ? 'markdown' : 'wiki');
       });
     });
     return box;
@@ -1115,7 +1115,7 @@ function appendInline(parent: HTMLElement, text: string) {
       e.preventDefault();
       const target = anchor.dataset.wikilink ?? anchor.getAttribute('href') ?? '';
       if (/^https?:\/\//i.test(target)) window.open(target, '_blank', 'noopener');
-      else if (target && !target.startsWith('#')) openLink(target.replace(/\.(md|markdown)$/i, ''));
+      else if (target && !target.startsWith('#')) openLink(target, anchor.dataset.wikilink !== undefined ? 'wiki' : 'markdown');
     };
   }
 }
@@ -1442,7 +1442,7 @@ class HtmlBlockWidget extends WidgetType {
       e.preventDefault();
       const href = a.getAttribute('href') || '';
       if (/^https?:\/\//i.test(href)) window.open(href, '_blank', 'noopener');
-      else if (href && !href.startsWith('#')) openLink(href.replace(/\.(md|markdown)$/i, ''));
+      else if (href && !href.startsWith('#')) openLink(href, 'markdown');
     });
     return div;
   }

@@ -51,6 +51,7 @@ export default function ConfirmDialog() {
       >
         <p className="confirm-dialog-msg">{req.message}</p>
         {req.detail && <p className="confirm-dialog-detail">{req.detail}</p>}
+        {req.items&&<div style={{maxHeight:240,overflowY:'auto'}}>{req.items.map(item=><label key={item} style={{display:'block'}}><input type="checkbox" checked={req.selected?.includes(item)??false} onChange={e=>useConfirm.setState({req:{...req,selected:e.target.checked?[...(req.selected??[]),item]:(req.selected??[]).filter(p=>p!==item)}})}/>{item}</label>)}</div>}
         <div className="confirm-dialog-actions">
           <button ref={cancelRef} className="btn secondary" onClick={cancel}>
             Cancel
@@ -58,6 +59,7 @@ export default function ConfirmDialog() {
           <button className={req.danger ? 'btn danger' : 'btn'} onClick={() => req.resolve(true)}>
             {req.confirmLabel}
           </button>
+          {req.alternative&&<button className="btn secondary" onClick={req.alternative}>{req.alternativeLabel}</button>}
         </div>
       </div>
     </div>

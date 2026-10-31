@@ -434,9 +434,10 @@ webobsidian/
 - Hỗ trợ attachments (ảnh/pdf/…); upload từ web. Thư mục đích upload resolve **case-insensitive** với folder
   sẵn có (`vault.resolveDirCaseInsensitive`) — tránh tạo thư mục trùng khác hoa-thường (vd `attachments` cạnh
   `Attachments` có sẵn) trên filesystem phân biệt hoa-thường (Linux).
-- Ảnh dán/drop vào note lưu ở `<thư-mục-note>/attachments/` (tự tạo, tên unique) và dùng link tương đối; hover ảnh có
+- Editor paste/drop, toolbar attachments and canvas uploads follow `.obsidian/app.json` → `attachmentFolderPath`: `/` or empty = vault root, `./` = note folder, `./sub` = note-relative subfolder, other relative paths = fixed vault folder. An existing config without the key uses the Obsidian root default. If app.json is absent, use the legacy note-local `vault.attachmentDir` fallback. Invalid configuration fails visibly; existing files are never moved. The server reuses existing directory casing, avoids filename collisions and returns correctly escaped note-relative URLs. Explicit-directory uploads retain their contract.
+- Ảnh dán/drop vào note dùng link tương đối; hover ảnh có
   icon xoá (gỡ tham chiếu + xoá file nếu không note nào khác dùng) — xem Changelog 1.9.
-- Thư mục `attachments/` mặc định **ẩn** khỏi file tree (tuỳ chọn *Show attachment folders*; thư mục có chứa note/canvas không bao giờ bị ẩn) — xem Changelog 1.10.
+- Configured attachment folders and existing folders named `attachments` (any case, ignoring surrounding whitespace for visibility matching only) default to hidden in the file tree (*Show attachment folders* controls visibility only). Existing attachment folders remain hideable after changing Obsidian's destination to `./` or `/`. The vault root and folders containing notes/canvases are never hidden. This setting does not select or change the upload destination.
 - Watch filesystem (chokidar) để phản ánh thay đổi ngoài (git pull, sửa trực tiếp).
 - **Symlink vault roots**: folder/file được trỏ qua symlink trong vault được liệt kê, đọc/ghi và index như
   file thường — kể cả khi symlink trỏ ra ngoài vault root, miễn realpath của đích nằm trong
@@ -445,6 +446,14 @@ webobsidian/
 - Tương thích cấu trúc `.obsidian/` (config, plugins, themes).
 
 ### FR-2 · Editor & rendering
+
+Vault compatibility (2026-10-31): the authenticated effective-preferences endpoint reads portable Obsidian settings with explicit value sources and warnings; upload placement uses the same strict rule as Settings. WebObsidian retains its saved deletion choice until the user explicitly follows Obsidian; unavailable client system trash maps visibly to recoverable vault trash. Settings publish only after persistence succeeds, reject blank vault paths, and roll back failed UI saves.
+
+Creation and internal-link generation honor note directory, Markdown/wiki and path-format settings; unsupported wiki delimiter filenames use Markdown URLs to preserve identity. Existing content is not reformatted automatically. Excluded files remain directly accessible/in the explorer and in reference safety inventory; search/graph/backlink results filter them and suggestions rank them lower. Readable line width follows the native preference; mobile toolbar commands import only through an explicit merge preserving existing configuration.
+
+Renaming/moving updates resolved Markdown/wiki/HTML/canvas references when automatic updates are enabled, otherwise asks whether to update. Versions and locks are checked before mutation; a durable journal supports rollback/recovery without overwriting observed external edits. In-process serialization cannot provide an OS-wide atomic transaction against external Obsidian/NFS writers; detected conflicts preserve recovery data. Public folder shares remap descendant paths, and index notifications include old and new paths.
+
+Deleting an image fails closed on incomplete reference checks, includes hidden live notes and HTML/canvas references, saves the source note with CAS before removing an unused file, and binds the request to its vault scope and confirmed deletion mode. Note-deletion attachment cleanup follows native ask/always/never semantics; ask uses a server-issued, vault-bound candidate receipt and selectable files. A confirmed recoverable action never escalates to permanent deletion if settings change while a dialog is open.
 - **Preview tabs**: opening a file uses a single reusable tab with an italic title. Opening another
   file replaces that preview in place; selecting an already-open file activates its existing tab.
   Double-clicking the tab title makes it permanent and removes italics. Editing a preview keeps it

@@ -3,6 +3,7 @@ import { displayChildren } from '../lib/attachments';
 import { findNode } from '../lib/tree';
 import { api, type TreeNode } from '../lib/api';
 import Icon from './Icon';
+import { useVaultPreferences } from '../lib/vaultPreferences';
 
 function entryIcon(n: TreeNode): string {
   if (n.type === 'folder') return 'folder';
@@ -19,13 +20,14 @@ function entryIcon(n: TreeNode): string {
  * folder as an empty note.
  */
 export default function FolderView({ path }: { path: string }) {
+  const { values: preferences } = useVaultPreferences();
   const tree = useStore((s) => s.tree);
   const openFile = useStore((s) => s.openFile);
   const newNote = useStore((s) => s.newNote);
 
   const node = findNode(tree, path);
   const showAttachmentFolders = useStore((s) => s.showAttachmentFolders);
-  const children = displayChildren(node?.children ?? [], showAttachmentFolders);
+  const children = displayChildren(node?.children ?? [], showAttachmentFolders, preferences.showUnsupportedFiles);
   const folders = children.filter((c) => c.type === 'folder');
   const files = children.filter((c) => c.type === 'file');
   const ordered = [...folders, ...files].sort((a, b) =>
