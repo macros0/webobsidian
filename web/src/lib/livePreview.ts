@@ -175,7 +175,14 @@ class MdLinkWidget extends WidgetType {
     const external = /^https?:\/\//i.test(this.href);
     const a = document.createElement('a');
     a.className = 'cm-md-link' + (external ? ' external-link' : ' internal-link');
-    a.textContent = this.label;
+    // Parse in link-label context: standalone Markdown would turn "1. Title"
+    // into a list and a URL label into a second, nested link.
+    const template = document.createElement('template');
+    template.innerHTML = renderMarkdownBody(`[${this.label}](#)`, attachmentUrl);
+    const label = template.content.querySelector('p > a');
+    if (label) a.append(...Array.from(label.childNodes));
+    else a.textContent = this.label;
+    for (const code of a.querySelectorAll('code')) code.classList.add('cm-code');
     a.title = this.href;
     if (external) a.appendChild(externalLinkIcon());
     a.onmousedown = (e) => {
@@ -2331,6 +2338,24 @@ function buildDecorations(view: EditorView): DecorationSet {
         // Don't decorate inside a rendered table/HTML block — their fields own it.
         if (renderedTable(node.from, node.to) || renderedHtml(node.from, node.to) || renderedInlineHtml(node.from, node.to)) return;
 
+        // Claim the whole link before its label's emphasis/code delimiters.
+        // Otherwise those replacements make the later link widget overlap and
+        // leave the raw destination/title visible. The parser also retains
+        // balanced parentheses in destinations that the regex cannot handle.
+        if (name === 'Link' && !touches(node.from, node.to) && !inCode(node.from, node.to) &&
+            doc.lineAt(node.from).number === doc.lineAt(node.to).number) {
+          const marks = node.node.getChildren('LinkMark');
+          const labelEnd = marks.find(mark => doc.sliceString(mark.from, mark.to) === ']');
+          // A URL-shaped label has its own URL node before the destination.
+          const url = labelEnd && node.node.getChildren('URL').find(part => part.from > labelEnd.to);
+          if (url && labelEnd) {
+            const label = doc.sliceString(node.from + 1, labelEnd.from);
+            const href = doc.sliceString(url.from, url.to).replace(/^<|>$/g, '');
+            pushReplace(node.from, node.to, Decoration.replace({ widget: new MdLinkWidget(label, href) }));
+            return false;
+          }
+        }
+
         // Code block lines: HyperMD-codeblock(-begin/-end) like Obsidian.
         // The ``` fences are concealed while the caret is outside the block.
         // Indented code (4 spaces): mono font, NO background — just the indent
@@ -3000,7 +3025,10 @@ function buildTables(state: EditorState): DecorationSet {
 export const tableField = StateField.define<DecorationSet>({
   create: (state) => buildTables(state),
   update(value, tr) {
-    if (tr.docChanged || tr.selection || tr.effects.some((e) => e.is(setLivePreviewEnabled) || e.is(setLivePreviewReadonly))) {
+    // Long notes are parsed incrementally. A new tree can reveal tables without
+    // a document/selection change or a manual Source -> Live toggle.
+    if (tr.docChanged || tr.selection || syntaxTree(tr.startState) !== syntaxTree(tr.state) ||
+        tr.effects.some((e) => e.is(setLivePreviewEnabled) || e.is(setLivePreviewReadonly))) {
       return buildTables(tr.state);
     }
     return value.map(tr.changes);
@@ -3106,7 +3134,8 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
         this.decorations = Decoration.none;
         return;
       }
-      if (u.docChanged || u.selectionSet || u.viewportChanged || u.transactions.some((t) => t.effects.length)) {
+      if (u.docChanged || u.selectionSet || u.viewportChanged || syntaxTree(u.startState) !== syntaxTree(u.state) ||
+          u.transactions.some((t) => t.effects.length)) {
         this.decorations = buildDecorations(u.view);
       }
     }

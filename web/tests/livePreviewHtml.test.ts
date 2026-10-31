@@ -22,6 +22,7 @@ interface Result {
   changes: number;
   bodyColor: string;
   tagColor: string | null;
+  openedLinks: string[];
 }
 let results: Record<string, Result>;
 let matrix: Record<string, Result>;
@@ -64,6 +65,9 @@ const fixtures = {
   propertyBacktick: '---\ntitle: "`"\n---\n\n# Heading\n\n`code`',
   commentBacktick: 'Начало\n\n%% a ` comment %%\n\n# Heading\n\n`code`',
   attributeBacktick: 'Начало\n\n<span title="`">HTML</span>\n\n# Heading\n\n`code`',
+  formattedLinks: 'Начало\n\n[**AIDA64**](https://4pda.to/stat/go?u=https%3A%2F%2Fwww.aida64.com%2Fdownloads&e=123099703 "Ссылка") - Утилита\n\n[*HWiNFO*](https://example.com/info "Ссылка") - Датчики\n\n[`VLC`](https://example.com/vlc) - видеоплеер',
+  nestedLinkTarget: 'Начало\n\n[**Article**](https://example.com/a_(b) "Title") - description',
+  inlineLinkLabels: 'Начало\n\n[1. Overview](https://example.com/overview)\n\n[---](https://example.com/rule)\n\n[# Heading](https://example.com/heading)\n\n[https://label.example](https://target.example)',
 };
 
 before(async () => {
@@ -103,11 +107,19 @@ before(async () => {
             view.dispatch({ effects: [setLivePreviewEnabled.of(!sourceMode), setLivePreviewReadonly.of(readonly)] });
             const text = view.contentDOM.textContent;
             const html = view.contentDOM.innerHTML;
-            view.dispatch({ selection: { anchor: source.indexOf('<') + 1 } });
+            const openedLinks = [];
+            const originalOpen = window.open;
+            try {
+              window.open = url => { openedLinks.push(url); return null; };
+              for (const anchor of view.contentDOM.querySelectorAll('.cm-md-link.external-link')) {
+                (anchor.querySelector('a') ?? anchor).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+              }
+            } finally { window.open = originalOpen; }
+            view.dispatch({ selection: { anchor: source.includes('AIDA64') ? source.indexOf('AIDA64') : source.indexOf('<') + 1 } });
             const focusedText = view.contentDOM.textContent;
             view.dispatch({ selection: { anchor: 0 } });
             const result = { text, html, focusedText, restoredText: view.contentDOM.textContent,
-              source: view.state.doc.toString(), initialSource, changes,
+              source: view.state.doc.toString(), initialSource, changes, openedLinks,
               bodyColor: getComputedStyle(view.contentDOM).color,
               tagColor: (() => { const el = [...view.contentDOM.querySelectorAll('span')].find(el => el.textContent === 'LS_BEN'); return el ? getComputedStyle(el).color : null; })() };
             view.destroy();
@@ -303,6 +315,40 @@ test('table edit and undo preserve quote/list prefixes and escape pasted pipes',
 });
 
 for (const mode of ['live', 'reading']) {
+  test(`${mode}: link labels stay inline and clicking a URL label opens only its destination`, () => {
+    const result = results[`inlineLinkLabels:${mode}`];
+    assert.match(result.text, /1\. Overview/);
+    assert.match(result.text, /---/);
+    assert.match(result.text, /# Heading/);
+    assert.match(result.text, /https:\/\/label\.example/);
+    assert.doesNotMatch(result.html, /<(?:ol|ul|hr|h[1-6])\b/);
+    assert.equal((result.html.match(/<a\b/g) ?? []).length, 4);
+    assert.deepEqual(result.openedLinks, ['https://example.com/overview', 'https://example.com/rule', 'https://example.com/heading', 'https://target.example']);
+    assert.equal(result.source, fixtures.inlineLinkLabels);
+  });
+  test(`${mode}: formatted link labels conceal the URL and title and keep the external icon`, () => {
+    const result = results[`formattedLinks:${mode}`];
+    assert.equal((result.html.match(/class="cm-md-link external-link"/g) ?? []).length, 3);
+    assert.equal((result.html.match(/class="cm-external-icon"/g) ?? []).length, 3);
+    assert.match(result.html, /<strong>AIDA64<\/strong>/);
+    assert.match(result.html, /<em>HWiNFO<\/em>/);
+    assert.match(result.html, /<code[^>]*>VLC<\/code>/);
+    assert.doesNotMatch(result.text, /https:|Ссылка|\*\*|\]\(/);
+    assert.match(result.text, /AIDA64 - Утилита/);
+    assert.match(result.html, /title="https:\/\/4pda\.to\/stat\/go\?u=https%3A%2F%2Fwww\.aida64\.com%2Fdownloads&amp;e=123099703"/);
+    if (mode === 'live') assert.match(result.focusedText, /\[\*\*AIDA64\*\*\]\(https:/);
+    else assert.doesNotMatch(result.focusedText, /https:|Ссылка/);
+    assert.equal(result.restoredText, result.text);
+    assert.equal(result.source, fixtures.formattedLinks);
+    assert.equal(result.changes, 0);
+  });
+  test(`${mode}: formatted link with parentheses in the destination is replaced completely`, () => {
+    const result = results[`nestedLinkTarget:${mode}`];
+    assert.match(result.html, /title="https:\/\/example\.com\/a_\(b\)"/);
+    assert.match(result.text, /Article - description/);
+    assert.doesNotMatch(result.text, /https:|Title|\*\*|\]\(/);
+    assert.equal(result.source, fixtures.nestedLinkTarget);
+  });
   test(`${mode}: backticks in properties/comments/HTML do not consume later Markdown`, () => {
     for (const name of ['propertyBacktick','commentBacktick','attributeBacktick'] as const) {
       const result=results[`${name}:${mode}`];
