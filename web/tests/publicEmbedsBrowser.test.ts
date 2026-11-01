@@ -91,9 +91,9 @@ test('public SSR hydrates PDF and Canvas using only scoped share access, includi
      await until('document.querySelectorAll(".pdf-thumbnails canvas").length===2','public PDF thumbnails render');
      await evaluate('document.querySelector(".pdf-thumbnails button:last-child").click()');
      await until('document.querySelector(".pdf-reader .pdf-toolbar input").value==="2"','public PDF thumbnail navigation');
-     const dimensions=await evaluate('({width:document.querySelector(".pdf-reader").getBoundingClientRect().width,height:document.querySelector(".pdf-reader").getBoundingClientRect().height})');check(dimensions.width>400&&dimensions.height>400,'public PDF layout');
+     const dimensions=await evaluate('({width:document.querySelector(".pdf-reader").getBoundingClientRect().width,height:document.querySelector(".pdf-reader").getBoundingClientRect().height})');check(dimensions.width>400&&dimensions.height>400,'public PDF layout '+JSON.stringify(dimensions));
     };
-    await win.loadURL(base+'/share/open');await reader();
+    await win.loadURL(base+'/share/open');win.webContents.debugger.attach('1.3');await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width:1100,height:1200,deviceScaleFactor:1,mobile:false});await until('innerWidth===1100&&innerHeight===1200','explicit public viewport');await reader();
     await evaluate('window.dispatchEvent(new PageTransitionEvent("pagehide",{persisted:true}));window.dispatchEvent(new PageTransitionEvent("pageshow",{persisted:true}))');
     check(await evaluate('!!document.querySelector(".pdfViewer .page")'),'BFCache transition preserves PDF pages and workers');
     await evaluate('document.querySelector(".pdf-file-menu").click()');await until('!!document.querySelector(".pdf-menu-panel")','public file menu');check(await evaluate('!document.querySelector(".pdf-menu-panel [data-label=Переименовать]")'),'public menu excludes vault mutations');await evaluate('document.querySelector(".pdf-menu-panel button").click()');check(opened.some(url=>url.startsWith(base+'/public/shares/open/file?')&&url.includes('#page=2')),'PDF opens using public file URL');

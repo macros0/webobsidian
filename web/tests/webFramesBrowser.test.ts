@@ -69,7 +69,7 @@ test('authored web frames load and interact under the real server CSP while isol
     check(!frame.sandbox.contains('allow-same-origin')&&!frame.sandbox.contains('allow-top-navigation')&&!frame.sandbox.contains('allow-popups'),mode+': frame privileges bounded');
     check(!window.parentCompromised&&document.body.dataset.canary==='unchanged',mode+': parent untouched');
     check(useStore.getState().content===source,mode+': rendering preserves note');
-    const rect=frame.getBoundingClientRect();return {x:Math.round(rect.left+50),y:Math.round(rect.top+40)};
+    const rect=frame.getBoundingClientRect(),point={x:Math.round(rect.left+50),y:Math.round(rect.top+40)};window.frameDiagnostics=()=>({mode,point,ready,clicked,viewport:{width:innerWidth,height:innerHeight},rect:frame.getBoundingClientRect().toJSON(),atPoint:document.elementFromPoint(point.x,point.y)?.outerHTML.slice(0,600)});return point;
    };
    window.verifyClick=async()=>{await until(()=>clicked,'iframe button receives real pointer input');check(clicked.topBlocked,'iframe cannot navigate top after user activation');check(document.body.dataset.canary==='unchanged','parent stays unchanged after iframe interaction')};
    window.surroundingPoint=()=>{const rect=document.querySelector('.cm-html-block p').getBoundingClientRect();return {x:Math.round(rect.left+40),y:Math.round(rect.top+rect.height/2)}};
@@ -108,15 +108,17 @@ test('authored web frames load and interact under the real server CSP while isol
      let seq=0;const pending=new Map();socket.addEventListener('message',e=>{const v=JSON.parse(e.data),p=pending.get(v.id);if(p){pending.delete(v.id);v.error?p.reject(Error(JSON.stringify(v.error))):p.resolve(v.result)}});
      const call=(method,params={})=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));setTimeout(()=>{if(pending.delete(id))reject(Error('Timeout '+method))},15000).unref()});
      const evaluate=async expression=>{const r=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value};
+     await call('Emulation.setDeviceMetricsOverride',{width:1200,height:1100,deviceScaleFactor:1,mobile:false});
      await call('Page.navigate',{url:parentBase});
      for(let i=0;i<100&&!await evaluate('typeof window.prepare==="function"');i++)await new Promise(r=>setTimeout(r,50));
+     if(!await evaluate('innerWidth===1200&&innerHeight===1100'))throw Error('Explicit frame viewport was not applied');
      await evaluate('window.frameBase='+JSON.stringify(frameBase));
      const click=async point=>{await call('Input.dispatchMouseEvent',{type:'mouseMoved',...point});await call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});await call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point})};
      for(const mode of ['live','reading','preview','nested-live','nested-reading','nested-preview']){
       const point=await evaluate('window.prepare('+JSON.stringify(mode)+')');
       await click(point);
       if(process.env.WEBO_FRAME_CAPTURE){const shot=await call('Page.captureScreenshot',{format:'png'});fs.writeFileSync(process.env.WEBO_FRAME_CAPTURE,Buffer.from(shot.data,'base64'))}
-      await evaluate('window.verifyClick()');if(await evaluate('location.href')!==parentBase+'/')throw Error('Iframe navigated parent');
+      try{await evaluate('window.verifyClick()')}catch(error){console.error('FRAME_INPUT_CONTEXT '+JSON.stringify(await evaluate('window.frameDiagnostics()')));console.error('FRAME_HIT_TEST '+JSON.stringify(await call('DOM.getNodeForLocation',{...point,includeUserAgentShadowDOM:true})));console.error('FRAME_TREE '+JSON.stringify(await call('Page.getFrameTree')));throw error}if(await evaluate('location.href')!==parentBase+'/')throw Error('Iframe navigated parent');
       if(mode==='live'){await click(await evaluate('window.surroundingPoint()'));await evaluate('window.verifySurrounding()')}
      }
      if(escapes)throw Error('Unexpected top navigation');await evaluate('window.finish()');console.log('WEB_FRAMES_PASS');
