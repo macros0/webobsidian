@@ -516,7 +516,7 @@ export default function Workspace() {
                 <Icon name="x" size={16} />
               </button>
             </div>
-            {splitLanguage&&splitCodeResult?.path===splitPath?<CodeFileView pane="split" path={splitPath} result={splitCodeResult} language={splitLanguage} lineNumbers={codeSettings.lineNumbers}/>:<Preview source={splitContent} />}
+            {splitLanguage?(splitCodeResult?.path===splitPath?<CodeFileView pane="split" path={splitPath} result={splitCodeResult} language={splitLanguage} lineNumbers={codeSettings.lineNumbers}/>:<div className="attachment-card">Loading code…</div>):/\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i.test(splitPath)?<Preview source={splitContent}/>:<div className="attachment-card"><a href={api.downloadUrl(splitPath)}>Download</a></div>}
           </div>
         )}
       </div>

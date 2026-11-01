@@ -1,7 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {EditorState, EditorSelection} from '@codemirror/state';
-import {captureContext, executeCommand, commands,setToolbarServices} from '../src/lib/toolbar/registry';
+import {captureContext, executeCommand, commands,setToolbarServices,isContextCurrent} from '../src/lib/toolbar/registry';
+import {setActiveEditor} from '../src/lib/activeEditor';
 import {useStore} from '../src/lib/store';
 import {getVaultPreferences,defaultVaultPreferences} from '../src/lib/vaultPreferences';
 function editor(text:string,from=0,to=text.length,readonly=false) {
@@ -13,6 +14,13 @@ test('registry rejects stale contexts and readonly writes',async()=>{
  assert.equal((await executeCommand('editing-toolbar:toggle-bold',c)).status,'cancelled');
  const r=editor('hello',0,5,true);assert.equal((await executeCommand('editing-toolbar:toggle-bold',captureContext(r))).status,'unavailable');assert.equal(r.state.doc.toString(),'hello');
 });
+test('pane focus cancels old contexts but allows fresh commands after returning',async()=>{
+ const main=editor('text');const split=editor('code',0,4,true);setActiveEditor(main);const old=captureContext(main);
+ setActiveEditor(split);assert.equal(isContextCurrent(old),false);setActiveEditor(main);
+ assert.equal(isContextCurrent(old),false);const fresh=captureContext(main);assert.equal(isContextCurrent(fresh),true);
+ assert.equal((await executeCommand('underline',fresh)).status,'applied');assert.equal(main.state.doc.toString(),'<u>text</u>');setActiveEditor(null);
+});
+
 test('headings replace markers and exclude unselected following line',async()=>{
  const v=editor('### title\nsecond',0,10);await executeCommand('editing-toolbar:header2-text',captureContext(v));assert.equal(v.state.doc.toString(),'## title\nsecond');
 });

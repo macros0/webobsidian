@@ -49,7 +49,7 @@ import {
   setNoteTitle,
 } from '../lib/livePreview';
 import { renderNoteEmbed } from '../lib/markdown';
-import { setActiveEditor } from '../lib/activeEditor';
+import { getActiveEditor, setActiveEditor } from '../lib/activeEditor';
 import { selectionToolbar } from '../lib/selectionToolbar';
 import { api } from '../lib/api';
 import { humanizeTitle } from '../lib/title';
@@ -243,6 +243,7 @@ export default function Editor() {
         editorClickFix,
         mediaLoadRemeasure,
         livePreviewGeometryGuard,
+        EditorView.domEventHandlers({focus:(_event,v)=>{setActiveEditor(v);}}),
         EditorView.updateListener.of((u) => {
           // Ignore doc changes we applied programmatically (external content sync)
           if (u.docChanged && !applyingExternal.current) setContent(u.state.doc.toString());
@@ -257,7 +258,7 @@ export default function Editor() {
     // note that isn't open yet opens it, then enters rename).
     if (!useStore.getState().renamingPath) v.focus();
     return () => {
-      setActiveEditor(null);
+      if(getActiveEditor()===v)setActiveEditor(null);
       v.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

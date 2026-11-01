@@ -1,5 +1,11 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Canvas/code viewer fork PR — 2026-11-01
+
+- [x] Rebase all latest viewer, tooltip, settings-button and Canvas fixes onto fork main.
+- [x] Address independent mixed-pane review: focus context generations, passive refresh navigation and safe split loading/download states; add failing-to-passing regressions.
+- [~] Final local verification and GitHub CI; merge to main only after passing.
+
 ## Canvas group interactions — 2026-11-01
 
 - [x] Reproduce a selected group intercepting pointer hit tests above contained cards.

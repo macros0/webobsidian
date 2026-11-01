@@ -60,6 +60,13 @@ test('removing support for a split file closes its preview instead of rendering 
  await state().openToSide('a.py');useStore.setState({codeFileViewer:{...state().codeFileViewer,enabled:false}});await state().openToSide('a.py');assert.equal(state().splitPath,null);
 });
 
+test('passive code refresh preserves an explicit pending main or split navigation',async()=>{
+ const result=(path:string)=>({kind:'text' as const,path,content:path,highlightAllowed:true});
+ let finish!:(r:any)=>void;mock.method(api,'readCode',async(path:string)=>path==='b.py'?await new Promise<any>(r=>{finish=r;}):result(path));
+ await state().openFile('a.py');const opening=state().openFile('b.py');await setImmediate();await state().refreshCodeFile('a.py','main');finish(result('b.py'));await opening;assert.equal(state().activePath,'b.py');
+ await state().openToSide('a.py');const split=state().openToSide('b.py');await state().refreshCodeFile('a.py','split');finish(result('b.py'));await split;assert.equal(state().splitPath,'b.py');
+});
+
 beforeEach(() => {
   mock.timers.enable({ apis: ['setTimeout'] });
   resetDraftScope();

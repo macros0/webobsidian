@@ -25,7 +25,7 @@ export default function CodeFileView({path,result,language,lineNumbers:showLines
   }
   return()=>{live=false;if(getActiveEditor()===view)setActiveEditor(null);view.destroy();};
  },[path,result,language,showLines]);
- useEffect(()=>{let pending=false;const refresh=(event:Event)=>{const d=(event as CustomEvent).detail;if(d?.path!==path||pending)return;pending=true;const s=useStore.getState();const read=pane==='main'&&s.activePath===path?s.openFile(path,{preview:false}):pane==='split'&&s.splitPath===path?s.openToSide(path):Promise.resolve();void read.catch(()=>s.notify('File changed or is no longer available. Reopen it to retry.')).finally(()=>{pending=false;});};window.addEventListener('wo-fs',refresh);return()=>window.removeEventListener('wo-fs',refresh);},[path,pane]);
+ useEffect(()=>{let pending=false;const refresh=(event:Event)=>{const d=(event as CustomEvent).detail;if(d?.path!==path||pending)return;pending=true;const s=useStore.getState();const read=s.refreshCodeFile(path,pane);void read.catch(()=>s.notify('File changed or is no longer available. Reopen it to retry.')).finally(()=>{pending=false;});};window.addEventListener('wo-fs',refresh);return()=>window.removeEventListener('wo-fs',refresh);},[path,pane]);
  const copy=async()=>{try{if(result?.kind==='text'){await navigator.clipboard.writeText(result.content);setCopyStatus('Copied');}}catch{setCopyStatus('Copy unavailable. Select the text and copy it.');}};
  return <div className="code-file-view">
   <div className="code-file-toolbar"><span>{language} · Read only</span><span className="grow"/><span role="status">{copyStatus||note}</span>{result?.kind==='text'&&<button title="Copy entire file contents to the clipboard" onClick={()=>void copy()}>Copy</button>}</div>

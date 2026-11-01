@@ -1,6 +1,6 @@
 # Code File Viewer Implementation Plan
 
-> **For agentic workers:** Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox syntax for tracking. This document authorizes planning only; implementation starts on a separate user request.
+> **For agentic workers:** Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox syntax for tracking. Implementation was authorized by the user and completed; subsequent review and deployment records follow below.
 
 **Goal:** Открывать исходники и текстовые файлы в WebObsidian с подсветкой, номерами строк, копированием и настройкой расширений.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** React 18, TypeScript, Zustand, CodeMirror 6 / language-data, Express, Zod; существующие Node test runner и Vitest.
 
-**Spec:** Раздел «Проектное решение» этого документа. Это предложенный вариант на основе предыдущей рекомендации, а не явно выбранный пользователем способ реализации.
+**Spec:** Раздел «Проектное решение» этого документа. Пользователь выбрал этот вариант и разрешил реализацию.
 
 **Дата:** 2026-11-01.
 
@@ -165,3 +165,7 @@ Deployed `code-viewer-0a98842796cb` to CT 102 (`/opt/webobsidian`) via the estab
 Production is healthy. Public `https://selbst-obsidian.duckdns.org/healthz` reports the exact release; index and all five referenced assets match SHA-256 manifest hashes. Both systemd service and retry timer are active. Existing settings hash is unchanged. Backup: `/opt/webobsidian/backups/code-viewer-0a98842796cb-20261031T234338Z`; source, manifest and activation/rollback scripts are retained with the release.
 
 Final follow-ups: JSX/TSX/XML mappings use their own grammars; an unknown configured language stays plain text. Removing a newly supported format closes its unsupported split preview rather than sending source through Markdown. The related store regression passed (35 store tests). Browser verification confirmed both matching panes refresh after an external file change.
+
+### Pre-merge review follow-up
+
+Independent review identified three mixed-pane regressions. Toolbar contexts now use capture generations so switching panes cancels old dialog contexts while allowing fresh commands after focus returns. The Markdown editor restores active focus ownership. Passive code refreshes preserve explicit navigation requests. Split panes show loading/download states when code results are absent or support is removed, including while the main reload is pending. New store, registry and real browser regressions first failed and then passed (47 targeted tests). Full suite and GitHub CI are rerun before merge.

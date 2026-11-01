@@ -118,6 +118,7 @@ export interface ContextMenuState {
 
 interface AppState {
   codeFileViewer:CodeFileViewerSettings;
+  refreshCodeFile:(path:string,pane:'main'|'split')=>Promise<void>;
   codeFileResult:CodeFileReadResult|null;
   splitCodeFileResult:CodeFileReadResult|null;
   codeEditorOverride:string|null;
@@ -633,6 +634,15 @@ export const useStore = create<AppState>()(
       showAttachmentFolders: false,
       setShowAttachmentFolders: (showAttachmentFolders) => set({ showAttachmentFolders }),
 
+      refreshCodeFile:async(path,pane)=>{
+        const epoch=scopeEpoch;const request=pane==='main'?openRequest:splitCodeRequest;
+        const initial=pane==='main'?get().codeFileResult:get().splitCodeFileResult;
+        if(initial?.path!==path)return;
+        const result=await api.readCode(path);
+        if(epoch!==scopeEpoch||request!==(pane==='main'?openRequest:splitCodeRequest))return;
+        if(pane==='main'&&get().activePath===path&&get().codeFileResult===initial)set({codeFileResult:result,content:result.kind==='text'?result.content:''});
+        if(pane==='split'&&get().splitPath===path&&get().splitCodeFileResult===initial)set({splitCodeFileResult:result,splitContent:result.kind==='text'?result.content:''});
+      },
       codeFileViewer:defaultCodeFileViewer,
       codeFileResult:null,splitCodeFileResult:null,codeEditorOverride:null,
       applyCodeFileViewerSettings:async(next)=>{
