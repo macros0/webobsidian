@@ -7,6 +7,15 @@ import { renderNoteHtml, metaDescription, firstImage } from '../../server/src/se
 
 const cases: Record<string, string> = JSON.parse(readFileSync(new URL('../../tests/fixtures/rendering/cases.json', import.meta.url), 'utf8'));
 const rawUrl = (p: string) => `/raw/${encodeURIComponent(p)}`;
+
+test('YAML embeds remain file cards instead of parsing configuration as Markdown',async()=>{
+  const html=await renderMarkdown('![[my.yaml]]',{rawUrl,resolveEmbed:async()=>({path:'my.yaml',content:'secret: do-not-render\n# YAML comment'})});
+  assert.match(html,/file-embed mod-generic/);
+  assert.match(html,/data-wikilink="my.yaml"/);
+  assert.doesNotMatch(html,/secret:|YAML comment/);
+  const ordinary=await renderMarkdown('[[my.yaml]]',{rawUrl});
+  assert.doesNotMatch(ordinary,/file-embed/);
+});
 test('rendered Markdown links retain their encoded target and declare their syntax kind',async()=>{
  const html=await renderMarkdown('[Space](shot%20one.md) [[shot%20one]]',{rawUrl});
  assert.match(html,/href="shot%20one.md"[^>]*data-link-kind="markdown"|data-link-kind="markdown"[^>]*href="shot%20one.md"/);
@@ -119,10 +128,10 @@ test('preview: an embed cannot consume Markdown on the next line', async () => {
 });
 
 for (const [kind, source] of [['image', '![x](foo\\_bar.png)'], ['wiki image', '![[foo\\_bar.png]]']]) {
-  test(`preview: ${kind} callback receives original target, not a protection token`, async () => {
+  test(`preview: ${kind} callback receives a file target, not a protection token`, async () => {
     const targets: string[] = [];
     await renderMarkdown(source, { rawUrl: p => { targets.push(p); return rawUrl(p); } });
-    assert.deepEqual(targets, ['foo\\_bar.png']);
+    assert.deepEqual(targets, [kind==='image'?'foo_bar.png':'foo\\_bar.png']);
   });
 }
 

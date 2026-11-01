@@ -1,24 +1,6 @@
-const MINOR = new Set([
-  'a', 'an', 'the', 'and', 'but', 'or', 'nor', 'at', 'by', 'from', 'in', 'it', 'of', 'on', 'to', 'up', 'with',
-]);
-
-const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
-
-/** Human-readable title from a note filename or path (never alters the real filename). */
+/** Note filename without its Markdown extension; preserve the author's spelling. */
 export function humanizeTitle(nameOrPath: string): string {
-  const base = (nameOrPath.split('/').pop() ?? nameOrPath).replace(/\.(md|markdown)$/i, '');
-  // Names without kebab/snake separators are shown exactly as written.
-  if (!/[-_]/.test(base)) return base;
-  const words = base.split(/[-_\s]+/).filter(Boolean);
-  return words
-    .map((w, i) => {
-      const lower = w.toLowerCase();
-      const edge = i === 0 || i === words.length - 1;
-      if (!edge && MINOR.has(lower)) return lower;
-      // Keep words with intentional capitals (e.g. "OAuth"); capitalise plain lowercase ones.
-      return w === lower ? cap(w) : w;
-    })
-    .join(' ');
+  return (nameOrPath.split('/').pop() ?? nameOrPath).replace(/\.(md|markdown)$/i, '');
 }
 
 /** Frontmatter `title` value, if the note defines one. */
@@ -34,7 +16,7 @@ export function frontmatterTitle(content: string): string | null {
   return v || null;
 }
 
-/** Title shown for a note: frontmatter `title`, else humanized filename. */
+/** Title shown for a note: frontmatter `title`, else the original filename. */
 export function displayTitle(path: string, content: string): string {
   return frontmatterTitle(content) ?? humanizeTitle(path);
 }

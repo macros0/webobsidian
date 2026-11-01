@@ -1,5 +1,16 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+
+## Native embed parity fork PR — 2026-11-01
+
+- [x] Collect the explorer/title/task formatting, PDF.js viewer, native embed controls, sandboxed web frames and permission-scoped public-reader changes in one branch based on current fork main.
+- [x] Compare synthetic fixtures against Obsidian 1.14.5 without touching the user's vault; preserve note bytes during viewing/navigation.
+- [x] Verify notes/headings/blocks across Live, Reading, Source and HTML Preview; PDF menus/fragments, media, Canvas cards and scoped child publications have regression coverage.
+- [x] Complete incremental independent reviews and deploy the tested tree as `workspace-fragments-328cd8a63a4c` with backup, healthy container, matching external assets/runtime and unchanged settings. Latest pre-PR full run: 380 server + 513 web tests passed, 10 server skips.
+- [ ] Complete fresh PR checks and merge into `macros0/webobsidian:main` only after conflict and hosted CI checks pass.
+
+Evidence and accepted exclusions: `docs/embed-controls-audit-2026-11-01.md`. Bases are excluded; browser/OS limitations and unverified physical touch behavior remain documented. No build output, local test profiles, deployment backups or credentials are included in the PR.
+
 ## Canvas/code viewer fork PR — 2026-11-01
 
 - [x] Rebase all latest viewer, tooltip, settings-button and Canvas fixes onto fork main.

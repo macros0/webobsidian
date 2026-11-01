@@ -24,6 +24,7 @@ import {
   frontmatterField,
   tableField,
   htmlBlockField,
+  markdownEmbedField,
   mermaidField,
   htmlRenderedState,
   htmlPreviewField,
@@ -54,6 +55,7 @@ import { selectionToolbar } from '../lib/selectionToolbar';
 import { api } from '../lib/api';
 import { humanizeTitle } from '../lib/title';
 import { deleteEmbeddedImage } from '../lib/imageDelete';
+import {noteFragmentRange} from '../lib/noteFragments';
 
 const titleOf = (path: string | null) => (path ? humanizeTitle(path) : '');
 const subscribeDocumentScope = (listener:()=>void) => {
@@ -91,6 +93,7 @@ export default function Editor() {
   const openContextMenu = useStore((s) => s.openContextMenu);
   const setLeftPanel = useStore((s) => s.setLeftPanel);
   const tree = useStore((s) => s.tree);
+  const noteNavigation=useStore(s=>s.noteNavigation);
 
   useEffect(() => {
     setLivePreviewLinkHandler(openWikilink);
@@ -108,20 +111,21 @@ export default function Editor() {
     setLivePreviewPropertyProvider(() => api.properties().then((r) => r.properties).catch(() => []));
     setLivePreviewTagProvider(() => api.tags().then((r) => r.tags.map((t) => t.tag)).catch(() => []));
     // ![[note]] transclusion: resolve + render with the same pipeline as Reading.
-    const resolveEmbed = async (target: string, from?: string) => {
+    const resolveEmbed = async (target: string, from?: string,kind:'wiki'|'markdown'='wiki') => {
       try {
-        const { path } = await api.resolve(target, from);
+        const { path } = await api.resolve(target, from,kind);
         if (!path) return null;
+        if(!/\.(md|markdown)$/i.test(path))return null;
         const r = await api.read(path);
         return { path, content: typeof r === 'string' ? r : r.content };
       } catch {
         return null;
       }
     };
-    setLivePreviewNoteEmbedProvider(target => renderNoteEmbed(target, {
+    setLivePreviewNoteEmbedProvider((target,kind) => renderNoteEmbed(target, {
       rawUrl: (p, from) => api.rawUrl(p, from), resolveEmbed,
       sourcePath: useStore.getState().activePath ?? undefined,
-    }));
+    },0,kind));
   }, [openContextMenu]);
 
   // Feed the `[[` link suggester (vault file paths) and the `#` tag suggester.
@@ -233,6 +237,7 @@ export default function Editor() {
         frontmatterField,
         tableField,
         htmlBlockField,
+        markdownEmbedField,
         mermaidField,
         htmlRenderedState,
         htmlPreviewField,
@@ -295,6 +300,20 @@ export default function Editor() {
       ],
     });
   }, [viewMode, activePath, showInlineTitle, locked]);
+
+  // A request belongs to the file-opening transaction, not to a later document.
+  // CodeMirror reveals the real measured position and unfolds a containing fold.
+  useEffect(()=>{
+    const v=view.current,request=noteNavigation;
+    if(!v||!request||request.path!==activePath)return;
+    const frame=requestAnimationFrame(()=>{
+      if(view.current!==v||useStore.getState().noteNavigation!==request)return;
+      const range=noteFragmentRange(v.state.doc.toString(),request.fragment);if(!range)return;
+      if(!request.fragment){v.dispatch({selection:{anchor:0}});v.scrollDOM.scrollTop=0;return}
+      v.dispatch({selection:{anchor:range.from},effects:EditorView.scrollIntoView(range.from,{y:'start',yMargin:12})});
+    });
+    return ()=>cancelAnimationFrame(frame);
+  },[noteNavigation,activePath,editorView]);
 
   // Debounced autosave.
   useEffect(() => {

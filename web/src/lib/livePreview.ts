@@ -7,14 +7,20 @@ import {
   WidgetType,
 } from '@codemirror/view';
 import { frontmatterTitle } from './title';
-import { renderMarkdownBody, renderPreparedMarkdown } from '../../../server/src/services/markdownRendering';
+import {createPdfViewer,destroyPdfViewer} from './pdfViewer';
+import {pdfFileActions} from './pdfFileActions';
+import {createNoteEmbedOpenButton,addNoteEmbedOpenButtons} from './noteEmbed';
+import {mountPdfEmbeds} from './pdfEmbeds';
+import {createCanvasEmbed,destroyCanvasEmbed,mountCanvasEmbeds} from './canvasEmbed';
+import {embedTokenAt,imageLabelEnd,revealEmbedSource,imageActions,mountImageActions} from './embedActions';
+import { renderMarkdownBody, renderPreparedMarkdown,isGenericFileEmbed } from '../../../server/src/services/markdownRendering';
 import { StateField, StateEffect, type EditorState, type Range, type Text } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
-import { isEscaped, preserveLiteralTags, findObsidianComments, stripObsidianComments, footnoteRanges, type SourceRange } from '../../../server/src/services/markdownContext';
+import { markdownImages,markdownEmbedTarget,type MarkdownImage,isEscaped, preserveLiteralTags, findObsidianComments, stripObsidianComments, footnoteRanges, type SourceRange } from '../../../server/src/services/markdownContext';
 import { editableFrontmatter } from '../../../server/src/services/frontmatterPolicy';
 import { CALLOUT_SLOT, CALLOUT_RE, calloutDefaultTitle, calloutIconSvg } from './callouts';
 import { openLightbox } from './imageLightbox';
-import { VIDEO_EXT_RE, AUDIO_EXT_RE, PDF_EXT_RE } from './media';
+import { VIDEO_EXT_RE, AUDIO_EXT_RE, PDF_EXT_RE, IMAGE_EXT_RE } from './media';
 import { optionsFor, type PropOption } from './propOptions';
 import { useStore } from './store';
 import { themedPopupHost } from './theme';
@@ -31,8 +37,8 @@ import { resolveExternalEmbed, createEmbedElement, type ExternalEmbed } from './
  * markup across the line. (PRD FR-2)
  */
 
-let openLink: (target: string, kind?: 'wiki' | 'markdown') => void = () => {};
-export function setLivePreviewLinkHandler(fn: (target: string, kind?: 'wiki' | 'markdown') => void) {
+let openLink: (target: string, kind?: 'wiki' | 'markdown',from?:string) => void = () => {};
+export function setLivePreviewLinkHandler(fn: (target: string, kind?: 'wiki' | 'markdown',from?:string) => void) {
   openLink = fn;
 }
 
@@ -57,6 +63,7 @@ export function setLivePreviewNotePath(p: string | null) {
 /** Trash-icon click on an image: `target` is the raw vault reference (null for web URLs). */
 export interface ImageDeleteRequest {
   target: string | null;
+  kind?:'wiki'|'markdown';
   view: EditorView;
   /** Remove the image's Markdown reference from the note. */
   remove: () => void;
@@ -141,25 +148,31 @@ function externalLinkIcon(): SVGElement {
 
 class WikilinkWidget extends WidgetType {
   /** `aria` = default display text, set when an alias overrides it (like Obsidian). */
-  constructor(readonly target: string, readonly label: string, readonly embed: boolean, readonly aria?: string) {
+  constructor(readonly target: string, readonly label: string, readonly embed: boolean, readonly aria?: string,readonly kind:'wiki'|'markdown'='wiki') {
     super();
   }
   eq(o: WikilinkWidget) {
-    return o.target === this.target && o.label === this.label && o.embed === this.embed && o.aria === this.aria;
+    return o.target === this.target && o.label === this.label && o.embed === this.embed && o.aria === this.aria && o.kind===this.kind;
   }
   toDOM() {
     const a = document.createElement('a');
     a.className = 'cm-hmd-internal-link cm-wikilink internal-link' + (this.embed ? ' embed' : '');
-    a.textContent = this.label;
+    const yamlEmbed = this.embed && isGenericFileEmbed(this.target);
+    if (yamlEmbed) a.className += ' internal-embed file-embed mod-generic';
+    a.textContent = yamlEmbed ? (this.kind==='markdown'?decodeLinkTarget(this.target.split('#')[0]):this.target.split('#')[0]).split('/').pop()! : this.label;
     if (this.aria) a.setAttribute('aria-label', this.aria);
     a.onmousedown = (e) => {
       e.preventDefault();
-      openLink(this.target);
+      if(!yamlEmbed)openLink(this.target,this.kind);
     };
+    if(yamlEmbed){
+      a.href='#';
+      a.onclick=e=>{e.preventDefault();e.stopPropagation();openLink(this.target,this.kind)};
+    }
     return a;
   }
   ignoreEvent() {
-    return false;
+    return this.embed&&isGenericFileEmbed(this.target);
   }
 }
 
@@ -253,7 +266,8 @@ const pointX = (e: MouseEvent | TouchEvent): number =>
  * the embed token covering it is re-found and rewritten (an existing trailing
  * numeric size segment is replaced; otherwise one is appended).
  */
-function writeImageWidth(view: EditorView, wrap: HTMLElement, width: number): void {
+function writeImageWidth(view: EditorView, wrap: HTMLElement, width: number,sourceVisible=false): void {
+  if(view.state.readOnly)return;
   let pos: number;
   try {
     pos = view.posAtDOM(wrap);
@@ -268,53 +282,35 @@ function writeImageWidth(view: EditorView, wrap: HTMLElement, width: number): vo
     segs.push(String(width));
     return segs.join('|');
   };
-  const tokens: Array<{ re: RegExp; build: (m: RegExpExecArray) => string }> = [
-    { re: /!\[\[([^\]]+?)\]\]/g, build: (m) => `![[${withSize(m[1].split('|'))}]]` },
-    { re: /!\[([^\]]*)\]\(([^)]+)\)/g, build: (m) => `![${withSize(m[1].split('|'))}](${m[2]})` },
-  ];
-  for (const { re, build } of tokens) {
-    re.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(line.text))) {
-      if (m.index <= off && off <= m.index + m[0].length) {
-        const from = line.from + m.index;
-        view.dispatch({ changes: { from, to: from + m[0].length, insert: build(m) } });
-        return;
-      }
-    }
+  const token=embedTokenAt(view,wrap,sourceVisible);if(!token)return;
+  let insert:string;
+  if(token.source.startsWith('![['))insert=`![[${withSize(token.source.slice(3,-2).split('|'))}]]`;
+  else{
+    const close=imageLabelEnd(token.source);if(close<0)return;
+    const label=token.source.slice(2,close);let tail=token.source.slice(close+1);
+    if(!tail||tail==='[]')tail=`[${label}]`;
+    insert=`![${withSize(label.split('|'))}]${tail}`;
   }
+  view.dispatch({changes:{from:token.from,to:token.to,insert}});
 }
 
 /**
  * Remove the image token (`![[img]]` / `![alt](url)`) a rendered image widget
  * stands for. A line left empty by the removal is dropped with its newline.
  */
-function removeImageToken(view: EditorView, wrap: HTMLElement): void {
+function removeImageToken(view: EditorView, wrap: HTMLElement,sourceVisible=false): void {
   let pos: number;
   try {
     pos = view.posAtDOM(wrap);
   } catch {
     return;
   }
-  const line = view.state.doc.lineAt(pos);
-  const off = pos - line.from;
-  for (const re of [/!\[\[([^\]]+?)\]\]/g, /!\[([^\]]*)\]\(([^)]+)\)/g]) {
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(line.text))) {
-      if (m.index <= off && off <= m.index + m[0].length) {
-        let from = line.from + m.index;
-        let to = from + m[0].length;
-        if ((line.text.slice(0, m.index) + line.text.slice(m.index + m[0].length)).trim() === '') {
-          from = line.from;
-          to = line.to;
-          if (to < view.state.doc.length) to += 1;
-          else if (from > 0) from -= 1;
-        }
-        view.dispatch({ changes: { from, to, insert: '' }, userEvent: 'delete' });
-        return;
-      }
-    }
+  const token=embedTokenAt(view,wrap,sourceVisible);if(!token)return;
+  let {from,to}=token;const first=view.state.doc.lineAt(from),last=view.state.doc.lineAt(to);
+  if((view.state.doc.sliceString(first.from,from)+view.state.doc.sliceString(to,last.to)).trim()===''){
+    from=first.from;to=last.to;if(to<view.state.doc.length)to++;else if(from>0)from--;
   }
+  view.dispatch({changes:{from,to,insert:''},userEvent:'delete'});
 }
 
 const TRASH_SVG =
@@ -329,11 +325,14 @@ class ImageWidget extends WidgetType {
     readonly height?: number,
     /** Raw vault reference (null for web URLs) — what the trash icon deletes. */
     readonly target: string | null = null,
+    readonly canEditSource = true,
+    readonly sourceVisible = false,
+    readonly linkKind:'wiki'|'markdown'='wiki',
   ) {
     super();
   }
   eq(o: ImageWidget) {
-    return o.src === this.src && o.width === this.width && o.height === this.height;
+    return o.src === this.src && o.width === this.width && o.height === this.height && o.alt===this.alt && o.target===this.target && o.canEditSource===this.canEditSource && o.sourceVisible===this.sourceVisible&&o.linkKind===this.linkKind;
   }
   toDOM(view: EditorView) {
     const wrap = document.createElement('span');
@@ -360,6 +359,8 @@ class ImageWidget extends WidgetType {
       openLightbox(this.src, this.alt);
     });
     wrap.appendChild(img);
+    imageActions(wrap,img,this.canEditSource?()=>revealEmbedSource(view,wrap,this.sourceVisible,true):undefined);
+    if(!this.canEditSource)return wrap;
 
     // Hover trash icon (top-right) — removes the reference and, when nothing else
     // uses the file, the attachment itself (decided by the delete handler).
@@ -376,13 +377,14 @@ class ImageWidget extends WidgetType {
       e.preventDefault();
       e.stopPropagation();
       if (view.state.readOnly) return;
-      imageDeleteHandler({ target: this.target, view, remove: () => removeImageToken(view, wrap) });
+      imageDeleteHandler({ target: this.target,kind:this.linkKind,view, remove: () => removeImageToken(view, wrap,this.sourceVisible) });
     });
     wrap.appendChild(del);
 
     // Drag-to-resize — left/right edge bars; width is written back as `|W`,
     // keeping aspect ratio (height auto), like Obsidian's image resize.
     const startResize = (e: MouseEvent | TouchEvent, side: 'left' | 'right') => {
+      if(view.state.readOnly)return;
       e.preventDefault();
       e.stopPropagation();
       const startX = pointX(e);
@@ -391,6 +393,7 @@ class ImageWidget extends WidgetType {
       let curW = Math.round(startW);
       wrap.classList.add('is-resizing');
       const onMove = (ev: MouseEvent | TouchEvent) => {
+        if(view.state.readOnly)return;
         if ('touches' in ev) ev.preventDefault();
         const dx = pointX(ev) - startX;
         curW = Math.min(maxW, Math.max(40, Math.round(side === 'right' ? startW + dx : startW - dx)));
@@ -405,7 +408,7 @@ class ImageWidget extends WidgetType {
         window.removeEventListener('touchmove', onMove);
         window.removeEventListener('touchend', onUp);
         wrap.classList.remove('is-resizing');
-        writeImageWidth(view, wrap, curW);
+        writeImageWidth(view, wrap, curW,this.sourceVisible);
       };
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
@@ -430,11 +433,12 @@ class MediaWidget extends WidgetType {
     readonly alt: string,
     readonly kind: 'video' | 'audio',
     readonly width?: number,
+    readonly height?: number,
   ) {
     super();
   }
   eq(o: MediaWidget) {
-    return o.src === this.src && o.kind === this.kind && o.width === this.width;
+    return o.src === this.src && o.kind === this.kind && o.width === this.width && o.height===this.height;
   }
   // Let the native player controls receive pointer/keyboard events (same as the
   // note-embed widget) instead of CodeMirror handling them.
@@ -447,9 +451,11 @@ class MediaWidget extends WidgetType {
     const el = document.createElement(this.kind) as HTMLMediaElement;
     el.src = this.src;
     el.controls = true;
+    if(this.kind==='audio')el.setAttribute('controlslist','nodownload');
     el.preload = 'metadata';
     el.className = this.kind === 'video' ? 'cm-embed-video media-embed' : 'cm-embed-audio media-embed';
     if (this.kind === 'video' && this.width) (el as HTMLVideoElement).width = this.width;
+    if (this.kind === 'video' && this.height) (el as HTMLVideoElement).height = this.height;
     // Missing attachment → Obsidian-style "could not be found" box.
     el.onerror = () => {
       el.remove();
@@ -482,47 +488,29 @@ class ExternalEmbedWidget extends WidgetType {
 }
 
 /**
- * Embedded PDF for `![[doc.pdf]]` (FR-21). The editor cannot inline the bytes, so
- * the frame is the browser's own viewer, with a header that opens the file in a
- * tab (the full-pane view in Workspace). Same-origin, so the app's CSP
- * (`frame-src 'self'`) allows it.
+ * Embedded PDF shares the same controls, scaling and page-height layout as Preview.
  */
 class PdfEmbedWidget extends WidgetType {
-  constructor(readonly src: string, readonly path: string, readonly origin: string) {
+  constructor(readonly src: string, readonly path: string, readonly origin: string,readonly canEditSource:boolean,readonly sourceVisible=false,readonly reading=false,readonly kind:'wiki'|'markdown'='wiki') {
     super();
   }
   eq(o: PdfEmbedWidget) {
-    return o.src === this.src && o.path === this.path && o.origin === this.origin;
+    return o.src === this.src && o.path === this.path && o.origin === this.origin && o.canEditSource===this.canEditSource && o.sourceVisible===this.sourceVisible && o.reading===this.reading && o.kind===this.kind;
   }
-  /** Let the frame and the header button receive events instead of CodeMirror. */
+  /** Let PDF controls and text selection receive events instead of CodeMirror. */
   ignoreEvent() {
     return true;
   }
-  toDOM() {
+  toDOM(view:EditorView) {
     const wrap = document.createElement('div');
     wrap.className = 'cm-embed-pdf pdf-embed';
-    const head = document.createElement('div');
-    head.className = 'pdf-embed-title';
-    const name = this.path.split('/').pop() ?? this.path;
-    const open = document.createElement('button');
-    open.type = 'button';
-    open.className = 'pdf-embed-open';
-    open.textContent = name;
-    open.title = 'Open in a tab';
-    open.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      void useStore.getState().openAttachment(this.path, this.origin);
-    });
-    head.appendChild(open);
-    const frame = document.createElement('iframe');
-    frame.className = 'pdf-embed-frame';
-    frame.src = this.src;
-    frame.loading = 'lazy';
-    frame.title = name;
-    wrap.append(head, frame);
+    const name = (this.kind==='markdown'?decodeLinkTarget(this.path):this.path).split('/').pop() ?? this.path;
+    const edit=this.canEditSource?()=>revealEmbedSource(view,wrap,this.sourceVisible):undefined;
+    const target=this.path+(this.src.includes('#')?this.src.slice(this.src.indexOf('#')):'');
+    wrap.append(createPdfViewer(this.src,name,()=>{void (this.kind==='markdown'?useStore.getState().openWikilink(target,'markdown',this.origin):useStore.getState().openAttachment(target,this.origin))},edit,{fixedHeightIncludesToolbar:!this.reading,fileActions:pdfFileActions(target,this.origin,{linkKind:this.kind})}));
     return wrap;
   }
+  destroy(dom:HTMLElement){const reader=dom.querySelector<HTMLElement>('.pdf-reader');if(reader)destroyPdfViewer(reader)}
 }
 
 /* ---------------- callouts (§21) — constants shared with Reading view ---------------- */
@@ -630,8 +618,8 @@ class HrWidget extends WidgetType {
 
 // Injected from Editor.tsx: resolves a wikilink target and returns rendered,
 // sanitized HTML (api.resolve + renderMarkdown — same pipeline as Reading view).
-let noteEmbedProvider: (target: string) => Promise<{ html: string } | null> = async () => null;
-export function setLivePreviewNoteEmbedProvider(fn: (target: string) => Promise<{ html: string } | null>) {
+let noteEmbedProvider: (target: string,kind?:'wiki'|'markdown') => Promise<{ html: string;path?:string } | null> = async () => null;
+export function setLivePreviewNoteEmbedProvider(fn: (target: string,kind?:'wiki'|'markdown') => Promise<{ html: string;path?:string } | null>) {
   noteEmbedProvider = fn;
 }
 
@@ -640,12 +628,20 @@ function embedNotFound(el: HTMLElement, target: string) {
   el.textContent = `"${target}" could not be found.`;
 }
 
+class CanvasEmbedWidget extends WidgetType{
+  constructor(readonly target:string,readonly origin:string,readonly kind:'wiki'|'markdown'='wiki'){super()}
+  eq(other:CanvasEmbedWidget){return other.target===this.target&&other.origin===this.origin&&other.kind===this.kind}
+  ignoreEvent(){return true}
+  toDOM(){return createCanvasEmbed(this.target,this.origin,(target,origin,kind)=>openLink(target,kind,origin),this.kind)}
+  destroy(dom:HTMLElement){destroyCanvasEmbed(dom)}
+}
+const noteEmbedCleanups=new WeakMap<HTMLElement,()=>void>();
 class NoteEmbedWidget extends WidgetType {
-  constructor(readonly target: string) {
+  constructor(readonly target: string,readonly kind:'wiki'|'markdown'='wiki') {
     super();
   }
   eq(o: NoteEmbedWidget) {
-    return o.target === this.target;
+    return o.target === this.target && o.kind===this.kind;
   }
   ignoreEvent() {
     return true;
@@ -653,42 +649,54 @@ class NoteEmbedWidget extends WidgetType {
   toDOM() {
     const box = document.createElement('div');
     box.className = 'internal-embed markdown-embed cm-note-embed';
-    const open = document.createElement('span');
-    open.className = 'markdown-embed-link';
-    open.title = 'Open link';
-    open.innerHTML =
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
-    open.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      openLink(this.target);
-    });
+    const open = createNoteEmbedOpenButton(this.target,openLink,this.kind);
     // Filename title above the note content, like Obsidian's markdown-embed-title.
     const title = document.createElement('div');
     title.className = 'markdown-embed-title';
-    title.textContent = this.target.split('#')[0].split('/').pop() ?? this.target;
+    title.textContent = (this.kind==='markdown'?decodeLinkTarget(this.target.split('#')[0]).replace(/\.(md|markdown)$/i,''):this.target.split('#')[0]).split('/').pop() ?? this.target;
     const content = document.createElement('div');
     content.className = 'markdown-embed-content markdown-preview';
     content.textContent = '…';
     box.append(open);
     if (!this.target.includes('#')) box.append(title);
     box.append(content);
-    void noteEmbedProvider(this.target).then((res) => {
+    const origin=notePath;
+    let destroyed=false,disposePdfs=()=>{},disposeCanvases=()=>{};
+    noteEmbedCleanups.set(box,()=>{destroyed=true;disposePdfs();disposeCanvases()});
+    void noteEmbedProvider(this.target,this.kind).then((res) => {
+      if(destroyed)return;
       if (!res) {
         box.textContent = '';
         embedNotFound(box, this.target);
         return;
       }
       content.innerHTML = res.html; // sanitized upstream (rehype-sanitize)
+      content.dataset.embedSource=res.path??origin;
+      addNoteEmbedOpenButtons(content,openLink);
+      disposePdfs=mountPdfEmbeds(content,origin,(target,from,kind)=>{void (kind==='markdown'?useStore.getState().openWikilink(target,kind,from):useStore.getState().openAttachment(target,from))},(target,origin,kind)=>pdfFileActions(target,origin,{linkKind:kind}));
+      disposeCanvases=mountCanvasEmbeds(content,origin,(target,from,kind)=>openLink(target,kind,from));
+      mountImageActions(content);
       content.addEventListener('mousedown', (e) => {
         const a = (e.target as HTMLElement).closest('[data-wikilink],a[data-link-kind="markdown"]') as HTMLAnchorElement | null;
         if (!a) return;
         e.preventDefault();
+      });
+      content.addEventListener('click', (e) => {
+        const clicked=e.target as HTMLElement;
+        if(clicked.closest('.pdf-reader'))return;
+        if(clicked instanceof HTMLImageElement){
+          e.preventDefault();e.stopPropagation();openLightbox(clicked.currentSrc||clicked.src,clicked.alt);return;
+        }
+        const a = clicked.closest('[data-wikilink],a[data-link-kind="markdown"]') as HTMLAnchorElement | null;
+        if(!a)return;
+        e.preventDefault();e.stopPropagation();
         const t = a.getAttribute('data-wikilink') ?? a.getAttribute('href');
-        if (t) openLink(t, a.dataset.linkKind === 'markdown' ? 'markdown' : 'wiki');
+        if (t) openLink(t, a.dataset.linkKind === 'markdown' ? 'markdown' : 'wiki',a.closest<HTMLElement>('[data-embed-source]')?.dataset.embedSource);
       });
     });
     return box;
   }
+  destroy(dom:HTMLElement){noteEmbedCleanups.get(dom)?.();noteEmbedCleanups.delete(dom)}
 }
 
 /* ---------------- mermaid (lazy, like Obsidian) ---------------- */
@@ -1451,8 +1459,9 @@ class HtmlBlockWidget extends WidgetType {
     });
     return div;
   }
-  ignoreEvent() {
-    return false;
+  ignoreEvent(event: Event) {
+    // Pointer/focus events in a web frame belong to its document, not the editor.
+    return event.target instanceof Element && !!event.target.closest('iframe.web-embed');
   }
 }
 
@@ -2247,10 +2256,54 @@ function decodeLinkTarget(target: string): string {
   }
 }
 
+const markdownImageCache=new WeakMap<Text,Map<number,MarkdownImage[]>>();
+function markdownEmbedWidget(image:MarkdownImage,state:EditorState,editing:boolean,readonly:boolean):WidgetType {
+  const target=markdownEmbedTarget(image.url),file=target.path;
+  let alt=image.alt,w:number|undefined,h:number|undefined;
+  const size=alt.match(/\|\s*(\d+)\s*(?:x\s*(\d+)\s*)?$/);
+  if(size){alt=alt.slice(0,size.index);w=Number(size[1]);h=size[2]?Number(size[2]):undefined}
+  const src=target.external?target.url:attachmentUrl(file)+target.fragment;
+  let widget:WidgetType;
+  if(!target.external&&(VIDEO_EXT_RE.test(file)||AUDIO_EXT_RE.test(file)))widget=new MediaWidget(src,alt,VIDEO_EXT_RE.test(file)?'video':'audio',w,h);
+  else if(!target.external&&PDF_EXT_RE.test(file))widget=new PdfEmbedWidget(src,target.encodedPath,notePath,!state.readOnly,editing,readonly,'markdown');
+  else if(!target.external&&/\.canvas$/i.test(file))widget=new CanvasEmbedWidget(target.encodedPath,notePath,'markdown');
+  else if(!target.external&&!IMAGE_EXT_RE.test(file)){
+    widget=isGenericFileEmbed(target.encodedPath)||/\.base$/i.test(file)?new WikilinkWidget(target.url,alt||file,true,undefined,'markdown'):new NoteEmbedWidget(target.url,'markdown');
+  }else widget=new ImageWidget(src,alt,w,h,target.external?null:target.encodedPath,!state.readOnly,editing,'markdown');
+  return widget;
+}
+function markdownImagesByLine(doc:Text){
+  let images=markdownImageCache.get(doc);
+  if(!images){images=new Map();for(const image of markdownImages(doc.toString())){const n=doc.lineAt(image.from).number;const list=images.get(n)??[];list.push(image);images.set(n,list)}markdownImageCache.set(doc,images)}
+  return images;
+}
+function multilineMarkdownImages(state:EditorState){
+  const tables=scanTables(state),defs=readingFootnotes(state).definitions;
+  const frontmatter=state.doc.toString().match(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/)?.[0].length??0;
+  return [...markdownImagesByLine(state.doc).values()].flat().filter(image=>image.from>=frontmatter&&state.doc.lineAt(image.from).number!==state.doc.lineAt(image.to).number&&![...tables,...defs].some(r=>image.from<r.to&&image.to>r.from));
+}
+export const markdownEmbedField=StateField.define<DecorationSet>({
+  create:buildMultilineMarkdownEmbeds,
+  update(value,tr){
+    if(tr.docChanged||tr.selection||syntaxTree(tr.startState)!==syntaxTree(tr.state)||tr.effects.some(e=>e.is(setLivePreviewEnabled)||e.is(setLivePreviewReadonly)))return buildMultilineMarkdownEmbeds(tr.state);
+    return value.map(tr.changes);
+  },
+  provide:field=>EditorView.decorations.from(field),
+});
+function buildMultilineMarkdownEmbeds(state:EditorState):DecorationSet {
+  if(!state.field(livePreviewState,false))return Decoration.none;
+  const readonly=state.field(livePreviewReadonly,false)??false;
+  return Decoration.set(multilineMarkdownImages(state).map(image=>{
+    const editing=!readonly&&state.selection.ranges.some(r=>r.from<=image.to&&r.to>=image.from);
+    const widget=markdownEmbedWidget(image,state,editing,readonly);
+    return editing?Decoration.widget({widget,block:true,side:1}).range(image.to):Decoration.replace({widget,block:true}).range(image.from,image.to);
+  }),true);
+}
 function buildDecorations(view: EditorView): DecorationSet {
   const all: Range<Decoration>[] = [];
   const sel = view.state.selection;
   const doc = view.state.doc;
+  const markdownByLine=markdownImagesByLine(doc),multilineImages=multilineMarkdownImages(view.state);
 
   // Overlap guard: two content-replacing decorations may not overlap, or CM
   // throws and the whole plugin is disabled. Track claimed replace ranges and
@@ -2310,6 +2363,7 @@ function buildDecorations(view: EditorView): DecorationSet {
   // inside them must stay raw (e.g. `![[file]]` in backticks is not an embed).
   const codeRanges: { from: number; to: number }[] = [...multilineCode];
   const inCode = (from: number, to: number) => {
+    if(multilineImages.some(r=>from<r.to&&to>r.from))return true;
     if (inFootnote(from, to)) return true;
     if (inComment(from, to)) return true;
     for (const r of codeRanges) if (from < r.to && to > r.from) return true;
@@ -2325,6 +2379,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       to,
       enter: (node) => {
         const name = node.name;
+        if (multilineImages.some(r=>node.from>=r.from&&node.to<=r.to))return false;
         if (comments.some(r => node.from >= r.from && node.to <= r.to)) return false;
         if (multilineCode.some(r => node.from >= r.from && node.to <= r.to)) return false;
         if (footnoteParts.some(r => node.from >= r.from && node.to <= r.to)) return false;
@@ -2461,6 +2516,7 @@ function buildDecorations(view: EditorView): DecorationSet {
     for (let ln = startLine; ln <= endLine; ln++) {
       const line = doc.line(ln);
       const text = line.text;
+      if(multilineImages.some(r=>line.from<=r.to&&line.to>=r.from))continue;
 
       if (footnotes.definitions.some(r => line.from >= r.from && line.to <= r.to)) continue;
 
@@ -2600,27 +2656,39 @@ function buildDecorations(view: EditorView): DecorationSet {
       // units and the marker widget have fixed widths (see .HyperMD-hang in CSS).
       // Build the prefix by addition because CSS calc multiplication is not supported
       // by all browsers. `markerW` varies with digit count for ordered lists.
-      const hang = (ws: string, markerW?: string): Record<string, string> => {
+      const hang = (ws: string, markerW?: string, orderedTask = false): Record<string, string> => {
         if (bodyStart) return {};
         let units = 0;
         for (let i = 0; i < ws.length; i += ws[i] === '\t' ? 1 : 4) units++;
-        const prefix = [...Array.from({ length: units }, () => 'var(--hang-indent-w)'), 'var(--hang-marker-w)'].join(' + ');
+        const prefix = [...Array.from({ length: units }, () => 'var(--hang-indent-w)'), 'var(--hang-marker-w)',
+          ...(orderedTask ? ['var(--font-text-size)', '6px'] : [])].join(' + ');
         // `--hang-marker-w` must be set on the line itself: the ordered-list marker box
         // (.cm-ol-marker) reads it for its width, so it has to match what the prefix uses.
         return { style: `${markerW ? `--hang-marker-w:${markerW};` : ''}--hang-prefix:calc(${prefix})` };
       };
-      const task = body.match(/^(\s*)([-*+])\s+\[(.)\]\s/);
+      const task = body.match(/^(\s*)([-*+]|\d{1,9}[.)])(\s+)\[(.)\](\s+|$)/);
       if (task) {
+        const ordered = /^\d/.test(task[2]);
+        const markerW = ordered ? `${(1.6 + (task[2].length - 2) * 0.6).toFixed(2)}em` : undefined;
         all.push(
           Decoration.line({
             class: bodyStart ? 'HyperMD-list-line HyperMD-task-line' : 'HyperMD-list-line HyperMD-task-line HyperMD-hang',
-            attributes: { 'data-task': task[3], ...hang(task[1]) },
+            attributes: { 'data-task': task[4], ...hang(task[1], markerW, ordered) },
           }).range(line.from, line.from),
         );
         indentGuides(task[1]);
-        const boxPos = bodyFrom + task[1].length + task[2].length + 2;
+        const start = bodyFrom + task[1].length;
+        const markerEnd = start + task[2].length;
+        const boxPos = markerEnd + task[3].length + 1;
         if (!touches(line.from, boxPos + 2)) {
-          pushReplace(bodyFrom + task[1].length, boxPos + 2, Decoration.replace({ widget: new CheckboxWidget(task[3] !== ' ', boxPos) }));
+          if (ordered) {
+            all.push(Decoration.mark({ class: 'cm-ol-marker' }).range(start, markerEnd));
+            // The number keeps its own box; the checkbox supplies the following gap.
+            if (!bodyStart) pushReplace(markerEnd, boxPos - 1, hidden);
+            else if (task[3].length > 1) pushReplace(markerEnd + 1, boxPos - 1, hidden);
+          }
+          pushReplace(ordered ? boxPos - 1 : start, bodyFrom + task[0].length,
+            Decoration.replace({ widget: new CheckboxWidget(task[4] !== ' ', boxPos) }));
         }
       } else {
         const bullet = body.match(/^(\s*)([-*+])(\s+)/);
@@ -2774,10 +2842,19 @@ function buildDecorations(view: EditorView): DecorationSet {
       while ((m = wikiRe.exec(text))) {
         const s = line.from + m.index;
         const e = s + m[0].length;
-        if (touches(s, e) || inCode(s, e) || isEscaped(text, m.index)) continue;
+        if (inCode(s, e) || isEscaped(text, m.index)) continue;
+        if((markdownByLine.get(line.number)??[]).some(r=>s>=r.from&&s<r.to))continue;
         const inner = m[2];
         if (inner.includes('[[')) continue;
         const isEmbed = m[1] === '!';
+        const editing=touches(s,e);
+        if(editing&&!isEmbed)continue;
+        // Live Preview keeps rendered embeds when their source is selected.
+        // Source mode disables this plugin; ordinary links still reveal text only.
+        const putWidget=(widget:WidgetType)=>{
+          if(editing)all.push(Decoration.widget({widget,side:1}).range(e));
+          else pushReplace(s,e,Decoration.replace({widget}));
+        };
         const pi = inner.indexOf('|');
         const href = (pi > 0 ? inner.slice(0, pi) : inner)
           .replace(/\\$/, '')
@@ -2786,7 +2863,9 @@ function buildDecorations(view: EditorView): DecorationSet {
           .normalize('NFC');
         const alias = pi > 0 ? inner.slice(pi + 1).trim() : null;
         const defaultDisplay = href.split('#').filter(Boolean).join(' > ');
-        if (isEmbed && /\.(bmp|png|jpe?g|gif|svg|webp|avif)$/i.test(href)) {
+        const file=href.split('#')[0];
+        const fragment=href.includes('#')?href.slice(href.indexOf('#')):'';
+        if (isEmbed && IMAGE_EXT_RE.test(file)) {
           // image size param: the LAST `|` segment, `300` or `300x200`
           let w: number | undefined;
           let h: number | undefined;
@@ -2798,34 +2877,35 @@ function buildDecorations(view: EditorView): DecorationSet {
               h = sm[2] ? Number(sm[2]) : undefined;
             }
           }
-          pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(attachmentUrl(href), href, w, h, href) }));
-        } else if (isEmbed && (VIDEO_EXT_RE.test(href) || AUDIO_EXT_RE.test(href))) {
+          putWidget(new ImageWidget(attachmentUrl(file), href, w, h, file,!view.state.readOnly,editing));
+        } else if (isEmbed && (VIDEO_EXT_RE.test(file) || AUDIO_EXT_RE.test(file))) {
           // `![[clip.mp4]]` / `![[song.mp3]]` → native HTML5 player like Obsidian.
-          const kind = VIDEO_EXT_RE.test(href) ? 'video' : 'audio';
+          const kind = VIDEO_EXT_RE.test(file) ? 'video' : 'audio';
           // width param (video only): last `|` segment `300` / `300x200`
           let w: number | undefined;
+          let h: number | undefined;
           if (kind === 'video' && pi > 0) {
             const segs = inner.split('|');
-            const sm = segs[segs.length - 1].match(/^\s*([0-9]+)\s*(?:x\s*[0-9]+\s*)?$/);
-            if (sm) w = Number(sm[1]);
+            const sm = segs[segs.length - 1].match(/^\s*([0-9]+)\s*(?:x\s*([0-9]+)\s*)?$/);
+            if (sm) {w = Number(sm[1]);h=sm[2]?Number(sm[2]):undefined;}
           }
-          pushReplace(s, e, Decoration.replace({ widget: new MediaWidget(attachmentUrl(href), href, kind, w) }));
+          putWidget(new MediaWidget(attachmentUrl(file)+fragment, href, kind, w,h));
         } else if (isEmbed && PDF_EXT_RE.test(href.split('#')[0])) {
           // FR-21: `![[doc.pdf]]` → the browser's viewer inline, like Obsidian.
           // The `#page=…` fragment (if any) addresses the viewer, not the file API.
-          pushReplace(s, e, Decoration.replace({ widget: new PdfEmbedWidget(attachmentUrl(href.split('#')[0]), href.split('#')[0], notePath) }));
-        } else if (isEmbed && !/\.[a-z0-9]{1,5}$/i.test(href.split('#')[0])) {
+          putWidget(new PdfEmbedWidget(attachmentUrl(href.split('#')[0])+fragment, href.split('#')[0], notePath,!view.state.readOnly,editing,readonly));
+        } else if(isEmbed&&/\.canvas$/i.test(file)){
+          putWidget(new CanvasEmbedWidget(href,notePath));
+        } else if(isEmbed&&isGenericFileEmbed(file)){
+          putWidget(new WikilinkWidget(href,alias||href,true));
+        } else if (isEmbed && (!/\.[a-z0-9]{1,5}$/i.test(href.split('#')[0])||/\.(md|markdown)$/i.test(href.split('#')[0]))) {
           // `![[note]]` (no binary extension) → real transclusion like Obsidian.
-          pushReplace(s, e, Decoration.replace({ widget: new NoteEmbedWidget(href) }));
+          putWidget(new NoteEmbedWidget(href));
         } else {
           // LP shows the raw target text (`Note#Head`); the `Note > Head` display
           // form is reading-view behaviour and goes into aria-label like Obsidian.
           const label = alias || href;
-          pushReplace(
-            s,
-            e,
-            Decoration.replace({ widget: new WikilinkWidget(href, label, isEmbed, defaultDisplay !== label ? defaultDisplay : undefined) }),
-          );
+          putWidget(new WikilinkWidget(href,label,isEmbed,defaultDisplay!==label?defaultDisplay:undefined));
         }
       }
 
@@ -2838,40 +2918,12 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (emb) pushReplace(s, e, Decoration.replace({ widget: new ExternalEmbedWidget(emb) }));
       }
 
-      // Markdown images ![alt](url) — URL may contain spaces (real-world vaults)
-      const imgRe = /!\[([^\]]*)\]\(([^)]+)\)/g;
-      while ((m = imgRe.exec(text))) {
-        const s = line.from + m.index;
-        const e = s + m[0].length;
-        if (touches(s, e) || inCode(s, e)) continue;
-        // size param lives in the alt text: `![alt|300](url)` / `![|300x200](url)`
-        let alt = m[1];
-        let w: number | undefined;
-        let h: number | undefined;
-        const ai = alt.lastIndexOf('|');
-        if (ai >= 0) {
-          const sm = alt.slice(ai + 1).match(/^\s*([0-9]+)\s*(?:x\s*([0-9]+)\s*)?$/);
-          if (sm) {
-            w = Number(sm[1]);
-            h = sm[2] ? Number(sm[2]) : undefined;
-            alt = alt.slice(0, ai);
-          }
-        }
-        const url = m[2].replace(/\s+"[^"]*"$/, '').trim();
-        // Browser-loadable URLs load directly; anything else (a relative path or
-        // any custom scheme) is resolved by basename via the vault file index.
-        const webLoadable = /^(https?|data|blob|file):/i.test(url);
-        let vaultRef: string | null = null;
-        if (!webLoadable) {
-          vaultRef = url.replace(/^<|>$/g, '');
-          try {
-            vaultRef = decodeURIComponent(vaultRef);
-          } catch {
-            /* keep raw */
-          }
-        }
-        const src = vaultRef === null ? url : attachmentUrl(vaultRef);
-        pushReplace(s, e, Decoration.replace({ widget: new ImageWidget(src, alt, w, h, vaultRef) }));
+      // All standard Markdown embeds use parser positions and the same media
+      // dispatch as wiki embeds. References may resolve through definitions.
+      for(const image of markdownByLine.get(line.number)??[]){
+        const s=image.from,e=image.to;if(inCode(s,e))continue;
+        const editing=touches(s,e),widget=markdownEmbedWidget(image,view.state,editing,readonly);
+        if(editing)all.push(Decoration.widget({widget,side:1}).range(e));else pushReplace(s,e,Decoration.replace({widget}));
       }
 
       // Markdown links [text](url) — not preceded by ! (those are images)

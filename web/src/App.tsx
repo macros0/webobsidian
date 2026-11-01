@@ -18,7 +18,7 @@ import FolderPicker from './components/FolderPicker';
 import TemplatePicker from './components/TemplatePicker';
 import ConfirmDialog from './components/ConfirmDialog';
 import { loadPlugins,stopPlugins } from './lib/plugins';
-import { initUrlSync } from './lib/urlsync';
+import { restoreWorkspaceFromUrl } from './lib/urlsync';
 import { useIsMobile } from './lib/useIsMobile';
 import { themeClass } from './lib/theme';
 import {applyIndexStatus,refreshIndexStatus,resetIndexStatus,useIndexStatus,indexStatusMessage} from './lib/indexStatus';
@@ -60,17 +60,11 @@ export default function App() {
     if (!authed) {resetDraftScope();resetIndexStatus();return;}
     const treeReady=loadTree();
     // Deep link (/note/<path>) wins over the restored workspace's active note.
-    const deepLink = initUrlSync();
     const codeSettingsReady=api.getSettings().then(s=>{useStore.setState({codeFileViewer:s.ui.codeFileViewer??useStore.getInitialState().codeFileViewer});}).catch(()=>{useStore.setState({codeFileViewer:{...useStore.getInitialState().codeFileViewer,enabled:false}});useStore.getState().notify('Could not load code viewer settings. Reload to retry.',10000);});
-    const workspaceReady=codeSettingsReady.then(()=>useStore
-      .getState()
-      .loadUiState(true)) // restore workspace from server + open note(s)
-      .then(() => {
-        if (deepLink && deepLink !== useStore.getState().activePath) {
-          return useStore.getState().openFile(deepLink);
-        }
-      })
-      ;
+    const workspaceReady=restoreWorkspaceFromUrl(async()=>{
+      await codeSettingsReady;
+      await useStore.getState().loadUiState(true);
+    });
     api
       .getSettings()
       .then((s) => {

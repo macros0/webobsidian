@@ -1,19 +1,16 @@
-import path from 'node:path';
 import { Router } from 'express';
 import type { Request } from 'express';
 import jwt from 'jsonwebtoken';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import * as vault from '../services/vault.js';
-import { resolveFile } from '../services/fileindex.js';
 import { hashPassword, verifyPassword } from '../services/auth.js';
 import { getSettings } from '../services/settings.js';
 import {
   listShares, createShare, setShareEnabled, setSharePassword, deleteShare, getActiveShare,
   type ShareRecord,
 } from '../services/shares.js';
-import { canvasEmbedTargets } from '../services/rendercanvas.js';
-import { vaultTarget } from '../services/renderhtml.js';
+import {localEmbedTargets,canvasAttachmentReferences,resolveCanvasFile,resolvePublicAttachment} from '../services/publicAttachments.js';
 import { mimeFor } from '../services/mime.js';
 import { sendFileWithRange } from '../services/httpfile.js';
 
@@ -98,46 +95,22 @@ sharesRouter.delete(
 
 /** ---- Public API (NO auth) — /public/shares ------------------------------- */
 
-/**
- * Files the shared note embeds (`![[target]]` and `![](relative-url)`) — the
- * only paths the public file endpoint is allowed to serve. Mirrors the
- * client-side markdown preprocessing in web/src/lib/markdown.ts.
- */
-function embedTargets(content: string): string[] {
-  const out = new Set<string>();
-  for (const m of content.matchAll(/!\[\[([^\]]+?)\]\]/g)) {
-    const t = m[1].split('|')[0].split('#')[0].trim();
-    if (t) out.add(t);
-  }
-  for (const m of content.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)) {
-    const url = m[1].replace(/\s+"[^"]*"$/, '').trim();
-    // web-loadable URLs are loaded directly by the browser, not via the vault
-    if (url && !/^(https?|data|blob|file):/i.test(url)) {
-      out.add(vaultTarget(url));
-    }
-  }
-  return [...out];
+/** Only files directly present in this publication grant byte access. */
+export async function resolveSharedAttachments(share:ShareRecord,source?:string):Promise<Set<string>>{
+ const content=source??await vault.readFileText(share.path);
+ const refs=isCanvas(share.path)?canvasAttachmentReferences(content):localEmbedTargets(content).map(target=>({target,rooted:false}));
+ const allowed=new Set<string>();
+ for(const ref of refs){
+  const target=ref.rooted?await resolveCanvasFile(ref.target):await resolvePublicAttachment(ref.target,share.path);
+  if(target&&!isMd(target))allowed.add(target);
+ }
+ return allowed;
 }
 
-/** Resolve a path/basename the same way GET /api/files/content does. */
-async function resolveVaultPath(rel: string): Promise<string | null> {
-  if (await vault.exists(rel)) return rel;
-  return resolveFile(rel) ?? null;
-}
-
-/**
- * Resolve an embed target for the shared note at `notePath`: a relative target
- * (`attachments/x.png`) is looked up next to the note first, exactly like the app's own
- * GET /api/files/content?from=…, then falls back to the vault-wide lookup (wikilink style).
- * Without this, same-named images in different folders resolve to the wrong file.
- */
-async function resolveForNote(target: string, notePath: string): Promise<string | null> {
-  if (!target.startsWith('/')) {
-    const dir = path.posix.dirname(notePath);
-    const cand = path.posix.normalize(path.posix.join(dir === '.' ? '' : dir, target));
-    if (cand && !cand.startsWith('..') && !path.posix.isAbsolute(cand) && (await vault.exists(cand))) return cand;
-  }
-  return resolveVaultPath(target);
+export async function resolveSharedFile(share:ShareRecord,requested:string):Promise<string|null>{
+ const target=isCanvas(share.path)?await resolveCanvasFile(requested):await resolvePublicAttachment(requested,share.path);
+ if(!target||isMd(target))return null;
+ return (await resolveSharedAttachments(share)).has(target)?target:null;
 }
 
 export const publicSharesRouter = Router();
@@ -225,20 +198,8 @@ publicSharesRouter.get(
       res.status(401).json({ error: 'password required', passwordRequired: true });
       return;
     }
-    const target = await resolveForNote(requested, share.path);
-    if (!target || isMd(target)) {
-      res.status(404).json({ error: 'not found' });
-      return;
-    }
-    // Allowlist check: the resolved file must be one the shared note/canvas embeds.
-    const content = await vault.readFileText(share.path);
-    const targets = isCanvas(share.path) ? await canvasEmbedTargets(content) : embedTargets(content);
-    const allowed = new Set<string>();
-    for (const t of targets) {
-      const r = await resolveForNote(t, share.path);
-      if (r) allowed.add(r);
-    }
-    if (!allowed.has(target)) {
+    const target = await resolveSharedFile(share,requested);
+    if (!target) {
       res.status(404).json({ error: 'not found' });
       return;
     }

@@ -9,11 +9,13 @@ import { fileURLToPath } from 'node:url';
 import { asyncHandler } from '../middleware/error.js';
 import * as vault from '../services/vault.js';
 import { getActiveShare } from '../services/shares.js';
-import { isUnlocked } from './shares.js';
-import { renderNoteHtml, metaDescription, firstImage, escapeHtml } from '../services/renderhtml.js';
+import { isUnlocked,resolveSharedFile,resolveSharedAttachments } from './shares.js';
+import { metaDescription, firstImage, escapeHtml } from '../services/renderhtml.js';
+import {renderPublicNoteHtml} from '../services/publicNoteRendering.js';
+import {renderPublicCanvasHtml} from '../services/publicCanvasRendering.js';
 import { embedLinkPreviews } from '../services/linkpreview.js';
 import { publicMarkdownScript } from '../services/publicMarkdown.js';
-import { renderCanvasHtml, canvasDescription, canvasFirstImage, canvasViewerScript } from '../services/rendercanvas.js';
+import { canvasDescription, canvasFirstImage, canvasViewerScript } from '../services/rendercanvas.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,6 +36,15 @@ async function appCss(): Promise<string> {
   }
 }
 
+/** A separate Vite entry; the public reader never boots the authenticated SPA. */
+async function embedsScript(nonce:string):Promise<string>{
+  try{
+    const files=await fs.readdir(path.join(__dirname,'..','..','public','assets'));
+    const file=files.filter(f=>/^public-embeds-[\w-]+\.js$/.test(f)).sort().at(-1);
+    return file?`<script type="module" nonce="${escapeHtml(nonce)}" src="/assets/${file}"></script>`:'';
+  }catch{return ''}
+}
+
 function baseUrl(req: Request): string {
   return `${req.protocol}://${req.get('host')}`;
 }
@@ -46,6 +57,7 @@ function page(opts: {
   noindex?: boolean;
   /** Skip the narrow markdown-preview column (used by the full-width canvas view). */
   bare?: boolean;
+  shareId?:string;
 }): string {
   const inner = opts.bare
     ? opts.body
@@ -64,7 +76,7 @@ ${opts.body}
 ${opts.head ?? ''}<style>${opts.css}</style>
 </head>
 <body>
-<div class="theme-light public-page${opts.bare ? ' public-canvas' : ''}">
+<div class="theme-light public-page${opts.bare ? ' public-canvas' : ''}"${opts.shareId?` data-public-share="${escapeHtml(opts.shareId)}"`:''}>
 ${inner}
 </div>
 </body>
@@ -130,7 +142,6 @@ document.getElementById('unlock-form').addEventListener('submit', async (e) => {
     const content = await vault.readFileText(share.path);
     const isCanvas = /\.canvas$/i.test(share.path);
     const title = (share.path.split('/').pop() ?? share.path).replace(/\.(md|markdown|canvas)$/i, '');
-    const fileUrl = (p: string) => `/public/shares/${share.id}/file?path=${encodeURIComponent(p)}`;
     const desc = isCanvas ? canvasDescription(content) : metaDescription(content);
     const imgVault = isCanvas ? canvasFirstImage(content) : null;
     const img = isCanvas ? null : firstImage(content);
@@ -139,8 +150,8 @@ document.getElementById('unlock-form').addEventListener('submit', async (e) => {
       : null);
 
     const html = isCanvas
-      ? await renderCanvasHtml(content, fileUrl)
-      : await embedLinkPreviews(await renderNoteHtml(content, fileUrl));
+      ? await renderPublicCanvasHtml(content,share.path,share,child=>isUnlocked(req,child),resolveSharedAttachments)
+      : await embedLinkPreviews(await renderPublicNoteHtml(content,share,child=>isUnlocked(req,child)));
 
     const head = [
       `<meta name="description" content="${escapeHtml(desc)}" />`,
@@ -167,10 +178,23 @@ document.getElementById('unlock-form').addEventListener('submit', async (e) => {
         head,
         css,
         bare: isCanvas,
+        shareId:share.id,
         body: isCanvas
-          ? `<div class="public-canvas-title">${escapeHtml(title)}</div>\n${html}\n${canvasViewerScript(res.locals.cspNonce)}`
-          : `<div class="inline-title">${escapeHtml(title)}</div>\n${html}\n${publicMarkdownScript(res.locals.cspNonce)}`,
+          ? `<div class="public-canvas-title">${escapeHtml(title)}</div>\n${html}\n${canvasViewerScript(res.locals.cspNonce)}\n${publicMarkdownScript(res.locals.cspNonce)}\n${await embedsScript(res.locals.cspNonce)}`
+          : `<div class="inline-title">${escapeHtml(title)}</div>\n${html}\n${publicMarkdownScript(res.locals.cspNonce)}\n${await embedsScript(res.locals.cspNonce)}`,
       }),
     );
   }),
 );
+
+sharePageRouter.get('/:id/canvas',asyncHandler(async(req,res)=>{
+  const share=await getActiveShare(req.params.id),css=await appCss();
+  const error=(status:number,text:string)=>res.status(status).type('html').send(page({title:'Canvas',css,noindex:true,body:`<div class="public-error">${text}</div>`}));
+  if(!share||!await vault.exists(share.path)){error(404,'This canvas is not available.');return}
+  if(!await isUnlocked(req,share)){error(401,`Password required. <a href="/share/${encodeURIComponent(share.id)}">Open protected note</a>`);return}
+  const target=await resolveSharedFile(share,String(req.query.path??''));
+  if(!target||!/\.canvas$/i.test(target)){error(404,'This canvas is not available.');return}
+  const title=target.split('/').pop()!.replace(/\.canvas$/i,'');
+  const html=await renderPublicCanvasHtml(await vault.readFileText(target),target,share,child=>isUnlocked(req,child),resolveSharedAttachments);
+  res.type('html').send(page({title,css,bare:true,shareId:share.id,noindex:true,body:`<div class="public-canvas-title">${escapeHtml(title)}</div>\n${html}\n${canvasViewerScript(res.locals.cspNonce)}\n${publicMarkdownScript(res.locals.cspNonce)}\n${await embedsScript(res.locals.cspNonce)}`}));
+}));

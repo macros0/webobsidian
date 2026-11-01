@@ -4,7 +4,6 @@ import { api, type TreeNode } from '../lib/api';
 import { findNode, pruneDescendants } from '../lib/tree';
 import { pathToUrl } from '../lib/urlsync';
 import Icon from './Icon';
-import { humanizeTitle } from '../lib/title';
 import { confirmDialog } from '../lib/confirm';
 import { displayChildren } from '../lib/attachments';
 import { useVaultPreferences } from '../lib/vaultPreferences';
@@ -75,14 +74,6 @@ function countDescendants(node: TreeNode): number {
   let n = 0;
   for (const c of node.children ?? []) n += 1 + countDescendants(c);
   return n;
-}
-
-function fileIcon(node: TreeNode): string | null {
-  const ext = node.ext ?? '';
-  if (/\.(md|markdown)$/.test(ext)) return null; // markdown: text only, like Obsidian
-  if (/\.(png|jpe?g|gif|svg|webp)$/.test(ext)) return 'image';
-  if (ext === '.pdf') return 'file-pdf';
-  return 'paperclip';
 }
 
 function parentDir(path: string): string {
@@ -523,7 +514,8 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
     );
   }
 
-  const fi = fileIcon(node);
+  const filename = node.name.match(/^(.+)\.([^.]+)$/);
+  const extension = filename?.[2].toLowerCase();
   return (
     <div className="tree-item">
       <div
@@ -545,14 +537,14 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
         title={node.path}
       >
         <span className="twisty leaf" />
-        {fi && <span className="twisty"><Icon name={fi} size={14} /></span>}
         {editing ? (
           <RenameInput node={node} onDone={() => setRenamingPath(null)} />
         ) : (
           <span className="name" onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); doRename(); }}>
-            {/\.(md|markdown)$/i.test(node.name) ? humanizeTitle(node.name) : node.name}
+            {filename ? filename[1] : node.name}
           </span>
         )}
+        {!editing && extension && !/^(md|markdown)$/.test(extension) && <span className="nav-file-tag">{extension}</span>}
         {shares.some((s) => s.path === node.path && s.enabled) && (
           <Icon name="globe" size={12} className="share-globe" />
         )}
@@ -599,6 +591,8 @@ export function collectFolderPaths(root: TreeNode | null): string[] {
  * applies to files. Only rendered (expanded) folders' children are shown, so
  * this naturally sorts just what's visible in the panel.
  */
+const compareExplorerNames = new Intl.Collator(undefined, { usage: 'sort', sensitivity: 'base', numeric: true }).compare;
+
 function sortTree(
   node: TreeNode,
   order: TreeSort,
@@ -618,17 +612,17 @@ function sortTree(
       if (ai != null && bi != null) return ai - bi;
       if (ai != null) return -1;
       if (bi != null) return 1;
-      return a.name.localeCompare(b.name);
+      return compareExplorerNames(a.name, b.name);
     }
     if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-    if (a.type === 'folder') return a.name.localeCompare(b.name);
+    if (a.type === 'folder') return compareExplorerNames(a.name, b.name);
     switch (order) {
-      case 'name-desc': return -a.name.localeCompare(b.name);
+      case 'name-desc': return -compareExplorerNames(a.name, b.name);
       case 'mtime-desc': return (b.mtime ?? 0) - (a.mtime ?? 0);
       case 'mtime-asc': return (a.mtime ?? 0) - (b.mtime ?? 0);
       case 'ctime-desc': return (b.ctime ?? 0) - (a.ctime ?? 0);
       case 'ctime-asc': return (a.ctime ?? 0) - (b.ctime ?? 0);
-      default: return a.name.localeCompare(b.name); // name-asc
+      default: return compareExplorerNames(a.name, b.name); // name-asc
     }
   };
   // Hidden attachment folders are dropped from this render copy only; the raw store tree

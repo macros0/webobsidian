@@ -44,6 +44,29 @@ export function urlToPath(pathname: string): string | null {
 /** True while we're applying a popstate — suppresses the pushState echo. */
 let applyingPop = false;
 let started = false;
+const fragmentFile=(path:string|null)=>/\.(pdf|md|markdown)$/i.test(path??'');
+const activeFragment=(state:ReturnType<typeof useStore.getState>)=>{
+ if(/\.pdf$/i.test(state.activePath??''))return state.tabs.find(tab=>tab.path===state.activePath)?.pdfFragment??'';
+ return /\.(md|markdown)$/i.test(state.activePath??'')&&state.noteNavigation?.path===state.activePath?encodeURIComponent(state.noteNavigation.fragment):'';
+};
+function fragmentOptions(path:string|null,hash:string){
+ if(/\.pdf$/i.test(path??''))return {pdfFragment:hash};
+ if(/\.(md|markdown)$/i.test(path??'')){let fragment=hash;try{fragment=decodeURIComponent(fragment)}catch{}return {noteFragment:fragment}}
+ return undefined;
+}
+const canonicalFragment=(path:string|null,hash:string)=>{
+ const options=fragmentOptions(path,hash);return options&&'noteFragment' in options?encodeURIComponent(options.noteFragment!):hash;
+};
+
+/** Restore first, then let the original deep link win before observing changes. */
+export async function restoreWorkspaceFromUrl(restore:()=>Promise<void>):Promise<void>{
+ const path=urlToPath(window.location.pathname),options=fragmentOptions(path,(window.location.hash??'').slice(1));
+ const mode=modeFromUrl(window.location.pathname,window.location.search);if(mode)useStore.getState().setTasksMode(mode);
+ try{
+  await restore();
+  if(path&&(path!==useStore.getState().activePath||options!==undefined))await useStore.getState().openFile(path,options);
+ }finally{initUrlSync()}
+}
 
 /**
  * Start two-way sync. Call once after auth. Returns the deep-linked path that
@@ -60,27 +83,37 @@ export function initUrlSync(): string | null {
 
   // store → URL. The very first sync (workspace restore on load) replaces the
   // entry instead of pushing, so Back doesn't land on a stale '/'.
-  let firstSync = true;
+  const current=useStore.getState();
+  let firstSync = !(initial&&current.activePath===initial&&(!fragmentFile(initial)||activeFragment(current)===canonicalFragment(initial,(window.location.hash??'').slice(1))));
   useStore.subscribe((state, prev) => {
-    if (state.activePath === prev.activePath) return;
-    const url = pathToUrl(state.activePath, state.tasksMode);
-    if (window.location.pathname === url) return;
+    const fragment=activeFragment(state);
+    if (state.activePath === prev.activePath&&fragment===activeFragment(prev)) return;
+    const pathname = pathToUrl(state.activePath, state.tasksMode);
+    const hash=fragment?'#'+fragment:'';
+    const url=pathname+hash;
+    if (window.location.pathname === pathname&&(!fragmentFile(state.activePath)||canonicalFragment(state.activePath,(window.location.hash??'').slice(1))===fragment)){firstSync=false;return}
     if (applyingPop || firstSync) window.history.replaceState(null, '', url);
     else window.history.pushState(null, '', url);
     firstSync = false;
   });
+  if(!initial&&current.activePath){
+    const fragment=activeFragment(current);
+    window.history.replaceState(null,'',pathToUrl(current.activePath,current.tasksMode)+(fragment?'#'+fragment:''));
+    firstSync=false;
+  }
 
   // URL → store (browser back/forward)
-  window.addEventListener('popstate', () => {
-    const path = urlToPath(window.location.pathname);
-    if (!path || path === useStore.getState().activePath) return;
-    applyingPop = true;
-    Promise.resolve(useStore.getState().openFile(path))
-      .catch(() => {})
-      .finally(() => {
-        applyingPop = false;
-      });
-  });
+  let locationRequest=0,applyingLocation='';
+  const applyLocation=()=>{
+    const path=urlToPath(window.location.pathname),hash=(window.location.hash??'').slice(1),key=window.location.pathname+'#'+hash;
+    if(!path||(applyingPop&&applyingLocation===key)||(!applyingPop&&path===useStore.getState().activePath&&(!fragmentFile(path)||canonicalFragment(path,hash)===activeFragment(useStore.getState()))))return;
+    const request=++locationRequest;applyingLocation=key;applyingPop=true;
+    Promise.resolve(useStore.getState().openFile(path,fragmentOptions(path,hash)))
+      .catch(()=>{})
+      .finally(()=>{if(request===locationRequest){applyingPop=false;applyingLocation=''}});
+  };
+  window.addEventListener('popstate',applyLocation);
+  window.addEventListener('hashchange',applyLocation);
 
   return initial;
 }

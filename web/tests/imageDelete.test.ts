@@ -32,6 +32,16 @@ const settleDialog = async () => {
   for (let i = 0; i < 40 && !useConfirm.getState().req; i++) await Promise.resolve();
 };
 
+test('Markdown image deletion resolves encoded names once using Markdown semantics',async()=>{
+ const resolve=mock.method(api,'resolve',async()=>({path:'docs/photo%20#one.png'}));
+ mock.method(api,'references',async()=>({references:['other.md']}));
+ const r={...request(),target:'photo%2520%23one.png',kind:'markdown' as const};
+ const operation=deleteEmbeddedImage(r);await settleDialog();
+ useConfirm.getState().req?.resolve(false);await operation;
+ assert.deepEqual(resolve.mock.calls[0].arguments,['photo%2520%23one.png','docs/note.md','markdown']);
+ assert.equal((api.resolveAttachment as any).mock.callCount(),0);assert.equal(r.remove.mock.callCount(),0);
+});
+
 test('locked note cannot delete its unlocked attachment', async () => {
   useStore.setState({ locked: true });
   const r = request();
