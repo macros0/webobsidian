@@ -25,7 +25,7 @@ export function draftScopeEpoch(){return scopeEpoch;}
 export function isDraftScopeCurrent(scope:string,epoch:number){return scope===currentDraftScope&&epoch===scopeEpoch;}
 export function assertDraftScope(scope:string,epoch:number){if(!isDraftScopeCurrent(scope,epoch))throw new Error('Draft scope changed. Reopen recovery in the current vault.');}
 export async function loadDraftScope(){const epoch=scopeEpoch;if(!draftScopeRequest)draftScopeRequest=api.draftScope().then(r=>{if(epoch!==scopeEpoch)throw new Error('Draft scope changed');currentDraftScope=r.scopeId;return r.scopeId;}).catch(error=>{if(epoch===scopeEpoch)draftScopeRequest=null;throw error;});return draftScopeRequest;}
-export function resetDraftScope(){resetVaultPreferences();scopeEpoch++;openRequest++;splitCodeRequest++;useStore.setState({codeFileResult:null,splitCodeFileResult:null,codeEditorOverride:null});for(const s of documentSessions.values())s.dispose();documentSessions.clear();currentDraftScope='';draftScopeRequest=null;if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-scope-change'));}
+export function resetDraftScope(){resetVaultPreferences();scopeEpoch++;openRequest++;splitCodeRequest++;useStore.setState({codeFileResult:null,splitCodeFileResult:null,codeEditorOverride:null,noteNavigation:null});for(const s of documentSessions.values())s.dispose();documentSessions.clear();currentDraftScope='';draftScopeRequest=null;if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-scope-change'));}
 export function acceptResolvedDocument(path:string,content:string,version:string){const s=documentSessions.get(path);if(s){s.acceptServerResult(content,version);}else{const scopeId=currentDraftScope;documentSessions.set(path,new DocumentSession({scopeId,path,writerId:CLIENT_ID+':'+(++draftSessionSequence),content,version},{put:putDraft,remove:deleteDraftIfRevision,write:(p,t,v)=>api.write(p,t,v,scopeId)},refreshSaveStatus));}useStore.setState({content,dirty:false,codeFileResult:null,codeEditorOverride:path});}
 function refreshSaveStatus(){if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-status'));}
 export type ViewMode = 'live' | 'source' | 'reading';
@@ -54,6 +54,8 @@ export interface Tab {
   title: string;
   /** Reusable until kept open or edited. Missing on older, permanent tabs. */
   preview?: boolean;
+  /** PDF navigation is kept out of the canonical vault filename. */
+  pdfFragment?: string;
 }
 
 /** A color group in the graph (nodes matching `query` are tinted `color`). */
@@ -175,10 +177,11 @@ interface AppState {
 
   // split pane (open to the side)
   splitPath: string | null;
+  splitPdfFragment: string;
   splitContent: string;
   /** Which edge the split pane is docked to ('right' = columns, 'down' = rows). */
   splitDirection: 'right' | 'down';
-  openToSide: (path: string, direction?: 'right' | 'down') => Promise<void>;
+  openToSide: (path: string, direction?: 'right' | 'down',options?:{pdfFragment?:string}) => Promise<void>;
   closeSplit: () => void;
 
   recent: string[];
@@ -260,13 +263,14 @@ interface AppState {
   /** Show a toast. ms=0 keeps it until another notify() replaces it. */
   notify: (msg: string, ms?: number) => void;
 
-  openFile: (path: string, options?: { preview?: boolean }) => Promise<void>;
+  noteNavigation:{path:string;fragment:string;request:number}|null;
+  openFile: (path: string, options?: { preview?: boolean;pdfFragment?:string;noteFragment?:string }) => Promise<void>;
   /** Open a media reference using its originating note, then keep the canonical path in tabs. */
   openAttachment: (target: string, from: string) => Promise<void>;
   /** Finish inline creation without replacing an existing preview tab. */
   openCreatedFile: (path: string) => Promise<void>;
   keepTab: (path: string) => void;
-  openWikilink: (target: string,kind?:'wiki'|'markdown') => Promise<void>;
+  openWikilink: (target: string,kind?:'wiki'|'markdown',from?:string) => Promise<void>;
   closeTab: (path: string) => Promise<boolean>;
   renamePath: (from: string, to: string) => Promise<void>;
   /** Discard state only after the server has confirmed removal. */
@@ -325,7 +329,7 @@ const TEXT_RE = /\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i;
 
 // ---- server-side workspace persistence (shared across browsers/devices) ----
 const PERSIST_KEYS = [
-  'tabs', 'activePath', 'viewMode', 'expanded', 'splitPath', 'splitDirection',
+  'tabs', 'activePath', 'viewMode', 'expanded', 'splitPath', 'splitDirection', 'splitPdfFragment',
   'recent', 'bookmarks', 'leftPanel', 'rightPanel', 'leftOpen', 'rightOpen', 'graphSettings',
   'treeSort', 'manualOrder', 'autoReveal', 'showAttachmentFolders',
 ] as const;
@@ -442,6 +446,7 @@ function applyPersisted(s: any, set: (p: any) => void): void {
     autoReveal: s.autoReveal === true,
     showAttachmentFolders: s.showAttachmentFolders === true,
     splitPath: typeof s.splitPath === 'string' ? s.splitPath : null,
+    splitPdfFragment: typeof s.splitPdfFragment === 'string' ? s.splitPdfFragment : '',
     splitDirection: s.splitDirection === 'down' ? 'down' : 'right',
     recent: Array.isArray(s.recent) ? s.recent : [],
     bookmarks: Array.isArray(s.bookmarks) ? s.bookmarks : [],
@@ -567,6 +572,7 @@ export const useStore = create<AppState>()(
       setShowInlineTitle: (v) => set({ showInlineTitle: v }),
 
       tree: null,
+      noteNavigation:null,
       loadTree: async () => {
         const tree = await api.tree();
         set((s) => ({ tree, manualOrder: renamesInFlight > 0 ? s.manualOrder : reconcileManualOrder(tree, s.manualOrder) }));
@@ -652,23 +658,25 @@ export const useStore = create<AppState>()(
         const {activePath,splitPath}=get();if(activePath)await get().openFile(activePath,{preview:false});if(splitPath)await get().openToSide(splitPath);
       },
       splitPath: null,
+      splitPdfFragment: '',
       splitContent: '',
       splitDirection: 'right',
-      openToSide: async (path, direction) => {
+      openToSide: async (path, direction,options) => {
         const request=++splitCodeRequest;const epoch=scopeEpoch;
         const code=resolveCodeLanguage(path,get().codeFileViewer)!==null;
-        if(!code&&!TEXT_RE.test(path)){set({splitPath:null,splitContent:'',splitCodeFileResult:null});return;}
+        if(!code&&!TEXT_RE.test(path)&&!/\.pdf$/i.test(path)){set({splitPath:null,splitContent:'',splitCodeFileResult:null});return;}
         const result=code?await api.readCode(path):null;
-        const r=result?{content:result.kind==='text'?result.content:''}:await api.read(path);
+        const r=/\.pdf$/i.test(path)?{content:''}:result?{content:result.kind==='text'?result.content:''}:await api.read(path);
         if(request!==splitCodeRequest||epoch!==scopeEpoch)return;
         set({splitCodeFileResult:result});
         set((s) => ({
           splitPath: path,
+          splitPdfFragment:/\.pdf$/i.test(path)?options?.pdfFragment??(s.splitPath===path?s.splitPdfFragment:''):'',
           splitContent: typeof r === 'string' ? r : r.content,
           splitDirection: direction ?? s.splitDirection,
         }));
       },
-      closeSplit: () => {splitCodeRequest++;set({splitPath:null,splitContent:'',splitCodeFileResult:null});},
+      closeSplit: () => {splitCodeRequest++;set({splitPath:null,splitPdfFragment:'',splitContent:'',splitCodeFileResult:null});},
 
       recent: [],
       removeRecent: (path) => set((s) => ({ recent: s.recent.filter((p) => p !== path) })),
@@ -805,7 +813,7 @@ export const useStore = create<AppState>()(
       openAttachment: async (target, from) => {
         try {
           const { path } = await api.resolveAttachment(target, from);
-          if (path) await get().openFile(path);
+          if (path) await get().openFile(path,/\.pdf$/i.test(path)&&target.includes('#')?{pdfFragment:target.slice(target.indexOf('#')+1)}:undefined);
           else get().notify('Attachment not found');
         } catch (err: any) {
           get().notify(err?.message ?? 'Could not open attachment');
@@ -817,7 +825,7 @@ export const useStore = create<AppState>()(
         get().revealInTree(path);
       },
 
-      openFile: async (path, { preview = true } = {}) => {
+      openFile: async (path, { preview = true,pdfFragment,noteFragment } = {}) => {
         if (mutationsPending) await waitForFileMutations();
         if (path === GRAPH_PATH) return get().openGraph();
         if (path === TASKS_PATH) return get().openTasks();
@@ -877,12 +885,14 @@ export const useStore = create<AppState>()(
               tabs = tabs.map((t) => t.path === path ? { ...t, preview: false } : t);
             }
           } else {
-            const tab = { path, title, preview };
+            const tab:Tab = { path, title, preview };
             const replace = preview ? tabs.findIndex((t) => t.preview) : -1;
             tabs = replace < 0 ? [...tabs, tab] : tabs.map((t, i) => i === replace ? tab : t);
           }
+          if(pdfFragment!==undefined&&/\.pdf$/i.test(path))tabs=tabs.map(t=>t.path===path?{...t,pdfFragment}:t);
           const recent = isFolder ? s.recent : [path, ...s.recent.filter((p) => p !== path)].slice(0, 20);
-          return { tabs, activePath: path, content, codeFileResult, codeEditorOverride, locked, lockReason, unlockMode, dirty: false, recent, ...pushHistory(s, path) };
+          const noteNavigation=/\.(md|markdown)$/i.test(path)&&noteFragment!==undefined?{path,fragment:noteFragment,request}:null;
+          return { tabs, activePath: path, content, codeFileResult, codeEditorOverride,noteNavigation, locked, lockReason, unlockMode, dirty: false, recent, ...pushHistory(s, path) };
         });
         refreshSaveStatus();
       },
@@ -891,10 +901,16 @@ export const useStore = create<AppState>()(
         tabs: s.tabs.map((t) => t.path === path && t.preview ? { ...t, preview: false } : t),
       })),
 
-      openWikilink: async (target,kind='wiki') => {
+      openWikilink: async (target,kind='wiki',from) => {
+        const resolveRequest=++openRequest;
         try {
-          const { path } = await api.resolve(target,get().activePath??undefined,kind);
-          if (path) await get().openFile(path);
+          const { path } = await api.resolve(target,from??get().activePath??undefined,kind);
+          if(resolveRequest!==openRequest)return;
+          if(path){
+            let fragment=target.includes('#')?target.slice(target.indexOf('#')+1):'';
+            if(kind==='markdown')try{fragment=decodeURIComponent(fragment)}catch{}
+            await get().openFile(path,/\.pdf$/i.test(path)&&target.includes('#')?{pdfFragment:target.slice(target.indexOf('#')+1)}:/\.(md|markdown)$/i.test(path)?{noteFragment:fragment}:undefined);
+          }
           else if (isAttachmentTarget(target)||resolveCodeLanguage(target,get().codeFileViewer)!==null) {
             // FR-21: a picture/media/PDF target the vault does not hold is a broken
             // link, not a new note — creating `report.pdf` for a typo pollutes the vault.
@@ -902,11 +918,14 @@ export const useStore = create<AppState>()(
           } else {
             // Only append `.md` when the target has no extension at all — a target
             // like `Foo.canvas` must stay `Foo.canvas`, not become `Foo.canvas.md`.
-            const hasExt = /\.[^./]+$/.test(target);
-            const name=hasExt?target:`${target}.md`;
-            const directory=target.includes('/')?'':resolveNewNoteDirectory({sourcePath:get().activePath,preferences:(await api.vaultPreferences()).values});
+            let file=target.split('#')[0];if(kind==='markdown')try{file=decodeURIComponent(file)}catch{}
+            if(!file){get().notify('Section or block not found');return}
+            const hasExt = /\.[^./]+$/.test(file);
+            const name=hasExt?file:`${file}.md`;
+            const directory=file.includes('/')?'':resolveNewNoteDirectory({sourcePath:from??get().activePath,preferences:(await api.vaultPreferences()).values});
+            if(resolveRequest!==openRequest)return;
             const newPath=directory?`${directory}/${name}`:name;
-            await get().createNote(newPath, `# ${target.replace(/\.md$/, '')}\n`);
+            await get().createNote(newPath, `# ${file.replace(/\.md$/, '')}\n`);
           }
         } catch(error) {
           get().notify(error instanceof ApiError && error.status===503 ? 'The index is updating. Try opening this link again shortly.' : 'Could not resolve this link. Check the connection.');
@@ -1218,7 +1237,7 @@ export const useStore = create<AppState>()(
             });
           }
         }
-        if (splitPath && (TEXT_RE.test(splitPath)||resolveCodeLanguage(splitPath,get().codeFileViewer)!==null)) {
+        if (splitPath && (TEXT_RE.test(splitPath)||/\.pdf$/i.test(splitPath)||resolveCodeLanguage(splitPath,get().codeFileViewer)!==null)) {
           try {
             await get().openToSide(splitPath);
           } catch {

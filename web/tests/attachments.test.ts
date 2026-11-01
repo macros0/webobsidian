@@ -3,6 +3,13 @@ import { test } from 'node:test';
 import { displayChildren } from '../src/lib/attachments';
 import type { TreeNode } from '../src/lib/api';
 import { api } from '../src/lib/api';
+import {defaultVaultPreferences} from '../src/lib/vaultPreferences';
+
+test('default vault preferences hide unsupported files but explicit show-all keeps them',()=>{
+  const children:TreeNode[]=['note.md','photo.png','Thumbs.db','Thumbs.db@SynoEAStream','custom.unknown'].map(name=>({name,path:name,type:'file'}));
+  assert.deepEqual(displayChildren(children,true,defaultVaultPreferences.showUnsupportedFiles).map(n=>n.path),['note.md','photo.png']);
+  assert.deepEqual(displayChildren(children,true,true),children);
+});
 
 test('editor uploads send the source document instead of forcing a destination folder', async (t) => {
   let fields: FormData | undefined;

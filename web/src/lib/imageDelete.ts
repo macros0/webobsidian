@@ -3,7 +3,7 @@ import {useStore,draftScopeEpoch,loadDraftScope} from './store';
 import { confirmDialog } from './confirm';
 import type { ImageDeleteRequest } from './livePreview';
 
-export async function deleteEmbeddedImage({ target, view: v, remove }: ImageDeleteRequest): Promise<void> {
+export async function deleteEmbeddedImage({ target, kind,view: v, remove }: ImageDeleteRequest): Promise<void> {
   const initial = useStore.getState();
   const note = initial.activePath ?? '';
   const originalDoc = v.state.doc;const initialScopeEpoch=draftScopeEpoch();
@@ -16,7 +16,7 @@ export async function deleteEmbeddedImage({ target, view: v, remove }: ImageDele
   if (!mayEdit()) return;
   const scope=await loadDraftScope();if(!mayEdit())return;
   const { notify, loadTree } = useStore.getState();
-  const file = target ? await api.resolveAttachment(target, note).then((r) => r.path).catch(() => null) : null;
+  const file = target ? await (kind==='markdown'?api.resolve(target,note,'markdown'):api.resolveAttachment(target, note)).then((r) => r.path).catch(() => null) : null;
   if (!mayEdit()) return;
   if (!file) {
     remove(); // web URL / missing file → only the reference can go

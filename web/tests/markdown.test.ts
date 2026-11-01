@@ -41,8 +41,9 @@ test('a plain wikilink to a pdf stays a wikilink (it opens the file view)', asyn
   const html = await renderMarkdown('[[relats/raw/documents/report.pdf|the report]]', opts);
   assert.match(html, /<a class="internal-link" data-wikilink="relats\/raw\/documents\/report\.pdf"/);
 });
-test('a page fragment is dropped from the embed URL (the file API takes a path)', async () => {
+test('PDF viewer options stay outside the file API path', async () => {
   const html = await renderMarkdown('![[report.pdf#page=3]]', opts);
   assert.match(html, /data-href="report\.pdf"/);
-  assert.doesNotMatch(html, /page=3/);
+  assert.match(html, /href="\/api\/files\/content\?path=report\.pdf#page=3"/);
+  assert.doesNotMatch(html, /path=[^"]*%23/);
 });

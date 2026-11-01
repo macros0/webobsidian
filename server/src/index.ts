@@ -111,16 +111,17 @@ async function main() {
           frameSrc: [
             "'self'",
             'blob:',
-            'https://www.youtube.com',
-            'https://www.instagram.com',
-            'https://www.facebook.com',
+            // Authored web embeds are rebuilt with an opaque-origin sandbox.
+            // Other parent-page directives remain restricted to this app.
+            'https:',
+            'http:',
           ],
           baseUri: ["'self'"],
           formAction: ["'self'"],
           // The app frames its own content — `![[doc.pdf]]` and the PDF file view load
           // `/api/files/content` in an iframe (FR-21). 'none' blocks the browser's
           // viewer with "Framing … violates frame-ancestors 'none'" and leaves an empty
-          // pane; 'self' keeps every third party out, matching frame-src above.
+          // pane; 'self' prevents third-party sites from framing the app itself.
           frameAncestors: ["'self'"],
           upgradeInsecureRequests: null,
         },

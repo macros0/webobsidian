@@ -17,6 +17,34 @@ Object.defineProperty(globalThis, 'window', {
 const state = () => useStore.getState();
 const paths = () => state().tabs.map((t) => t.path);
 
+test('PDF links preserve fragments separately from canonical filenames across tab activation',async()=>{
+ mock.method(api,'resolve',async()=>({path:'Folder/report#one.pdf'}));
+ await state().openWikilink('report%23one.pdf#page=2&selection=0,0,0,6','markdown','Folder/Host.md');
+ assert.equal(state().activePath,'Folder/report#one.pdf');
+ assert.equal((state().tabs[0] as any).pdfFragment,'page=2&selection=0,0,0,6');
+ await state().openFile('other.pdf',{preview:false});await state().openFile('Folder/report#one.pdf');
+ assert.equal((state().tabs.find(t=>t.path==='Folder/report#one.pdf') as any).pdfFragment,'page=2&selection=0,0,0,6');
+ mock.method(api,'resolveAttachment',async()=>({path:'Folder/report#one.pdf'}));
+ await state().openAttachment('report.pdf#page=2&annotation=8R','Folder/Host.md');
+ assert.equal((state().tabs.find(t=>t.path==='Folder/report#one.pdf') as any).pdfFragment,'page=2&annotation=8R');
+});
+
+test('PDF can open and restore in a split without reading binary bytes as note text',async()=>{
+ const reads=(api.read as any).mock.callCount();
+ await state().openToSide('Folder/sample.pdf');
+ assert.equal(state().splitPath,'Folder/sample.pdf');assert.equal(state().splitContent,'');
+ assert.equal((api.read as any).mock.callCount(),reads);
+ await state().hydrate();assert.equal(state().splitPath,'Folder/sample.pdf');
+ state().closeSplit();assert.equal(state().splitPath,null);
+});
+
+test('PDF split navigation preserves a fragment through hydration and clears it on close',async()=>{
+ await (state().openToSide as any)('Folder/report#one.pdf','right',{pdfFragment:'page=2&annotation=8R'});
+ assert.equal((state() as any).splitPdfFragment,'page=2&annotation=8R');
+ await state().hydrate();assert.equal((state() as any).splitPdfFragment,'page=2&annotation=8R');
+ state().closeSplit();assert.equal((state() as any).splitPdfFragment,'');
+});
+
 test('code viewer reads without a writer, refuses edits and supports split and restore',async()=>{
  const read=mock.method(api,'readCode',async(path:string)=>({kind:'text' as const,path,content:'print(1)',highlightAllowed:true}));
  await state().openFile('a.py');assert.equal(state().codeFileResult?.kind,'text');
@@ -511,4 +539,37 @@ test('a resolved pdf link opens the file itself, not a new note', async () => {
   await state().openWikilink('report.pdf');
   assert.equal(writes.mock.calls.length, 0);
   assert.deepEqual(paths(), ['relats/raw/documents/report.pdf']);
+});
+
+test('a link in an embedded note resolves against its own source directory',async()=>{
+  useStore.setState({activePath:'Root/Host.md'});
+  const resolve=mock.method(api,'resolve',async(_target:string,from?:string)=>({path:from==='Lab/Parent.md'?'Lab/Target.md':'Root/Target.md'}));
+  await state().openWikilink('./Target.md','markdown','Lab/Parent.md');
+  assert.deepEqual(resolve.mock.calls[0].arguments,['./Target.md','Lab/Parent.md','markdown']);
+  assert.equal(state().activePath,'Lab/Target.md');
+});
+
+
+test('note links pass decoded fragments to a request scoped to the opened document',async()=>{
+ mock.method(api,'resolve',async()=>({path:'Folder/Target.md'}));
+ await state().openWikilink('Target#^item');
+ assert.equal((state() as any).noteNavigation?.path,'Folder/Target.md');assert.equal((state() as any).noteNavigation?.fragment,'^item');
+ const previous=(state() as any).noteNavigation;
+ await state().openWikilink('Target.md#Parent%23Section%2520','markdown');
+ assert.equal((state() as any).noteNavigation?.fragment,'Parent#Section%20');assert.notEqual((state() as any).noteNavigation,previous);
+ await state().openFile('Other.md');assert.equal((state() as any).noteNavigation,null);
+});
+
+
+test('unresolved note fragments never become part of a newly created filename',async()=>{
+ mock.method(api,'resolve',async()=>({path:null}));await state().openWikilink('Fresh#Section');
+ assert.equal((api.write as any).mock.calls[0].arguments[0],'Fresh.md');
+ const before=(api.write as any).mock.callCount();await state().openWikilink('#Missing');assert.equal((api.write as any).mock.callCount(),before);
+});
+
+
+test('a late note-link resolution cannot replace a newer explicit file opening',async()=>{
+ let finish!:(value:{path:string})=>void;mock.method(api,'resolve',()=>new Promise<{path:string}>(r=>{finish=r}));
+ const pending=state().openWikilink('Old#Section');await setImmediate();await state().openFile('New.md');finish({path:'Old.md'});await pending;
+ assert.equal(state().activePath,'New.md');assert.equal((state() as any).noteNavigation,null);
 });
