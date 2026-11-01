@@ -234,7 +234,7 @@ for (const view of ['openGraph', 'openTasks'] as const) {
   });
 }
 
-for (const path of ['debug.log', 'README']) {
+for (const path of ['debug.unsupported', 'README']) {
   test(`saving dirty unsupported ${path} reports failure and keeps the draft`, async () => {
     await state().openFile(path);
     state().setContent('keep this draft');

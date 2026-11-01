@@ -1,5 +1,21 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Canvas group interactions — 2026-11-01
+
+- [x] Reproduce a selected group intercepting pointer hit tests above contained cards.
+- [x] Keep selected groups in their background layer; browser regression verifies nested-group selection, text editing/commit, unchanged neighboring nodes and linked-file activation.
+- [x] Web build and isolated Linux smoke passed. Deployed `canvas-groups-0f3aace250de` to CT102; healthy container, public asset hashes and CSS rule verified, settings unchanged, backup retained.
+
+## Settings button deduplication — 2026-11-01
+
+- [x] Confirm both gears opened the same settings modal; remove the redundant vault-footer button. Web build and isolated Linux smoke passed. Deployed `settings-gear-4989bf024158` to CT102; healthy, public asset hashes verified, settings unchanged, backup retained.
+
+## Code file viewer — 2026-11-01
+
+- [x] Implement bounded text reading, read-only main/split views, settings, navigation and draft guards.
+- [x] Add routing, size/encoding, read-only state, request-race, rename and failed-save regression checks.
+- [x] Final verification and CT102 deployment completed: healthy `code-viewer-0a98842796cb`, public asset hashes verified, backup retained. Details in docs/superpowers/plans/2026-11-01-code-file-viewer.md.
+
 ## Ordinary URL rendering and clicks — 2026-11-01
 
 - [x] Reproduce automatic card conversion and non-clickable bare addresses in the real Live/Reading pipeline.

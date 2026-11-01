@@ -17,6 +17,49 @@ Object.defineProperty(globalThis, 'window', {
 const state = () => useStore.getState();
 const paths = () => state().tabs.map((t) => t.path);
 
+test('code viewer reads without a writer, refuses edits and supports split and restore',async()=>{
+ const read=mock.method(api,'readCode',async(path:string)=>({kind:'text' as const,path,content:'print(1)',highlightAllowed:true}));
+ await state().openFile('a.py');assert.equal(state().codeFileResult?.kind,'text');
+ state().setContent('bad');await state().save();assert.equal(state().dirty,false);assert.equal(state().content,'print(1)');
+ assert.equal((api.write as any).mock.callCount(),0);
+ await state().openToSide('a.py');assert.equal(state().splitCodeFileResult?.kind,'text');
+ await state().hydrate();assert.ok(read.mock.callCount()>=3);
+});
+
+test('late code reads cannot replace a newer tab',async()=>{
+ let finish!:(r:any)=>void;mock.method(api,'readCode',(path:string)=>path==='a.py'?new Promise(r=>{finish=r;}):Promise.resolve({kind:'text',path,content:'B',highlightAllowed:true}));
+ const a=state().openFile('a.py');await setImmediate();await state().openFile('b.py');finish({kind:'text',path:'a.py',content:'A',highlightAllowed:true});await a;
+ assert.equal(state().activePath,'b.py');assert.equal(state().content,'B');
+});
+
+test('renaming viewed code keeps both panes read only',async()=>{
+ mock.method(api,'readCode',async(path:string)=>({kind:'text' as const,path,content:'code',highlightAllowed:true}));
+ mock.method(api,'rename',async()=>({ok:true}));await state().openFile('a.py');await state().openToSide('a.py');await state().renamePath('a.py','b.py');
+ assert.equal(state().codeFileResult?.path,'b.py');assert.equal(state().splitCodeFileResult?.path,'b.py');state().setContent('bad');assert.equal(state().dirty,false);
+});
+
+test('code settings do not persist or hide text after a failed save',async()=>{
+ await state().openFile('a.md');state().setContent('local text');
+ mock.method(api,'write',async()=>{throw new Error('offline');});const put=mock.method(api,'putSettings',async()=>({}));
+ await assert.rejects(state().applyCodeFileViewerSettings({...state().codeFileViewer,enabled:false}),/offline/);
+ assert.equal(put.mock.callCount(),0);assert.equal(state().content,'local text');assert.equal(state().dirty,true);
+});
+
+test('a missing code wikilink never creates a markdown file',async()=>{
+ mock.method(api,'resolve',async()=>({path:null}));await state().openWikilink('missing.py');assert.equal((api.write as any).mock.callCount(),0);
+});
+
+test('closing a split or switching vault invalidates pending code reads',async()=>{
+ let finish!:(r:any)=>void;mock.method(api,'readCode',(path:string)=>new Promise(r=>{finish=r;}));
+ const opening=state().openToSide('a.py');state().closeSplit();finish({kind:'text',path:'a.py',content:'stale',highlightAllowed:true});await opening;assert.equal(state().splitPath,null);
+ const main=state().openFile('a.py');await setImmediate();resetDraftScope();finish({kind:'text',path:'a.py',content:'stale',highlightAllowed:true});await main;assert.equal(state().activePath,null);
+});
+
+test('removing support for a split file closes its preview instead of rendering markdown',async()=>{
+ mock.method(api,'readCode',async(path:string)=>({kind:'text' as const,path,content:'# literal code',highlightAllowed:true}));
+ await state().openToSide('a.py');useStore.setState({codeFileViewer:{...state().codeFileViewer,enabled:false}});await state().openToSide('a.py');assert.equal(state().splitPath,null);
+});
+
 beforeEach(() => {
   mock.timers.enable({ apis: ['setTimeout'] });
   resetDraftScope();

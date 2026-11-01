@@ -61,9 +61,10 @@ export default function App() {
     const treeReady=loadTree();
     // Deep link (/note/<path>) wins over the restored workspace's active note.
     const deepLink = initUrlSync();
-    const workspaceReady=useStore
+    const codeSettingsReady=api.getSettings().then(s=>{useStore.setState({codeFileViewer:s.ui.codeFileViewer??useStore.getInitialState().codeFileViewer});}).catch(()=>{useStore.setState({codeFileViewer:{...useStore.getInitialState().codeFileViewer,enabled:false}});useStore.getState().notify('Could not load code viewer settings. Reload to retry.',10000);});
+    const workspaceReady=codeSettingsReady.then(()=>useStore
       .getState()
-      .loadUiState(true) // restore workspace from server + open note(s)
+      .loadUiState(true)) // restore workspace from server + open note(s)
       .then(() => {
         if (deepLink && deepLink !== useStore.getState().activePath) {
           return useStore.getState().openFile(deepLink);

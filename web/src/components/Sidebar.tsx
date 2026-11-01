@@ -18,7 +18,6 @@ export default function Sidebar() {
   const newNote = useStore((s) => s.newNote);
   const newCanvas = useStore((s) => s.newCanvas);
   const newFolder = useStore((s) => s.newFolder);
-  const setSettings = useStore((s) => s.setSettings);
   const setTrash = useStore((s) => s.setTrash);
   const tree = useStore((s) => s.tree);
   const expanded = useStore((s) => s.expanded);
@@ -136,9 +135,6 @@ export default function Sidebar() {
           <Icon name="gem" size={15} /> {vaultName}
         </span>
         <span className="grow" />
-        <button title="Settings" onClick={() => setSettings(true)}>
-          <Icon name="settings" size={16} />
-        </button>
       </div>
       <div className="sidebar-resizer" title="Drag to resize" onPointerDown={onResizeDown} />
     </div>

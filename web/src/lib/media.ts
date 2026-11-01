@@ -1,3 +1,4 @@
+import {defaultCodeFileViewer,resolveCodeLanguage,type CodeFileViewerSettings} from './codeFiles';
 // Obsidian-parity media extension sets, shared across the Live Preview editor,
 // the Reading-view renderer (markdown.ts) and the direct file view (Workspace).
 // Mirrors the desktop app's image/audio/video extension groups so `![[x.mp4]]`
@@ -16,8 +17,8 @@ export const PDF_EXT_RE = /\.pdf$/i;
 export const DOWNLOAD_EXT_RE = /\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf|zip|7z|tar|gz|tgz|bz2|xz)$/i;
 
 /** Explicit WebObsidian registry; downloadable documents are supported too. */
-export function isSupportedVaultFile(path: string): boolean {
-  return /\.(md|markdown|canvas|txt|json|csv|css|js|ya?ml)$/i.test(path)
+export function isSupportedVaultFile(path: string, settings:CodeFileViewerSettings=defaultCodeFileViewer): boolean {
+  return resolveCodeLanguage(path,settings)!==null || /\.(md|markdown|canvas|txt|json|csv|css|js|ya?ml)$/i.test(path)
     || IMAGE_EXT_RE.test(path) || VIDEO_EXT_RE.test(path) || AUDIO_EXT_RE.test(path)
     || PDF_EXT_RE.test(path) || DOWNLOAD_EXT_RE.test(path);
 }

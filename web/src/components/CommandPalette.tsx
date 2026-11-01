@@ -32,6 +32,7 @@ function flatten(node: TreeNode | null): { path: string; title: string }[] {
 export default function CommandPalette() {
   const { values: preferences } = useVaultPreferences();
   const pluginRevision=usePluginRevision();
+  const codeSettings=useStore(s=>s.codeFileViewer);
   const open = useStore((s) => s.paletteOpen);
   const mode = useStore((s) => s.paletteMode);
   const setOpen = useStore((s) => s.setPalette);
@@ -112,7 +113,7 @@ export default function CommandPalette() {
     const isCmd = mode === 'commands' || q.startsWith('>');
     const lc = q.replace(/^>/, '').trim().toLowerCase();
     const fileItems: Cmd[] = files
-      .filter(f => preferences.showUnsupportedFiles || isSupportedVaultFile(f.path))
+      .filter(f => preferences.showUnsupportedFiles || isSupportedVaultFile(f.path,codeSettings))
       .filter((f) => !lc || f.title.toLowerCase().includes(lc) || f.path.toLowerCase().includes(lc))
       .sort((a,b) => Number(isUserIgnored(a.path,preferences.userIgnoreFilters)) - Number(isUserIgnored(b.path,preferences.userIgnoreFilters)))
       .slice(0, 40)
@@ -121,7 +122,7 @@ export default function CommandPalette() {
     if (isCmd) return cmdItems;
     if (mode === 'files') return fileItems;
     return [...cmdItems.slice(0, 3), ...fileItems];
-  }, [q, mode, files, commands, openFile, preferences]);
+  }, [q, mode, files, commands, openFile, preferences, codeSettings]);
 
   useEffect(() => setSel(0), [q, open]);
   useEffect(() => {

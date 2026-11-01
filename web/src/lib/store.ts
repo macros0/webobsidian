@@ -1,3 +1,5 @@
+import {defaultCodeFileViewer,resolveCodeLanguage,type CodeFileViewerSettings,type CodeFileReadResult} from './codeFiles';
+import {listDrafts} from './drafts/storage';
 import {resolveNewNoteDirectory} from './vaultLinks';
 import {resetVaultPreferences} from './vaultPreferences';
 import {confirmDialog} from './confirm';
@@ -17,13 +19,14 @@ export const documentSessions=new Map<string,DocumentSession>();
 export let currentDraftScope='';
 let draftScopeRequest:Promise<string>|null=null;
 let scopeEpoch=0;
+let splitCodeRequest=0;
 let draftSessionSequence=0;
 export function draftScopeEpoch(){return scopeEpoch;}
 export function isDraftScopeCurrent(scope:string,epoch:number){return scope===currentDraftScope&&epoch===scopeEpoch;}
 export function assertDraftScope(scope:string,epoch:number){if(!isDraftScopeCurrent(scope,epoch))throw new Error('Draft scope changed. Reopen recovery in the current vault.');}
 export async function loadDraftScope(){const epoch=scopeEpoch;if(!draftScopeRequest)draftScopeRequest=api.draftScope().then(r=>{if(epoch!==scopeEpoch)throw new Error('Draft scope changed');currentDraftScope=r.scopeId;return r.scopeId;}).catch(error=>{if(epoch===scopeEpoch)draftScopeRequest=null;throw error;});return draftScopeRequest;}
-export function resetDraftScope(){resetVaultPreferences();scopeEpoch++;openRequest++;for(const s of documentSessions.values())s.dispose();documentSessions.clear();currentDraftScope='';draftScopeRequest=null;if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-scope-change'));}
-export function acceptResolvedDocument(path:string,content:string,version:string){const s=documentSessions.get(path);if(s){s.acceptServerResult(content,version);}else{const scopeId=currentDraftScope;documentSessions.set(path,new DocumentSession({scopeId,path,writerId:CLIENT_ID+':'+(++draftSessionSequence),content,version},{put:putDraft,remove:deleteDraftIfRevision,write:(p,t,v)=>api.write(p,t,v,scopeId)},refreshSaveStatus));}useStore.setState({content,dirty:false});}
+export function resetDraftScope(){resetVaultPreferences();scopeEpoch++;openRequest++;splitCodeRequest++;useStore.setState({codeFileResult:null,splitCodeFileResult:null,codeEditorOverride:null});for(const s of documentSessions.values())s.dispose();documentSessions.clear();currentDraftScope='';draftScopeRequest=null;if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-scope-change'));}
+export function acceptResolvedDocument(path:string,content:string,version:string){const s=documentSessions.get(path);if(s){s.acceptServerResult(content,version);}else{const scopeId=currentDraftScope;documentSessions.set(path,new DocumentSession({scopeId,path,writerId:CLIENT_ID+':'+(++draftSessionSequence),content,version},{put:putDraft,remove:deleteDraftIfRevision,write:(p,t,v)=>api.write(p,t,v,scopeId)},refreshSaveStatus));}useStore.setState({content,dirty:false,codeFileResult:null,codeEditorOverride:path});}
 function refreshSaveStatus(){if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-status'));}
 export type ViewMode = 'live' | 'source' | 'reading';
 /** Board | Timeline mode of the Tasks view (FR-16). Part of the URL, so a
@@ -114,6 +117,11 @@ export interface ContextMenuState {
 }
 
 interface AppState {
+  codeFileViewer:CodeFileViewerSettings;
+  codeFileResult:CodeFileReadResult|null;
+  splitCodeFileResult:CodeFileReadResult|null;
+  codeEditorOverride:string|null;
+  applyCodeFileViewerSettings:(next:CodeFileViewerSettings)=>Promise<void>;
   authed: boolean;
   setAuthed: (v: boolean) => void;
   mustChangePassword: boolean;
@@ -625,19 +633,32 @@ export const useStore = create<AppState>()(
       showAttachmentFolders: false,
       setShowAttachmentFolders: (showAttachmentFolders) => set({ showAttachmentFolders }),
 
+      codeFileViewer:defaultCodeFileViewer,
+      codeFileResult:null,splitCodeFileResult:null,codeEditorOverride:null,
+      applyCodeFileViewerSettings:async(next)=>{
+        if(get().dirty)await get().save();
+        await api.putSettings({ui:{codeFileViewer:next}});
+        set({codeFileViewer:next});
+        const {activePath,splitPath}=get();if(activePath)await get().openFile(activePath,{preview:false});if(splitPath)await get().openToSide(splitPath);
+      },
       splitPath: null,
       splitContent: '',
       splitDirection: 'right',
       openToSide: async (path, direction) => {
-        if (!TEXT_RE.test(path)) return;
-        const r = await api.read(path);
+        const request=++splitCodeRequest;const epoch=scopeEpoch;
+        const code=resolveCodeLanguage(path,get().codeFileViewer)!==null;
+        if(!code&&!TEXT_RE.test(path)){set({splitPath:null,splitContent:'',splitCodeFileResult:null});return;}
+        const result=code?await api.readCode(path):null;
+        const r=result?{content:result.kind==='text'?result.content:''}:await api.read(path);
+        if(request!==splitCodeRequest||epoch!==scopeEpoch)return;
+        set({splitCodeFileResult:result});
         set((s) => ({
           splitPath: path,
           splitContent: typeof r === 'string' ? r : r.content,
           splitDirection: direction ?? s.splitDirection,
         }));
       },
-      closeSplit: () => set({ splitPath: null, splitContent: '' }),
+      closeSplit: () => {splitCodeRequest++;set({splitPath:null,splitContent:'',splitCodeFileResult:null});},
 
       recent: [],
       removeRecent: (path) => set((s) => ({ recent: s.recent.filter((p) => p !== path) })),
@@ -796,13 +817,22 @@ export const useStore = create<AppState>()(
         // A folder path (e.g. deep-link /note/<folder>) opens a folder content
         // view — never read it as a note nor pollute Recent with it.
         const isFolder = findNode(get().tree, path)?.type === 'folder';
+        let codeFileResult:CodeFileReadResult|null=null;
+        let codeEditorOverride:string|null=null;
+        let isCode=!isFolder&&resolveCodeLanguage(path,get().codeFileViewer)!==null;
+        if(isCode&&TEXT_RE.test(path)&&typeof indexedDB!=='undefined'){
+          const scope=await loadDraftScope();
+          const drafts=await listDrafts(scope);
+          if(drafts.some(d=>d.path===path)){isCode=false;codeEditorOverride=path;}
+        }
         let content = '';
+        if(isCode){codeFileResult=await api.readCode(path);content=codeFileResult.kind==='text'?codeFileResult.content:'';}
         let version: string | undefined;
         let documentScope='';
         let locked = false;
         let lockReason: string | null = null;
         let unlockMode: 'off' | 'confirm' | 'password' = 'confirm';
-        if (!isFolder && TEXT_RE.test(path)) {
+        if (!isFolder && !isCode && TEXT_RE.test(path)) {
           documentScope=await loadDraftScope();
           if(request!==openRequest)return;
           const r = await api.read(path,documentScope||undefined);
@@ -818,7 +848,7 @@ export const useStore = create<AppState>()(
         // The user may have edited the previous note while this read was pending.
         if (get().dirty) await get().save();
         if (request !== openRequest) return;
-        if(!isFolder&&TEXT_RE.test(path)){
+        if(!isFolder&&!isCode&&TEXT_RE.test(path)){
           const previous=documentSessions.get(path);previous?.dispose();
           const scopeId=documentScope;
           if(request!==openRequest)return;
@@ -842,7 +872,7 @@ export const useStore = create<AppState>()(
             tabs = replace < 0 ? [...tabs, tab] : tabs.map((t, i) => i === replace ? tab : t);
           }
           const recent = isFolder ? s.recent : [path, ...s.recent.filter((p) => p !== path)].slice(0, 20);
-          return { tabs, activePath: path, content, locked, lockReason, unlockMode, dirty: false, recent, ...pushHistory(s, path) };
+          return { tabs, activePath: path, content, codeFileResult, codeEditorOverride, locked, lockReason, unlockMode, dirty: false, recent, ...pushHistory(s, path) };
         });
         refreshSaveStatus();
       },
@@ -855,7 +885,7 @@ export const useStore = create<AppState>()(
         try {
           const { path } = await api.resolve(target,get().activePath??undefined,kind);
           if (path) await get().openFile(path);
-          else if (isAttachmentTarget(target)) {
+          else if (isAttachmentTarget(target)||resolveCodeLanguage(target,get().codeFileViewer)!==null) {
             // FR-21: a picture/media/PDF target the vault does not hold is a broken
             // link, not a new note — creating `report.pdf` for a typo pollutes the vault.
             get().notify(`File not found: ${target}`);
@@ -917,6 +947,7 @@ export const useStore = create<AppState>()(
         while(get().dirty)await saveActiveDraft();
         for(const session of documentSessions.values())if(session.content!==session.baseContent)await session.save();
         const revisions=new Map([...documentSessions].map(([p,s])=>[p,s.revision]));
+        splitCodeRequest++;
         const renameResult=await api.rename(from, to);
         const remap = (path: string) => withinPath(path, from) ? `${to}${path.slice(from.length)}` : path;
         for(const [name,session] of documentSessions){if(withinPath(name,from)){documentSessions.delete(name);session.key.path=remap(name);documentSessions.set(session.key.path,session);}}
@@ -927,6 +958,9 @@ export const useStore = create<AppState>()(
             const path = remap(tab.path);
             return path === tab.path ? tab : { ...tab, path, title: path.split('/').pop() ?? path };
           }),
+          codeFileResult:s.codeFileResult?{...s.codeFileResult,path:remap(s.codeFileResult.path)}:null,
+          splitCodeFileResult:s.splitCodeFileResult?{...s.splitCodeFileResult,path:remap(s.splitCodeFileResult.path)}:null,
+          codeEditorOverride:remapNullable(s.codeEditorOverride),
           activePath: remapNullable(s.activePath),
           splitPath: remapNullable(s.splitPath),
           history: s.history.map(remap), recent: s.recent.map(remap), bookmarks: s.bookmarks.map(remap),
@@ -937,10 +971,10 @@ export const useStore = create<AppState>()(
           clipboard: s.clipboard ? { ...s.clipboard, path: remap(s.clipboard.path) } : null,
         }));
         for(const changed of renameResult?.changedPaths??[]){const session=documentSessions.get(changed);if(!session)continue;const old=[...revisions.keys()].find(p=>remap(p)===changed);if(old===undefined||session.revision!==revisions.get(old)){get().notify('Links changed on the server. Unsaved local text was kept; review before saving.');continue;}const current=await api.read(changed);if(session.revision!==revisions.get(old))continue;if(typeof current.content==='string'&&current.version){session.acceptServerResult(current.content,current.version);if(get().activePath===changed)set({content:current.content,dirty:false});if(get().splitPath===changed)set({splitContent:current.content});}}
-      }),
+      }).then(async()=>{const {activePath,splitPath}=get();if(activePath)await get().openFile(activePath,{preview:false});if(splitPath)await get().openToSide(splitPath);}),
 
       deletePath: (path, permanent,confirmedMode) => mutateFiles(async () => {
-        ++openRequest;
+        ++openRequest;splitCodeRequest++;
         // Requests already sent must finish before deletion; queued autosaves wait for us.
         await Promise.all([...saves].filter(([file]) => withinPath(file, path)).map(([, pending]) => pending.catch(() => {})));
         const result = await api.remove(path, permanent,confirmedMode);
@@ -972,6 +1006,7 @@ export const useStore = create<AppState>()(
       },
 
       setContent: (c) => {
+        if(get().codeFileResult?.path===get().activePath)return;
         editRevision++;
         const path=get().activePath;if(path)documentSessions.get(path)?.edit(c);
         set((s) => ({
@@ -1162,7 +1197,7 @@ export const useStore = create<AppState>()(
         // Active tab + split pane content aren't persisted (only the paths) —
         // re-read them from the vault after a reload. Drop tabs whose file is gone.
         const { activePath, splitPath, tabs } = get();
-        if (activePath && TEXT_RE.test(activePath)) {
+        if (activePath && (TEXT_RE.test(activePath)||resolveCodeLanguage(activePath,get().codeFileViewer)!==null)) {
           try {
             await get().openFile(activePath);
           } catch {
@@ -1173,10 +1208,9 @@ export const useStore = create<AppState>()(
             });
           }
         }
-        if (splitPath && TEXT_RE.test(splitPath)) {
+        if (splitPath && (TEXT_RE.test(splitPath)||resolveCodeLanguage(splitPath,get().codeFileViewer)!==null)) {
           try {
-            const r = await api.read(splitPath);
-            set({ splitContent: typeof r === 'string' ? r : r.content });
+            await get().openToSide(splitPath);
           } catch {
             set({ splitPath: null, splitContent: '' });
           }

@@ -1,5 +1,18 @@
 # Changelog
 
+## Canvas group interactions — 2026-11-01
+
+- Keep selected groups behind contained cards so nested text remains editable and linked files remain openable. Add a browser regression for hit testing, editing, unchanged neighboring nodes and file opening.
+
+## Settings button deduplication — 2026-11-01
+
+- Remove the duplicate Settings button beside the vault name; retain the ribbon Settings control on desktop and mobile.
+
+## Code file viewer — 2026-11-01
+
+- Add read-only CodeMirror code views, including split panes, theme-aware highlighting, search, copy and configurable extension mappings.
+- Bound preview reads to 10 MiB and reject binary/invalid UTF-8 with a download fallback; preserve local drafts and normal note saving.
+
 ## Ordinary URL rendering and clicks — 2026-11-01
 
 - Keep ordinary standalone HTTP(S) addresses as compact text links in Live, Reading and split preview, without fetching metadata or replacing them with rich cards.

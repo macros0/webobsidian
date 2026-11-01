@@ -1,3 +1,4 @@
+import {defaultCodeFileViewer,type CodeFileViewerSettings} from './codeFiles';
 import type { TreeNode } from './api';
 import { isSupportedVaultFile } from './media';
 
@@ -27,9 +28,9 @@ export function isHiddenAttachmentFolder(node: TreeNode): boolean {
 }
 
 /** Children to display: attachment folders are dropped unless the user chose to show them. */
-export function displayChildren(children: TreeNode[], showAttachmentFolders: boolean, showUnsupportedFiles = true): TreeNode[] {
+export function displayChildren(children: TreeNode[], showAttachmentFolders: boolean, showUnsupportedFiles = true, codeSettings:CodeFileViewerSettings=defaultCodeFileViewer): TreeNode[] {
   return children.filter(c => (showAttachmentFolders || !isHiddenAttachmentFolder(c))
-    && (showUnsupportedFiles || c.type === 'folder' || isSupportedVaultFile(c.path)));
+    && (showUnsupportedFiles || c.type === 'folder' || isSupportedVaultFile(c.path,codeSettings)));
 }
 
 /** True if `path` lies inside a folder that is currently hidden by the option. */
