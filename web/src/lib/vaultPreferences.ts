@@ -8,7 +8,7 @@ export interface VaultPreferences {
 }
 export type PreferenceSource='obsidian'|'webobsidian'|'default';
 export interface VaultPreferencesResult {values:VaultPreferences;sources:Record<keyof VaultPreferences,PreferenceSource>;warnings:string[];vaultPath:string;blocked?:{attachmentUpload?:string}}
-export const defaultVaultPreferences:VaultPreferences={attachmentFolderPath:'./attachments',alwaysUpdateLinks:false,newFileLocation:'root',newFileFolderPath:'',useMarkdownLinks:false,newLinkFormat:'shortest',userIgnoreFilters:[],trashOption:'local',promptDelete:true,deleteUnlinkedAttachments:'ask',showUnsupportedFiles:true,readableLineLength:true,mobileToolbarCommands:[],deleteMode:'trash'};
+export const defaultVaultPreferences:VaultPreferences={attachmentFolderPath:'./attachments',alwaysUpdateLinks:false,newFileLocation:'root',newFileFolderPath:'',useMarkdownLinks:false,newLinkFormat:'shortest',userIgnoreFilters:[],trashOption:'local',promptDelete:true,deleteUnlinkedAttachments:'ask',showUnsupportedFiles:false,readableLineLength:true,mobileToolbarCommands:[],deleteMode:'trash'};
 function empty(vaultPath=''):VaultPreferencesResult{return {values:structuredClone(defaultVaultPreferences),sources:Object.fromEntries(Object.keys(defaultVaultPreferences).map(k=>[k,'default'])) as VaultPreferencesResult['sources'],warnings:[],vaultPath};}
 let state:VaultPreferencesResult&{loading:boolean;error?:string}={...empty(),loading:true};
 let epoch=0,request=0;

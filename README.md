@@ -646,3 +646,11 @@ The formatting toolbar measures the editor container, including changes caused b
 Edits to Markdown, text and Canvas documents are journaled in browser IndexedDB. **Saved locally** means the local transaction completed; **Saved on server** means the server confirmed that revision. Open **Local drafts** to recover/compare an interrupted edit. Drafts are isolated by installation, vault and browser tab, and retained until confirmed saved or explicitly discarded. Browser storage may be unavailable, cleared or evicted; local storage errors are shown. This does not provide a complete offline application.
 
 Normal editor saves include the base content version. A conflict preserves local text and opens an editable comparison, with a separate copy path available. If the server changes during review, review the refreshed comparison before saving again. Canvas uses whole-document selection and validates JSON. This UI resolves content-version conflicts; Git merge conflicts remain a separate future feature.
+
+### Code file viewer
+
+Open Python, TypeScript, shell scripts and other mapped text formats in a read-only CodeMirror viewer, including split panes. The viewer provides theme-aware highlighting, optional line numbers, Find and Copy. Configure it in **Settings → Code files**; use `plain` to disable highlighting for an extension.
+
+Mapped existing formats such as `.js`, `.json`, `.yaml`, `.txt` and `.csv` now open read-only. Disable the viewer or remove their mappings to restore the existing text editor. Local drafts remain recoverable through the existing editor. The built-in viewer is independent of Obsidian community plugins.
+
+Preview supports UTF-8 (including BOM), up to 10 MiB. Highlighting is disabled above 1,000,000 UTF-16 code units. Binary, invalid UTF-8 and larger files offer a download. Markdown, Canvas, media and binary attachments keep their own viewers. Hidden-file visibility is unchanged; `Dockerfile` is recognized by name. Settings apply to this WebObsidian installation and do not modify desktop plugin settings.

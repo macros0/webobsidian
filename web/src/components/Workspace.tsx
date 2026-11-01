@@ -1,6 +1,9 @@
 import { useStore, GRAPH_PATH, TASKS_PATH, isViewPath, type ContextMenuItem } from '../lib/store';
 import { api } from '../lib/api';
 import Editor from './Editor';
+import CodeFileView from './CodeFileView';
+import PdfFileView from './PdfFileView';
+import {resolveCodeLanguage} from '../lib/codeFiles';
 import Preview from './Preview';
 import GraphView from './GraphView';
 import CanvasView from './CanvasView';
@@ -21,7 +24,15 @@ import { fileViewKind, extLabel } from '../lib/media';
 
 function EditorPane() {
   const activePath = useStore((s) => s.activePath);
+  const pdfFragment=useStore(s=>s.tabs.find(t=>t.path===s.activePath)?.pdfFragment??'');
   const viewMode = useStore((s) => s.viewMode);
+  const codeSettings=useStore(s=>s.codeFileViewer);
+  const codeResult=useStore(s=>s.codeFileResult);
+  const override=useStore(s=>s.codeEditorOverride);
+  const language=activePath?resolveCodeLanguage(activePath,codeSettings):null;
+  if(activePath&&language&&override!==activePath&&codeResult?.path!==activePath)return <div className="attachment-card">Loading code…</div>;
+  if(activePath&&language&&override!==activePath&&codeResult?.path===activePath)return <CodeFileView path={activePath} result={codeResult} language={language} lineNumbers={codeSettings.lineNumbers}/>;
+  if(activePath&&!language&&!/\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i.test(activePath)&&fileViewKind(activePath)==='text')return <div className="attachment-card"><a href={api.downloadUrl(activePath)}>Download</a></div>;
   const kind = activePath ? fileViewKind(activePath) : 'text';
 
   if (activePath && kind === 'canvas') {
@@ -50,15 +61,7 @@ function EditorPane() {
     );
   }
   if (activePath && kind === 'pdf') {
-    // FR-21: a PDF has no text body to edit, so it opens in the browser's own
-    // viewer instead of an empty markdown pane. Same-origin, so the app's CSP
-    // (`frame-src 'self'`) already allows the frame.
-    const name = activePath.split('/').pop() ?? activePath;
-    return (
-      <div className="pdf-view">
-        <iframe className="pdf-fileview" src={api.rawUrl(activePath)} title={name} />
-      </div>
-    );
+    return <PdfFileView path={activePath} fragment={pdfFragment}/>;
   }
   if (activePath && kind === 'attachment') {
     // FR-22: no viewer exists for this type, and the editor would render its
@@ -103,7 +106,11 @@ export default function Workspace() {
   const toggleBookmark = useStore((s) => s.toggleBookmark);
   const openToSide = useStore((s) => s.openToSide);
   const splitPath = useStore((s) => s.splitPath);
+  const splitPdfFragment=useStore(s=>s.splitPdfFragment);
   const splitContent = useStore((s) => s.splitContent);
+  const codeSettings=useStore(s=>s.codeFileViewer);
+  const splitCodeResult=useStore(s=>s.splitCodeFileResult);
+  const splitLanguage=splitPath?resolveCodeLanguage(splitPath,codeSettings):null;
   const closeSplit = useStore((s) => s.closeSplit);
   const content = useStore((s) => s.content);
   const setContent = useStore((s) => s.setContent);
@@ -132,7 +139,7 @@ export default function Workspace() {
 
   const isMd = activePath ? /\.(md|markdown)$/i.test(activePath) : false;
   const isShareable = activePath ? /\.(md|markdown|canvas)$/i.test(activePath) : false;
-  const canSplit = activePath ? /\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i.test(activePath) : false;
+  const canSplit = activePath ? resolveCodeLanguage(activePath,codeSettings)!==null || /\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i.test(activePath) : false;
 
   // Obsidian's "Add file property": focus a new property-key field in the
   // Properties widget with the key suggester open (NOT a text prompt). The
@@ -504,7 +511,7 @@ export default function Workspace() {
                 <Icon name="x" size={16} />
               </button>
             </div>
-            <Preview source={splitContent} />
+            {/\.pdf$/i.test(splitPath)?<PdfFileView path={splitPath} fragment={splitPdfFragment}/>:splitLanguage?(splitCodeResult?.path===splitPath?<CodeFileView pane="split" path={splitPath} result={splitCodeResult} language={splitLanguage} lineNumbers={codeSettings.lineNumbers}/>:<div className="attachment-card">Loading code…</div>):/\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i.test(splitPath)?<Preview source={splitContent}/>:<div className="attachment-card"><a href={api.downloadUrl(splitPath)}>Download</a></div>}
           </div>
         )}
       </div>

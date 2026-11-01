@@ -27,7 +27,8 @@ export default function FolderView({ path }: { path: string }) {
 
   const node = findNode(tree, path);
   const showAttachmentFolders = useStore((s) => s.showAttachmentFolders);
-  const children = displayChildren(node?.children ?? [], showAttachmentFolders, preferences.showUnsupportedFiles);
+  const codeSettings=useStore(s=>s.codeFileViewer);
+  const children = displayChildren(node?.children ?? [], showAttachmentFolders, preferences.showUnsupportedFiles, codeSettings);
   const folders = children.filter((c) => c.type === 'folder');
   const files = children.filter((c) => c.type === 'file');
   const ordered = [...folders, ...files].sort((a, b) =>

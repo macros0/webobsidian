@@ -1,5 +1,5 @@
 import { protectMarkdown, stripObsidianComments } from './markdownContext.js';
-import { frontmatterHtml, renderMarkdownBody } from './markdownRendering.js';
+import {renderMarkdown,type RenderOpts} from './markdownTransclusion.js';
 import { calloutIconSvg } from './markdownCallouts.js';
 export const escapeHtml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -24,8 +24,11 @@ const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/;
 
 
 /** Public rendering uses the same dialect and HTML policy as the browser. */
-export async function renderNoteHtml(src: string, rawUrl: (p: string) => string, options: { strictLineBreaks?: boolean } = {}): Promise<string> {
-  const html = frontmatterHtml(src) + renderMarkdownBody(src, rawUrl, options.strictLineBreaks);
+export async function renderNoteHtml(src: string, rawUrl: RenderOpts['rawUrl'], options: Omit<RenderOpts,'rawUrl'> = {}): Promise<string> {
+  const html = await renderMarkdown(src,{...options,rawUrl});
+  return decorateNoteHtml(html);
+}
+export function decorateNoteHtml(html:string):string{
   return html.replace(/(<span class="callout-icon" data-callout-icon="([\w-]+)">)<\/span>/g,
     (_all, start: string, slot: string) => `${start}${calloutIconSvg(slot)}</span>`);
 }

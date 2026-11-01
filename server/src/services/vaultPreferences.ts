@@ -14,7 +14,7 @@ export type PreferenceSource = 'obsidian'|'webobsidian'|'default';
 export interface VaultPreferencesResult {values:VaultPreferences;sources:Record<keyof VaultPreferences,PreferenceSource>;warnings:string[];vaultPath:string;blocked?:{attachmentUpload?:string}}
 export const defaultVaultPreferences:VaultPreferences = {
  attachmentFolderPath:'./attachments',alwaysUpdateLinks:false,newFileLocation:'root',newFileFolderPath:'',useMarkdownLinks:false,newLinkFormat:'shortest',
- userIgnoreFilters:[],trashOption:'local',promptDelete:true,deleteUnlinkedAttachments:'ask',showUnsupportedFiles:true,readableLineLength:true,mobileToolbarCommands:[],deleteMode:'trash',
+ userIgnoreFilters:[],trashOption:'local',promptDelete:true,deleteUnlinkedAttachments:'ask',showUnsupportedFiles:false,readableLineLength:true,mobileToolbarCommands:[],deleteMode:'trash',
 };
 
 async function readAppSettings(vaultPath:string):Promise<{raw:Record<string,unknown>;exists:boolean}>{

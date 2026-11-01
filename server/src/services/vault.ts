@@ -230,6 +230,18 @@ export async function readFileText(rel: string): Promise<string> {
   return fs.readFile(abs, 'utf8');
 }
 
+/** Refuse oversized note embeds before allocation; cap reads if the file grows. */
+export async function readFileTextBounded(rel:string,maxBytes:number):Promise<string|null>{
+  if(!Number.isSafeInteger(maxBytes)||maxBytes<0)throw new RangeError('Invalid text read limit');
+  const handle=await fs.open(await resolveInVault(rel),'r');
+  try{
+    const stat=await handle.stat();if(!stat.isFile()||stat.size>maxBytes)return null;
+    const buffer=Buffer.alloc(maxBytes+1);let length=0;
+    while(length<buffer.length){const {bytesRead}=await handle.read(buffer,length,buffer.length-length,null);if(!bytesRead)break;length+=bytesRead}
+    return length>maxBytes?null:buffer.toString('utf8',0,length);
+  }finally{await handle.close()}
+}
+
 export async function readFileBuffer(rel: string): Promise<Buffer> {
   const abs = await resolveInVault(rel);
   return fs.readFile(abs);

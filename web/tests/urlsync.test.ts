@@ -58,17 +58,13 @@ test('the store default is the board, and setTasksMode switches it', () => {
 // enough to exercise this, since initUrlSync only touches window.location/history.
 test('store→URL sync does not clobber an existing query string once the pathname already matches', () => {
   const win = {
-    location: { pathname: '/tasks', search: '?mode=board' },
+    location: { pathname: '/tasks', search: '?mode=board',hash:'' },
     history: {
       replaceState: (_state: unknown, _title: string, url: string) => {
-        const [p, q] = url.split('?');
-        win.location.pathname = p;
-        win.location.search = q ? `?${q}` : '';
+        const parsed=new URL(url,'http://fixture');win.location.pathname=parsed.pathname;win.location.search=parsed.search;win.location.hash=parsed.hash;
       },
       pushState: (_state: unknown, _title: string, url: string) => {
-        const [p, q] = url.split('?');
-        win.location.pathname = p;
-        win.location.search = q ? `?${q}` : '';
+        const parsed=new URL(url,'http://fixture');win.location.pathname=parsed.pathname;win.location.search=parsed.search;win.location.hash=parsed.hash;
       },
     },
     addEventListener: () => {},
@@ -81,4 +77,7 @@ test('store→URL sync does not clobber an existing query string once the pathna
 
   assert.equal(win.location.pathname, '/tasks');
   assert.equal(win.location.search, '?mode=board'); // untouched by the early return
+  useStore.setState({activePath:'Folder/report#one.pdf',tabs:[{path:'Folder/report#one.pdf',title:'PDF',pdfFragment:'page=2&annotation=8R'}]});
+  assert.equal(win.location.pathname,'/note/Folder/report%23one.pdf');assert.equal(win.location.hash,'#page=2&annotation=8R');
+  useStore.setState({tabs:[{path:'Folder/report#one.pdf',title:'PDF',pdfFragment:'page=1&selection=0,0,0,5'}]});assert.equal(win.location.hash,'#page=1&selection=0,0,0,5');
 });

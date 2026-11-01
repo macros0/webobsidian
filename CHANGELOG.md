@@ -1,5 +1,26 @@
 # Changelog
 
+## Native embed compatibility and public readers — 2026-11-01
+
+- Match explorer filtering, filename titles, ordered tasks and native checkbox/strikethrough behavior.
+- Add a shared PDF.js viewer with scoped styles, native-like menus, source/file actions, fragment highlighting and responsive embed geometry.
+- Unify Wiki/Markdown note, image, media and Canvas embeds; preserve block formatting and reveal note fragments across views, browser reload and history.
+- Render independently published nested notes and Canvas file cards with visitor-specific access checks, scoped asset URLs and bounded reads.
+- Isolate authored web frames with opaque-origin sandboxing; add synthetic native captures and real browser regressions. Bases remain excluded.
+
+## Canvas group interactions — 2026-11-01
+
+- Keep selected groups behind contained cards so nested text remains editable and linked files remain openable. Add a browser regression for hit testing, editing, unchanged neighboring nodes and file opening.
+
+## Settings button deduplication — 2026-11-01
+
+- Remove the duplicate Settings button beside the vault name; retain the ribbon Settings control on desktop and mobile.
+
+## Code file viewer — 2026-11-01
+
+- Add read-only CodeMirror code views, including split panes, theme-aware highlighting, search, copy and configurable extension mappings.
+- Bound preview reads to 10 MiB and reject binary/invalid UTF-8 with a download fallback; preserve local drafts and normal note saving.
+
 ## Ordinary URL rendering and clicks — 2026-11-01
 
 - Keep ordinary standalone HTTP(S) addresses as compact text links in Live, Reading and split preview, without fetching metadata or replacing them with rich cards.

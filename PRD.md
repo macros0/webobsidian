@@ -1288,3 +1288,18 @@ Viewport geometry is shared across formatting/recovery UI. Actual browser zoom 1
 ### Remote MCP transport (2026-10-30)
 
 Optional `/mcp` Streamable HTTP, disabled by default, alongside unchanged stdio. Ten identical tools, request-scoped key/scopes, common operations and version conflicts. See [remote MCP contract](docs/superpowers/specs/2026-10-30-remote-mcp-design.md) and [operator/Perplexity guide](docs/MCP_REMOTE.md). Live Perplexity compatibility requires deployment acceptance.
+
+### Built-in code file viewer (2026-11-01)
+
+Mapped source/text files open in a read-only CodeMirror view with syntax highlighting, line numbers, search and copy in main and split panes. Settings → Code files manages extension/language mappings. UTF-8 only; preview limit 10 MiB, highlighting limit 1,000,000 UTF-16 code units. Code files are never executed or indexed as Markdown notes. Existing mapped text formats become read-only while enabled; disabling/removing mappings restores the legacy editor. Draft recovery and failed saves must preserve local text.
+
+
+### Native embeds and fragment compatibility — FR-2 / FR-10 / FR-21 (2026-11-01)
+
+- Preserve ordered task numbers, native checkbox states/strikethrough, literal filename titles and vault-controlled unsupported-file visibility. Bases behavior remains outside this compatibility batch.
+- Use one scoped PDF.js reader for note embeds, whole-file/split views and public pages. Native-like controls include sidebar/outline, zoom/spreads/theme, file actions, source selection, text/annotation/offset fragments and bounded viewer geometry; browser-inapplicable OS commands stay unavailable.
+- Wiki and standard Markdown embeds share note/heading/block selection and source-relative paths. Preserve task/quote/callout structure, media controls, image actions and Canvas previews. Opening a note source reveals the requested fragment without rewriting source; browser reload/history retain the target.
+- Public parents never grant access to private child note bodies or their descendants. Each child requires its own enabled, visitor-unlocked publication; its assets retain that publication's scope. Public Canvas file/text attachments use explicit allowlists. Nested body reads are request-bounded to 64 attempts and 2 MiB, with permission and size checks before allocation.
+- Authored HTTP(S) frames are rebuilt after sanitization as opaque-origin sandboxed frames; they cannot access parent DOM/storage/cookies or navigate the parent. Browser embedding/mixed-content restrictions remain in force.
+
+Measured native evidence, regression coverage and remaining limits: `docs/embed-controls-audit-2026-11-01.md`.

@@ -1,3 +1,5 @@
+import {defaultCodeFileViewer,resolveCodeLanguage,type CodeFileViewerSettings,type CodeFileReadResult} from './codeFiles';
+import {listDrafts} from './drafts/storage';
 import {resolveNewNoteDirectory} from './vaultLinks';
 import {resetVaultPreferences} from './vaultPreferences';
 import {confirmDialog} from './confirm';
@@ -17,13 +19,14 @@ export const documentSessions=new Map<string,DocumentSession>();
 export let currentDraftScope='';
 let draftScopeRequest:Promise<string>|null=null;
 let scopeEpoch=0;
+let splitCodeRequest=0;
 let draftSessionSequence=0;
 export function draftScopeEpoch(){return scopeEpoch;}
 export function isDraftScopeCurrent(scope:string,epoch:number){return scope===currentDraftScope&&epoch===scopeEpoch;}
 export function assertDraftScope(scope:string,epoch:number){if(!isDraftScopeCurrent(scope,epoch))throw new Error('Draft scope changed. Reopen recovery in the current vault.');}
 export async function loadDraftScope(){const epoch=scopeEpoch;if(!draftScopeRequest)draftScopeRequest=api.draftScope().then(r=>{if(epoch!==scopeEpoch)throw new Error('Draft scope changed');currentDraftScope=r.scopeId;return r.scopeId;}).catch(error=>{if(epoch===scopeEpoch)draftScopeRequest=null;throw error;});return draftScopeRequest;}
-export function resetDraftScope(){resetVaultPreferences();scopeEpoch++;openRequest++;for(const s of documentSessions.values())s.dispose();documentSessions.clear();currentDraftScope='';draftScopeRequest=null;if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-scope-change'));}
-export function acceptResolvedDocument(path:string,content:string,version:string){const s=documentSessions.get(path);if(s){s.acceptServerResult(content,version);}else{const scopeId=currentDraftScope;documentSessions.set(path,new DocumentSession({scopeId,path,writerId:CLIENT_ID+':'+(++draftSessionSequence),content,version},{put:putDraft,remove:deleteDraftIfRevision,write:(p,t,v)=>api.write(p,t,v,scopeId)},refreshSaveStatus));}useStore.setState({content,dirty:false});}
+export function resetDraftScope(){resetVaultPreferences();scopeEpoch++;openRequest++;splitCodeRequest++;useStore.setState({codeFileResult:null,splitCodeFileResult:null,codeEditorOverride:null,noteNavigation:null});for(const s of documentSessions.values())s.dispose();documentSessions.clear();currentDraftScope='';draftScopeRequest=null;if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-scope-change'));}
+export function acceptResolvedDocument(path:string,content:string,version:string){const s=documentSessions.get(path);if(s){s.acceptServerResult(content,version);}else{const scopeId=currentDraftScope;documentSessions.set(path,new DocumentSession({scopeId,path,writerId:CLIENT_ID+':'+(++draftSessionSequence),content,version},{put:putDraft,remove:deleteDraftIfRevision,write:(p,t,v)=>api.write(p,t,v,scopeId)},refreshSaveStatus));}useStore.setState({content,dirty:false,codeFileResult:null,codeEditorOverride:path});}
 function refreshSaveStatus(){if(typeof window!=='undefined'&&window.dispatchEvent)window.dispatchEvent(new Event('draft-status'));}
 export type ViewMode = 'live' | 'source' | 'reading';
 /** Board | Timeline mode of the Tasks view (FR-16). Part of the URL, so a
@@ -51,6 +54,8 @@ export interface Tab {
   title: string;
   /** Reusable until kept open or edited. Missing on older, permanent tabs. */
   preview?: boolean;
+  /** PDF navigation is kept out of the canonical vault filename. */
+  pdfFragment?: string;
 }
 
 /** A color group in the graph (nodes matching `query` are tinted `color`). */
@@ -114,6 +119,12 @@ export interface ContextMenuState {
 }
 
 interface AppState {
+  codeFileViewer:CodeFileViewerSettings;
+  refreshCodeFile:(path:string,pane:'main'|'split')=>Promise<void>;
+  codeFileResult:CodeFileReadResult|null;
+  splitCodeFileResult:CodeFileReadResult|null;
+  codeEditorOverride:string|null;
+  applyCodeFileViewerSettings:(next:CodeFileViewerSettings)=>Promise<void>;
   authed: boolean;
   setAuthed: (v: boolean) => void;
   mustChangePassword: boolean;
@@ -166,10 +177,11 @@ interface AppState {
 
   // split pane (open to the side)
   splitPath: string | null;
+  splitPdfFragment: string;
   splitContent: string;
   /** Which edge the split pane is docked to ('right' = columns, 'down' = rows). */
   splitDirection: 'right' | 'down';
-  openToSide: (path: string, direction?: 'right' | 'down') => Promise<void>;
+  openToSide: (path: string, direction?: 'right' | 'down',options?:{pdfFragment?:string}) => Promise<void>;
   closeSplit: () => void;
 
   recent: string[];
@@ -251,13 +263,14 @@ interface AppState {
   /** Show a toast. ms=0 keeps it until another notify() replaces it. */
   notify: (msg: string, ms?: number) => void;
 
-  openFile: (path: string, options?: { preview?: boolean }) => Promise<void>;
+  noteNavigation:{path:string;fragment:string;request:number}|null;
+  openFile: (path: string, options?: { preview?: boolean;pdfFragment?:string;noteFragment?:string }) => Promise<void>;
   /** Open a media reference using its originating note, then keep the canonical path in tabs. */
   openAttachment: (target: string, from: string) => Promise<void>;
   /** Finish inline creation without replacing an existing preview tab. */
   openCreatedFile: (path: string) => Promise<void>;
   keepTab: (path: string) => void;
-  openWikilink: (target: string,kind?:'wiki'|'markdown') => Promise<void>;
+  openWikilink: (target: string,kind?:'wiki'|'markdown',from?:string) => Promise<void>;
   closeTab: (path: string) => Promise<boolean>;
   renamePath: (from: string, to: string) => Promise<void>;
   /** Discard state only after the server has confirmed removal. */
@@ -316,7 +329,7 @@ const TEXT_RE = /\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i;
 
 // ---- server-side workspace persistence (shared across browsers/devices) ----
 const PERSIST_KEYS = [
-  'tabs', 'activePath', 'viewMode', 'expanded', 'splitPath', 'splitDirection',
+  'tabs', 'activePath', 'viewMode', 'expanded', 'splitPath', 'splitDirection', 'splitPdfFragment',
   'recent', 'bookmarks', 'leftPanel', 'rightPanel', 'leftOpen', 'rightOpen', 'graphSettings',
   'treeSort', 'manualOrder', 'autoReveal', 'showAttachmentFolders',
 ] as const;
@@ -433,6 +446,7 @@ function applyPersisted(s: any, set: (p: any) => void): void {
     autoReveal: s.autoReveal === true,
     showAttachmentFolders: s.showAttachmentFolders === true,
     splitPath: typeof s.splitPath === 'string' ? s.splitPath : null,
+    splitPdfFragment: typeof s.splitPdfFragment === 'string' ? s.splitPdfFragment : '',
     splitDirection: s.splitDirection === 'down' ? 'down' : 'right',
     recent: Array.isArray(s.recent) ? s.recent : [],
     bookmarks: Array.isArray(s.bookmarks) ? s.bookmarks : [],
@@ -558,6 +572,7 @@ export const useStore = create<AppState>()(
       setShowInlineTitle: (v) => set({ showInlineTitle: v }),
 
       tree: null,
+      noteNavigation:null,
       loadTree: async () => {
         const tree = await api.tree();
         set((s) => ({ tree, manualOrder: renamesInFlight > 0 ? s.manualOrder : reconcileManualOrder(tree, s.manualOrder) }));
@@ -625,19 +640,43 @@ export const useStore = create<AppState>()(
       showAttachmentFolders: false,
       setShowAttachmentFolders: (showAttachmentFolders) => set({ showAttachmentFolders }),
 
+      refreshCodeFile:async(path,pane)=>{
+        const epoch=scopeEpoch;const request=pane==='main'?openRequest:splitCodeRequest;
+        const initial=pane==='main'?get().codeFileResult:get().splitCodeFileResult;
+        if(initial?.path!==path)return;
+        const result=await api.readCode(path);
+        if(epoch!==scopeEpoch||request!==(pane==='main'?openRequest:splitCodeRequest))return;
+        if(pane==='main'&&get().activePath===path&&get().codeFileResult===initial)set({codeFileResult:result,content:result.kind==='text'?result.content:''});
+        if(pane==='split'&&get().splitPath===path&&get().splitCodeFileResult===initial)set({splitCodeFileResult:result,splitContent:result.kind==='text'?result.content:''});
+      },
+      codeFileViewer:defaultCodeFileViewer,
+      codeFileResult:null,splitCodeFileResult:null,codeEditorOverride:null,
+      applyCodeFileViewerSettings:async(next)=>{
+        if(get().dirty)await get().save();
+        await api.putSettings({ui:{codeFileViewer:next}});
+        set({codeFileViewer:next});
+        const {activePath,splitPath}=get();if(activePath)await get().openFile(activePath,{preview:false});if(splitPath)await get().openToSide(splitPath);
+      },
       splitPath: null,
+      splitPdfFragment: '',
       splitContent: '',
       splitDirection: 'right',
-      openToSide: async (path, direction) => {
-        if (!TEXT_RE.test(path)) return;
-        const r = await api.read(path);
+      openToSide: async (path, direction,options) => {
+        const request=++splitCodeRequest;const epoch=scopeEpoch;
+        const code=resolveCodeLanguage(path,get().codeFileViewer)!==null;
+        if(!code&&!TEXT_RE.test(path)&&!/\.pdf$/i.test(path)){set({splitPath:null,splitContent:'',splitCodeFileResult:null});return;}
+        const result=code?await api.readCode(path):null;
+        const r=/\.pdf$/i.test(path)?{content:''}:result?{content:result.kind==='text'?result.content:''}:await api.read(path);
+        if(request!==splitCodeRequest||epoch!==scopeEpoch)return;
+        set({splitCodeFileResult:result});
         set((s) => ({
           splitPath: path,
+          splitPdfFragment:/\.pdf$/i.test(path)?options?.pdfFragment??(s.splitPath===path?s.splitPdfFragment:''):'',
           splitContent: typeof r === 'string' ? r : r.content,
           splitDirection: direction ?? s.splitDirection,
         }));
       },
-      closeSplit: () => set({ splitPath: null, splitContent: '' }),
+      closeSplit: () => {splitCodeRequest++;set({splitPath:null,splitPdfFragment:'',splitContent:'',splitCodeFileResult:null});},
 
       recent: [],
       removeRecent: (path) => set((s) => ({ recent: s.recent.filter((p) => p !== path) })),
@@ -774,7 +813,7 @@ export const useStore = create<AppState>()(
       openAttachment: async (target, from) => {
         try {
           const { path } = await api.resolveAttachment(target, from);
-          if (path) await get().openFile(path);
+          if (path) await get().openFile(path,/\.pdf$/i.test(path)&&target.includes('#')?{pdfFragment:target.slice(target.indexOf('#')+1)}:undefined);
           else get().notify('Attachment not found');
         } catch (err: any) {
           get().notify(err?.message ?? 'Could not open attachment');
@@ -786,7 +825,7 @@ export const useStore = create<AppState>()(
         get().revealInTree(path);
       },
 
-      openFile: async (path, { preview = true } = {}) => {
+      openFile: async (path, { preview = true,pdfFragment,noteFragment } = {}) => {
         if (mutationsPending) await waitForFileMutations();
         if (path === GRAPH_PATH) return get().openGraph();
         if (path === TASKS_PATH) return get().openTasks();
@@ -796,13 +835,22 @@ export const useStore = create<AppState>()(
         // A folder path (e.g. deep-link /note/<folder>) opens a folder content
         // view — never read it as a note nor pollute Recent with it.
         const isFolder = findNode(get().tree, path)?.type === 'folder';
+        let codeFileResult:CodeFileReadResult|null=null;
+        let codeEditorOverride:string|null=null;
+        let isCode=!isFolder&&resolveCodeLanguage(path,get().codeFileViewer)!==null;
+        if(isCode&&TEXT_RE.test(path)&&typeof indexedDB!=='undefined'){
+          const scope=await loadDraftScope();
+          const drafts=await listDrafts(scope);
+          if(drafts.some(d=>d.path===path)){isCode=false;codeEditorOverride=path;}
+        }
         let content = '';
+        if(isCode){codeFileResult=await api.readCode(path);content=codeFileResult.kind==='text'?codeFileResult.content:'';}
         let version: string | undefined;
         let documentScope='';
         let locked = false;
         let lockReason: string | null = null;
         let unlockMode: 'off' | 'confirm' | 'password' = 'confirm';
-        if (!isFolder && TEXT_RE.test(path)) {
+        if (!isFolder && !isCode && TEXT_RE.test(path)) {
           documentScope=await loadDraftScope();
           if(request!==openRequest)return;
           const r = await api.read(path,documentScope||undefined);
@@ -818,7 +866,7 @@ export const useStore = create<AppState>()(
         // The user may have edited the previous note while this read was pending.
         if (get().dirty) await get().save();
         if (request !== openRequest) return;
-        if(!isFolder&&TEXT_RE.test(path)){
+        if(!isFolder&&!isCode&&TEXT_RE.test(path)){
           const previous=documentSessions.get(path);previous?.dispose();
           const scopeId=documentScope;
           if(request!==openRequest)return;
@@ -837,12 +885,14 @@ export const useStore = create<AppState>()(
               tabs = tabs.map((t) => t.path === path ? { ...t, preview: false } : t);
             }
           } else {
-            const tab = { path, title, preview };
+            const tab:Tab = { path, title, preview };
             const replace = preview ? tabs.findIndex((t) => t.preview) : -1;
             tabs = replace < 0 ? [...tabs, tab] : tabs.map((t, i) => i === replace ? tab : t);
           }
+          if(pdfFragment!==undefined&&/\.pdf$/i.test(path))tabs=tabs.map(t=>t.path===path?{...t,pdfFragment}:t);
           const recent = isFolder ? s.recent : [path, ...s.recent.filter((p) => p !== path)].slice(0, 20);
-          return { tabs, activePath: path, content, locked, lockReason, unlockMode, dirty: false, recent, ...pushHistory(s, path) };
+          const noteNavigation=/\.(md|markdown)$/i.test(path)&&noteFragment!==undefined?{path,fragment:noteFragment,request}:null;
+          return { tabs, activePath: path, content, codeFileResult, codeEditorOverride,noteNavigation, locked, lockReason, unlockMode, dirty: false, recent, ...pushHistory(s, path) };
         });
         refreshSaveStatus();
       },
@@ -851,22 +901,31 @@ export const useStore = create<AppState>()(
         tabs: s.tabs.map((t) => t.path === path && t.preview ? { ...t, preview: false } : t),
       })),
 
-      openWikilink: async (target,kind='wiki') => {
+      openWikilink: async (target,kind='wiki',from) => {
+        const resolveRequest=++openRequest;
         try {
-          const { path } = await api.resolve(target,get().activePath??undefined,kind);
-          if (path) await get().openFile(path);
-          else if (isAttachmentTarget(target)) {
+          const { path } = await api.resolve(target,from??get().activePath??undefined,kind);
+          if(resolveRequest!==openRequest)return;
+          if(path){
+            let fragment=target.includes('#')?target.slice(target.indexOf('#')+1):'';
+            if(kind==='markdown')try{fragment=decodeURIComponent(fragment)}catch{}
+            await get().openFile(path,/\.pdf$/i.test(path)&&target.includes('#')?{pdfFragment:target.slice(target.indexOf('#')+1)}:/\.(md|markdown)$/i.test(path)?{noteFragment:fragment}:undefined);
+          }
+          else if (isAttachmentTarget(target)||resolveCodeLanguage(target,get().codeFileViewer)!==null) {
             // FR-21: a picture/media/PDF target the vault does not hold is a broken
             // link, not a new note — creating `report.pdf` for a typo pollutes the vault.
             get().notify(`File not found: ${target}`);
           } else {
             // Only append `.md` when the target has no extension at all — a target
             // like `Foo.canvas` must stay `Foo.canvas`, not become `Foo.canvas.md`.
-            const hasExt = /\.[^./]+$/.test(target);
-            const name=hasExt?target:`${target}.md`;
-            const directory=target.includes('/')?'':resolveNewNoteDirectory({sourcePath:get().activePath,preferences:(await api.vaultPreferences()).values});
+            let file=target.split('#')[0];if(kind==='markdown')try{file=decodeURIComponent(file)}catch{}
+            if(!file){get().notify('Section or block not found');return}
+            const hasExt = /\.[^./]+$/.test(file);
+            const name=hasExt?file:`${file}.md`;
+            const directory=file.includes('/')?'':resolveNewNoteDirectory({sourcePath:from??get().activePath,preferences:(await api.vaultPreferences()).values});
+            if(resolveRequest!==openRequest)return;
             const newPath=directory?`${directory}/${name}`:name;
-            await get().createNote(newPath, `# ${target.replace(/\.md$/, '')}\n`);
+            await get().createNote(newPath, `# ${file.replace(/\.md$/, '')}\n`);
           }
         } catch(error) {
           get().notify(error instanceof ApiError && error.status===503 ? 'The index is updating. Try opening this link again shortly.' : 'Could not resolve this link. Check the connection.');
@@ -917,6 +976,7 @@ export const useStore = create<AppState>()(
         while(get().dirty)await saveActiveDraft();
         for(const session of documentSessions.values())if(session.content!==session.baseContent)await session.save();
         const revisions=new Map([...documentSessions].map(([p,s])=>[p,s.revision]));
+        splitCodeRequest++;
         const renameResult=await api.rename(from, to);
         const remap = (path: string) => withinPath(path, from) ? `${to}${path.slice(from.length)}` : path;
         for(const [name,session] of documentSessions){if(withinPath(name,from)){documentSessions.delete(name);session.key.path=remap(name);documentSessions.set(session.key.path,session);}}
@@ -927,6 +987,9 @@ export const useStore = create<AppState>()(
             const path = remap(tab.path);
             return path === tab.path ? tab : { ...tab, path, title: path.split('/').pop() ?? path };
           }),
+          codeFileResult:s.codeFileResult?{...s.codeFileResult,path:remap(s.codeFileResult.path)}:null,
+          splitCodeFileResult:s.splitCodeFileResult?{...s.splitCodeFileResult,path:remap(s.splitCodeFileResult.path)}:null,
+          codeEditorOverride:remapNullable(s.codeEditorOverride),
           activePath: remapNullable(s.activePath),
           splitPath: remapNullable(s.splitPath),
           history: s.history.map(remap), recent: s.recent.map(remap), bookmarks: s.bookmarks.map(remap),
@@ -937,10 +1000,10 @@ export const useStore = create<AppState>()(
           clipboard: s.clipboard ? { ...s.clipboard, path: remap(s.clipboard.path) } : null,
         }));
         for(const changed of renameResult?.changedPaths??[]){const session=documentSessions.get(changed);if(!session)continue;const old=[...revisions.keys()].find(p=>remap(p)===changed);if(old===undefined||session.revision!==revisions.get(old)){get().notify('Links changed on the server. Unsaved local text was kept; review before saving.');continue;}const current=await api.read(changed);if(session.revision!==revisions.get(old))continue;if(typeof current.content==='string'&&current.version){session.acceptServerResult(current.content,current.version);if(get().activePath===changed)set({content:current.content,dirty:false});if(get().splitPath===changed)set({splitContent:current.content});}}
-      }),
+      }).then(async()=>{const {activePath,splitPath}=get();if(activePath)await get().openFile(activePath,{preview:false});if(splitPath)await get().openToSide(splitPath);}),
 
       deletePath: (path, permanent,confirmedMode) => mutateFiles(async () => {
-        ++openRequest;
+        ++openRequest;splitCodeRequest++;
         // Requests already sent must finish before deletion; queued autosaves wait for us.
         await Promise.all([...saves].filter(([file]) => withinPath(file, path)).map(([, pending]) => pending.catch(() => {})));
         const result = await api.remove(path, permanent,confirmedMode);
@@ -972,6 +1035,7 @@ export const useStore = create<AppState>()(
       },
 
       setContent: (c) => {
+        if(get().codeFileResult?.path===get().activePath)return;
         editRevision++;
         const path=get().activePath;if(path)documentSessions.get(path)?.edit(c);
         set((s) => ({
@@ -1162,7 +1226,7 @@ export const useStore = create<AppState>()(
         // Active tab + split pane content aren't persisted (only the paths) —
         // re-read them from the vault after a reload. Drop tabs whose file is gone.
         const { activePath, splitPath, tabs } = get();
-        if (activePath && TEXT_RE.test(activePath)) {
+        if (activePath && (TEXT_RE.test(activePath)||resolveCodeLanguage(activePath,get().codeFileViewer)!==null)) {
           try {
             await get().openFile(activePath);
           } catch {
@@ -1173,10 +1237,9 @@ export const useStore = create<AppState>()(
             });
           }
         }
-        if (splitPath && TEXT_RE.test(splitPath)) {
+        if (splitPath && (TEXT_RE.test(splitPath)||/\.pdf$/i.test(splitPath)||resolveCodeLanguage(splitPath,get().codeFileViewer)!==null)) {
           try {
-            const r = await api.read(splitPath);
-            set({ splitContent: typeof r === 'string' ? r : r.content });
+            await get().openToSide(splitPath);
           } catch {
             set({ splitPath: null, splitContent: '' });
           }

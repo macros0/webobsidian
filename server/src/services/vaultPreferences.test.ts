@@ -7,6 +7,14 @@ let follow=false;
 beforeEach(async()=>{root=await fs.mkdtemp(path.join(os.tmpdir(),'vault-preferences-'));follow=false;vi.resetModules();vi.doMock('./settings.js',()=>({getSettings:async()=>({vault:{path:root,attachmentDir:'attachments',deleteMode:'trash',followObsidianDeletion:follow}})}));});
 afterEach(async()=>{vi.doUnmock('./settings.js');await fs.rm(root,{recursive:true,force:true});});
 async function app(value:unknown){await fs.mkdir(path.join(root,'.obsidian'),{recursive:true});await fs.writeFile(path.join(root,'.obsidian','app.json'),typeof value==='string'?value:JSON.stringify(value));}
+it('hides unsupported files by default while respecting an explicit Obsidian preference',async()=>{
+ const {getVaultPreferences}=await import('./vaultPreferences.js');
+ expect((await getVaultPreferences()).values.showUnsupportedFiles).toBe(false);
+ await app({});expect((await getVaultPreferences()).values.showUnsupportedFiles).toBe(false);
+ await app({showUnsupportedFiles:true});const enabled=await getVaultPreferences();
+ expect(enabled.values.showUnsupportedFiles).toBe(true);expect(enabled.sources.showUnsupportedFiles).toBe('obsidian');
+ await app({showUnsupportedFiles:false});expect((await getVaultPreferences()).values.showUnsupportedFiles).toBe(false);
+});
 it('reads portable rules freshly without changing Obsidian or importing permanent deletion',async()=>{
  await app({alwaysUpdateLinks:true,readableLineLength:false,trashOption:'none',attachmentFolderPath:'./images',unknown:123});
  const {getVaultPreferences}=await import('./vaultPreferences.js');const first=await getVaultPreferences();

@@ -1,3 +1,4 @@
+import {pdfFileActions} from '../lib/pdfFileActions';
 import {processPluginMarkdown,usePluginRevision} from '../lib/plugins/registry';
 import { useEffect, useRef, useState } from 'react';
 import { highlightCode, classHighlighter } from '@lezer/highlight';
@@ -9,7 +10,12 @@ import { calloutIconSvg } from '../lib/callouts';
 import { openLightbox } from '../lib/imageLightbox';
 import { api } from '../lib/api';
 import { displayTitle } from '../lib/title';
+import {mountPdfEmbeds} from '../lib/pdfEmbeds';
+import {mountCanvasEmbeds} from '../lib/canvasEmbed';
+import {mountImageActions} from '../lib/embedActions';
+import {addNoteEmbedOpenButtons} from '../lib/noteEmbed';
 import {useVaultPreferences} from '../lib/vaultPreferences';
+import {findRenderedNoteFragment} from '../lib/noteFragments';
 
 /** Syntax-highlight a `<code class="language-x">` block with the SAME CodeMirror
  *  grammars Live Preview uses (token classes styled by the Obsidian palette). */
@@ -100,6 +106,7 @@ export default function Preview({ source }: { source?: string }) {
   const activePath = useStore((s) => s.activePath);
   const showInlineTitle = useStore((s) => s.showInlineTitle);
   const openWikilink = useStore((s) => s.openWikilink);
+  const noteNavigation=useStore(s=>s.noteNavigation);
   const openContextMenu = useStore((s) => s.openContextMenu);
   const setLeftPanel = useStore((s) => s.setLeftPanel);
   const [html, setHtml] = useState('');
@@ -109,10 +116,11 @@ export default function Preview({ source }: { source?: string }) {
     renderMarkdown(content, {
       rawUrl: (p, from) => api.rawUrl(p, from),
       sourcePath: activePath ?? undefined,
-      resolveEmbed: async (target, from) => {
+      resolveEmbed: async (target, from,kind) => {
         try {
-          const { path } = await api.resolve(target, from);
+          const { path } = await api.resolve(target, from,kind);
           if (!path) return null;
+          if(!/\.(md|markdown)$/i.test(path))return null;
           const r = await api.read(path);
           return { path, content: typeof r === 'string' ? r : r.content };
         } catch {
@@ -130,34 +138,29 @@ export default function Preview({ source }: { source?: string }) {
   // Post-render pass — same renderers as Live Preview so both modes match:
   // KaTeX for [data-tex] spans, mermaid for ```mermaid fences, callout icons.
   const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(()=>{
+    const root=bodyRef.current,request=noteNavigation;
+    if(!root||source!==undefined||!request||request.path!==activePath)return;
+    const frame=requestAnimationFrame(()=>{
+      if(useStore.getState().noteNavigation!==request||!root.isConnected)return;
+      if(!request.fragment)root.closest<HTMLElement>('.markdown-preview')?.scrollTo({top:0});
+      else findRenderedNoteFragment(root,request.fragment)?.scrollIntoView({block:'start'});
+    });
+    return ()=>cancelAnimationFrame(frame);
+  },[html,activePath,noteNavigation,source]);
   useEffect(()=>{if(bodyRef.current)return processPluginMarkdown(bodyRef.current,activePath??'');},[html,activePath,pluginRevision]);
   useEffect(() => {
     const root = bodyRef.current;
     if (!root) return;
     let cancelled = false;
+    addNoteEmbedOpenButtons(root,(target,kind)=>{void useStore.getState().openWikilink(target,kind)});
     for (const el of root.querySelectorAll<HTMLElement>('.callout-icon[data-callout-icon]')) {
       el.innerHTML = calloutIconSvg(el.dataset.calloutIcon ?? 'default');
     }
-    // `![[doc.pdf]]` embeds: the renderer emits an inert link (rehype-sanitize drops
-    // iframes and the schema must not be widened for raw note HTML), so the frame is
-    // created here — the same pass that decorates callout icons (FR-21).
-    for (const a of root.querySelectorAll<HTMLAnchorElement>('a.pdf-embed[data-href]')) {
-      const target = a.dataset.href ?? '';
-      if (!target) continue;
-      const name = target.split('/').pop() ?? target;
-      const wrap = document.createElement('div');
-      wrap.className = 'pdf-embed-wrap';
-      const caption = document.createElement('div');
-      caption.className = 'pdf-embed-title';
-      caption.textContent = name;
-      const frame = document.createElement('iframe');
-      frame.className = 'pdf-embed-frame';
-      frame.src = api.rawUrl(target);
-      frame.loading = 'lazy';
-      frame.title = name;
-      wrap.append(caption, frame);
-      a.replaceWith(wrap);
-    }
+    // Keep document-rendered HTML inert; create interactive PDF controls here.
+    const disposePdfs=mountPdfEmbeds(root,activePath??'',(target,origin,kind)=>{void (kind==='markdown'?useStore.getState().openWikilink(target,kind,origin):useStore.getState().openAttachment(target,origin))},(target,origin,kind)=>pdfFileActions(target,origin,{linkKind:kind}));
+    const disposeCanvases=mountCanvasEmbeds(root,activePath??'',(target,origin,kind)=>{void useStore.getState().openWikilink(target,kind,origin)});
+    mountImageActions(root);
     // Fold chevron on collapsible callouts (rotates via .is-collapsed CSS).
     for (const title of root.querySelectorAll<HTMLElement>(
       '.callout[data-callout-fold="-"] > .callout-title, .callout[data-callout-fold="+"] > .callout-title',
@@ -212,6 +215,8 @@ export default function Preview({ source }: { source?: string }) {
     }
     return () => {
       cancelled = true;
+      disposePdfs();
+      disposeCanvases();
     };
   }, [html]);
 
@@ -227,13 +232,13 @@ export default function Preview({ source }: { source?: string }) {
     if (target) {
       e.preventDefault();
       const link = target.getAttribute('data-wikilink');
-      if (link) openWikilink(link, 'wiki');
+      if (link) openWikilink(link, target.dataset.linkKind==='markdown'?'markdown':'wiki',target.closest<HTMLElement>('[data-embed-source]')?.dataset.embedSource);
       return;
     }
     const markdownLink = (e.target as HTMLElement).closest('a[data-link-kind="markdown"]') as HTMLAnchorElement | null;
     if (markdownLink) {
       const href = markdownLink.getAttribute('href');
-      if (href) { e.preventDefault(); openWikilink(href, 'markdown'); }
+      if (href) { e.preventDefault(); openWikilink(href, 'markdown',markdownLink.closest<HTMLElement>('[data-embed-source]')?.dataset.embedSource); }
       return;
     }
     // Foldable callout: clicking the title toggles its content.

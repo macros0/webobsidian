@@ -25,6 +25,15 @@ afterEach(async () => {
 
 const abs = (rel: string) => path.join(root, rel);
 
+it('bounded note reads preserve UTF-8 and reject a large file without reading its contents',async()=>{
+ await fs.writeFile(abs('small.md'),'Привет');await fs.writeFile(abs('large.md'),'x'.repeat(1024));
+ const opened=vi.spyOn(fs,'open');
+ expect(await (vault as any).readFileTextBounded('small.md',12)).toBe('Привет');
+ expect(await (vault as any).readFileTextBounded('small.md',11)).toBeNull();
+ expect(await (vault as any).readFileTextBounded('large.md',12)).toBeNull();
+ expect(opened.mock.calls.every(([,flags])=>flags==='r')).toBe(true);
+});
+
 describe('vault writes', () => {
   it('concurrent writes with a frozen clock use distinct exclusive temporary files', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(42);

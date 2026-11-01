@@ -1,5 +1,16 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Code viewing, Canvas and native embeds — 2026-11-01
+
+- [x] Add a bounded UTF-8 code-file API and read-only main/split CodeMirror viewers with settings, language mappings, Find and Copy; preserve drafts and mixed-pane focus/navigation.
+- [x] Keep selected Canvas groups behind contained cards and remove the redundant vault settings button.
+- [x] Match task numbering/states, literal titles and vault-controlled explorer visibility.
+- [x] Share scoped PDF.js controls and fragment navigation across note embeds, file/split views and public pages; preserve note/media/Canvas structure and source paths.
+- [x] Bound public nested reads and require independently unlocked child publications; isolate authored web frames with opaque-origin sandboxing.
+- [x] Add synthetic native-reference captures and browser/server regressions. Source validation: 380 server + 513 web tests passed, 10 platform skips; types, builds, MCP and disposable integration smoke passed.
+
+Evidence and limits: `docs/embed-controls-audit-2026-11-01.md` and `docs/superpowers/plans/2026-11-01-code-file-viewer.md`. Bases and physical touch acceptance remain outside the verified scope.
+
 ## Ordinary URL rendering and clicks — 2026-11-01
 
 - [x] Reproduce automatic card conversion and non-clickable bare addresses in the real Live/Reading pipeline.

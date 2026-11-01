@@ -77,7 +77,7 @@ function computeItems(ctx: Ctx): Item[] {
   if (ctx.mode === 'link') {
     const preferences = getCachedVaultPreferences().values;
     for (const path of linkFiles()) {
-      if (!preferences.showUnsupportedFiles && !isSupportedVaultFile(path)) continue;
+      if (!preferences.showUnsupportedFiles && !isSupportedVaultFile(path,useStore.getState().codeFileViewer)) continue;
       const target = path.replace(/\.md$/i, '');
       const m = ctx.query ? fuzzySearchPath(pq, target) : { score: 0, matches: [] as [number, number][] };
       if (!m) continue;
