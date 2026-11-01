@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
-import { getSettings, updateSettings, redactSettings, ensureVaultBrowsable } from '../services/settings.js';
+import { CodeFileViewerSchema, getSettings, updateSettings, redactSettings, ensureVaultBrowsable } from '../services/settings.js';
 import { config } from '../config.js';
 import { purgeExpiredTrash } from '../services/trashretention.js';
 import {getVaultPreferences} from '../services/vaultPreferences.js';
@@ -26,6 +26,7 @@ settingsRouter.put(
   '/',
   asyncHandler(async (req, res) => {
     const body = req.body ?? {};
+    if(body.ui?.codeFileViewer!==undefined){const parsed=CodeFileViewerSchema.safeParse(body.ui.codeFileViewer);if(!parsed.success)throw Object.assign(new Error('Invalid code viewer settings'),{status:400});body.ui.codeFileViewer=parsed.data;}
     const previousVault = (await getSettings()).vault;
     // A changed vault.path turns the whole files API into read/write over that
     // tree, so constrain it to the allowed roots (same gate as Browse…) and

@@ -1,3 +1,4 @@
+import {readCodeFile} from '../services/codeFileReader.js';
 import {resolveReference} from '../services/fileReferences.js';
 import {indexedFilePaths} from '../services/fileindex.js';
 import {randomUUID} from 'node:crypto';
@@ -28,6 +29,7 @@ const cleanupReceipts=new Map<string,{root:string;sourcePath:string;candidates:s
 function issueCleanupReceipt(root:string,sourcePath:string,candidates:string[],confirmedMode:'trash'|'permanent'){for(const [key,v] of cleanupReceipts)if(v.expires<Date.now())cleanupReceipts.delete(key);if(cleanupReceipts.size>=512)cleanupReceipts.delete(cleanupReceipts.keys().next().value!);const key=randomUUID();cleanupReceipts.set(key,{root,sourcePath,candidates,confirmedMode,expires:Date.now()+15*60*1000});return key;}
 export const filesRouter = Router();
 filesRouter.use(requireAuth);
+filesRouter.get('/code-content',asyncHandler(async(req,res)=>{if(typeof req.query.path!=='string'||!req.query.path)throw Object.assign(new Error('path required'),{status:400});res.json(await readCodeFile(req.query.path));}));
 filesRouter.get('/draft-scope',asyncHandler(async(_req,res)=>{res.json({scopeId:await getDraftScope((await getSettings()).vault.path)});}));
 
 // Locked paths (the areas the agent maintains: raw evidence, generated pages, `_system/`) are

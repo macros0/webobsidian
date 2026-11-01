@@ -605,6 +605,7 @@ function sortTree(
   showAttachments: boolean,
   manualOrder: Record<string, string[]>,
   showUnsupportedFiles: boolean,
+  codeSettings:import('../lib/codeFiles').CodeFileViewerSettings,
 ): TreeNode {
   if (!node.children) return node;
   const folderKey = node.path || '';
@@ -632,8 +633,8 @@ function sortTree(
   };
   // Hidden attachment folders are dropped from this render copy only; the raw store tree
   // (used for name collisions, delete counts, etc.) still contains them.
-  const children = displayChildren(node.children, showAttachments, showUnsupportedFiles)
-    .map((c) => (c.type === 'folder' ? sortTree(c, order, showAttachments, manualOrder, showUnsupportedFiles) : c))
+  const children = displayChildren(node.children, showAttachments, showUnsupportedFiles, codeSettings)
+    .map((c) => (c.type === 'folder' ? sortTree(c, order, showAttachments, manualOrder, showUnsupportedFiles, codeSettings) : c))
     .sort(cmp);
   return { ...node, children };
 }
@@ -645,7 +646,8 @@ export default function FileTree() {
   const manualOrder = useStore((s) => s.manualOrder);
   const setManualOrderForParent = useStore((s) => s.setManualOrderForParent);
   const showAttachmentFolders = useStore((s) => s.showAttachmentFolders);
-  const tree = rawTree ? sortTree(rawTree, treeSort, showAttachmentFolders, manualOrder, preferences.showUnsupportedFiles) : rawTree;
+  const codeSettings=useStore(s=>s.codeFileViewer);
+  const tree = rawTree ? sortTree(rawTree, treeSort, showAttachmentFolders, manualOrder, preferences.showUnsupportedFiles, codeSettings) : rawTree;
   const loadTree = useStore((s) => s.loadTree);
   const notify = useStore((s) => s.notify);
   const renamePath = useStore((s) => s.renamePath);

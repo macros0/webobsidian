@@ -45,6 +45,6 @@ test('Obsidian exclusions are case insensitive literal prefixes or slash delimit
 });
 test('supported registry retains web text formats, canvas, media and downloadable documents', () => {
   for (const path of ['n.md', 'n.markdown', 'n.canvas', 'n.pdf', 'n.docx', 'n.xlsx', 'n.pptx', 'n.zip', 'n.png', 'n.webm', 'n.flac', 'n.json', 'n.csv', 'n.yaml', 'n.txt', 'n.js', 'n.css']) assert.equal(isSupportedVaultFile(path), true, path);
-  assert.equal(isSupportedVaultFile('n.ts'), false);
+  assert.equal(isSupportedVaultFile('n.ts'), true);
   assert.equal(isSupportedVaultFile('n.unknown'), false);
 });

@@ -48,6 +48,7 @@ export const EditingToolbarSchema=z.object({
   customColors:z.array(ToolbarColorSchema).max(100).optional(),
 });
 
+export const CodeFileViewerSchema=z.object({enabled:z.boolean(),lineNumbers:z.boolean(),extensionMap:z.record(z.string().max(64).regex(/^[a-z0-9_+-]+$/).refine(v=>!/^(md|markdown|canvas|pdf|png|jpe?g|gif|svg|webp|bmp|ico|avif|mp4|webm|ogv|mov|mkv|mp3|wav|m4a|3gp|flac|ogg|oga|opus|docx?|xlsx?|pptx?|odt|ods|odp|rtf|zip|7z|tar|gz|tgz|bz2|xz|__proto__|constructor|prototype)$/.test(v)),z.string().min(1).max(64).regex(/^[a-z0-9_+-]+$/)).refine(m=>Object.keys(m).length<=256)});
 const SettingsSchema = z.object({
   version: z.number().default(1),
   auth: z
@@ -118,6 +119,7 @@ const SettingsSchema = z.object({
       defaultView: z.enum(['live', 'source', 'reading']).default('live'),
       // Obsidian's "Show inline title": the filename rendered above the note body.
       showInlineTitle: z.boolean().default(true),
+      codeFileViewer: CodeFileViewerSchema.optional().catch(undefined),
       editingToolbar: EditingToolbarSchema.optional().catch(undefined),
     })
     .prefault({}),

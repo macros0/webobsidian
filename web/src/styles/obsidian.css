@@ -2100,6 +2100,8 @@ button.task-due:hover .task-due-caret { opacity: 1; }
   box-shadow: none;
   z-index: 0;
 }
+/* Selection must not lift a group over the cards it contains. */
+.canvas-group.selected { z-index: 0; }
 .canvas-group-label {
   position: absolute; top: -22px; left: 0;
   font-size: 13px; font-weight: 600; color: var(--text-muted);
@@ -2576,3 +2578,6 @@ body.workplace-fullscreen-focus .workspace { position:fixed; inset:0; z-index:50
 @media(pointer:coarse) { .toolbar-surface[data-labels="true"] button { min-width:44px; } }
 /* Fixed surface owns its viewport position; its wrapper must not establish a transformed containing block. */
 .fixed-format-toolbar { position:static; transform:none; width:0; height:0; max-width:none; overflow:visible; }
+
+.code-file-view{display:flex;flex-direction:column;height:100%;min-height:0;flex:1;background:var(--background-primary);color:var(--text-normal)}
+.code-file-toolbar{display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid var(--background-modifier-border);font-size:12px;flex-wrap:wrap}.code-file-editor{flex:1;min-height:0;overflow:hidden}.code-file-editor .cm-editor{height:100%;background:var(--background-primary);color:var(--text-normal)}.code-file-editor .cm-scroller{overflow:auto;font-family:var(--font-monospace,monospace)}.code-file-editor .cm-gutters{background:var(--background-secondary);color:var(--text-muted);border-color:var(--background-modifier-border)}

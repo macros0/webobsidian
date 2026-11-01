@@ -1,6 +1,8 @@
 import { useStore, GRAPH_PATH, TASKS_PATH, isViewPath, type ContextMenuItem } from '../lib/store';
 import { api } from '../lib/api';
 import Editor from './Editor';
+import CodeFileView from './CodeFileView';
+import {resolveCodeLanguage} from '../lib/codeFiles';
 import Preview from './Preview';
 import GraphView from './GraphView';
 import CanvasView from './CanvasView';
@@ -22,6 +24,13 @@ import { fileViewKind, extLabel } from '../lib/media';
 function EditorPane() {
   const activePath = useStore((s) => s.activePath);
   const viewMode = useStore((s) => s.viewMode);
+  const codeSettings=useStore(s=>s.codeFileViewer);
+  const codeResult=useStore(s=>s.codeFileResult);
+  const override=useStore(s=>s.codeEditorOverride);
+  const language=activePath?resolveCodeLanguage(activePath,codeSettings):null;
+  if(activePath&&language&&override!==activePath&&codeResult?.path!==activePath)return <div className="attachment-card">Loading code…</div>;
+  if(activePath&&language&&override!==activePath&&codeResult?.path===activePath)return <CodeFileView path={activePath} result={codeResult} language={language} lineNumbers={codeSettings.lineNumbers}/>;
+  if(activePath&&!language&&!/\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i.test(activePath)&&fileViewKind(activePath)==='text')return <div className="attachment-card"><a href={api.downloadUrl(activePath)}>Download</a></div>;
   const kind = activePath ? fileViewKind(activePath) : 'text';
 
   if (activePath && kind === 'canvas') {
@@ -104,6 +113,9 @@ export default function Workspace() {
   const openToSide = useStore((s) => s.openToSide);
   const splitPath = useStore((s) => s.splitPath);
   const splitContent = useStore((s) => s.splitContent);
+  const codeSettings=useStore(s=>s.codeFileViewer);
+  const splitCodeResult=useStore(s=>s.splitCodeFileResult);
+  const splitLanguage=splitPath?resolveCodeLanguage(splitPath,codeSettings):null;
   const closeSplit = useStore((s) => s.closeSplit);
   const content = useStore((s) => s.content);
   const setContent = useStore((s) => s.setContent);
@@ -132,7 +144,7 @@ export default function Workspace() {
 
   const isMd = activePath ? /\.(md|markdown)$/i.test(activePath) : false;
   const isShareable = activePath ? /\.(md|markdown|canvas)$/i.test(activePath) : false;
-  const canSplit = activePath ? /\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i.test(activePath) : false;
+  const canSplit = activePath ? resolveCodeLanguage(activePath,codeSettings)!==null || /\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i.test(activePath) : false;
 
   // Obsidian's "Add file property": focus a new property-key field in the
   // Properties widget with the key suggester open (NOT a text prompt). The
@@ -504,7 +516,7 @@ export default function Workspace() {
                 <Icon name="x" size={16} />
               </button>
             </div>
-            <Preview source={splitContent} />
+            {splitLanguage?(splitCodeResult?.path===splitPath?<CodeFileView pane="split" path={splitPath} result={splitCodeResult} language={splitLanguage} lineNumbers={codeSettings.lineNumbers}/>:<div className="attachment-card">Loading code…</div>):/\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i.test(splitPath)?<Preview source={splitContent}/>:<div className="attachment-card"><a href={api.downloadUrl(splitPath)}>Download</a></div>}
           </div>
         )}
       </div>

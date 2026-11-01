@@ -1288,3 +1288,7 @@ Viewport geometry is shared across formatting/recovery UI. Actual browser zoom 1
 ### Remote MCP transport (2026-10-30)
 
 Optional `/mcp` Streamable HTTP, disabled by default, alongside unchanged stdio. Ten identical tools, request-scoped key/scopes, common operations and version conflicts. See [remote MCP contract](docs/superpowers/specs/2026-10-30-remote-mcp-design.md) and [operator/Perplexity guide](docs/MCP_REMOTE.md). Live Perplexity compatibility requires deployment acceptance.
+
+### Built-in code file viewer (2026-11-01)
+
+Mapped source/text files open in a read-only CodeMirror view with syntax highlighting, line numbers, search and copy in main and split panes. Settings → Code files manages extension/language mappings. UTF-8 only; preview limit 10 MiB, highlighting limit 1,000,000 UTF-16 code units. Code files are never executed or indexed as Markdown notes. Existing mapped text formats become read-only while enabled; disabling/removing mappings restores the legacy editor. Draft recovery and failed saves must preserve local text.

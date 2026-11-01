@@ -106,6 +106,14 @@ try {
     ['POST', '/api/files/copy', { from: 'notes/editable.md', to: 'notes/locked.md' }],
     ['DELETE', '/api/files/?path=notes/locked.md&permanent=1', undefined],
   ]) assert.equal((await request(url, { method, body: body && JSON.stringify(body) })).status, 423);
+  await fs.writeFile(path.join(vault,'sample.py'),'print("Привет")\r\n');
+  assert.equal((await fetch(`${base}/api/files/code-content?path=sample.py`)).status,401);
+  const code=await (await request('/api/files/code-content?path=sample.py')).json();
+  assert.equal(code.kind,'text');assert.equal(code.content,'print("Привет")\r\n');
+  assert.equal((await request('/api/files/code-content?path=missing.py')).status,404);
+  assert.equal((await request('/api/files/code-content?path=../outside')).status,400);
+  assert.equal((await request('/api/settings/',{method:'PUT',body:JSON.stringify({ui:{codeFileViewer:{enabled:true,lineNumbers:true,extensionMap:{md:'python'}}}})})).status,400);
+  assert.equal(await fs.readFile(path.join(vault,'sample.py'),'utf8'),'print("Привет")\r\n');
   const original = await (await request('/api/files/content?path=notes/editable.md')).json();
   const write = (baseVersion, content) => request('/api/files/content', { method: 'PUT',
     body: JSON.stringify({ path: 'notes/editable.md', content, baseVersion }) });

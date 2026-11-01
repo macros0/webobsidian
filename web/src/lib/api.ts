@@ -1,3 +1,4 @@
+import type {CodeFileViewerSettings,CodeFileReadResult} from './codeFiles';
 import {confirmDialog} from './confirm';
 import {getVaultPreferences} from './vaultPreferences';
 // Thin fetch wrapper around the WebObsidian server API.
@@ -10,7 +11,7 @@ export interface Settings {
   git: {enabled:boolean;remote:string;branch:string;token:string;authorName:string;authorEmail:string;autoSync:boolean;autoCommitOnSave:boolean;intervalSec:number;lfsPatterns:string[]};
   search: {fuzzy:number;prefix:boolean;indexFrontmatter:boolean};
   api: {rateLimitPerMin:number;keys:unknown[]};
-  ui: {theme:string;defaultView:'live'|'source'|'reading';showInlineTitle:boolean;editingToolbar?:ToolbarConfigV1};
+  ui: {theme:string;defaultView:'live'|'source'|'reading';showInlineTitle:boolean;editingToolbar?:ToolbarConfigV1;codeFileViewer?:CodeFileViewerSettings};
   plugins:{enabled:string[];installed:string[]};
 }
 
@@ -190,6 +191,7 @@ export function setRenameHook(h: RenameHook | null): void {
 }
 
 export const api = {
+  readCode:(path:string,signal?:AbortSignal)=>req<CodeFileReadResult>('/api/files/code-content?path='+encodeURIComponent(path),{signal}),
   // auth
   // /auth/status is unauthenticated, so it deliberately reports nothing about
   // whether the default password is still in use. mustChangePassword comes from

@@ -55,3 +55,7 @@ runtime failure. Detailed measured results are recorded in
 [the validation report](superpowers/plans/2026-10-30-plugin-runtime-validation.md).
 
 No tested real plugin reached its feature action in this initial matrix. The browser reported no CSP violations, performed no synthetic note writes, and retained no command registrations after cleanup. This records explicit limitations rather than claiming that TOC, toolbar, Canvas or templates work.
+
+## Built-in code viewer
+
+WebObsidian includes a CodeMirror-based viewer inspired by Code File Viewer. This does not implement `TextFileView`, `registerExtensions` or `loadPrism`, and does not make the original Obsidian plugins compatible. The format list is adapted from [qojis/obsidian-code-file-viewer main.ts](https://github.com/qojis/obsidian-code-file-viewer/blob/69a928b413af492259179c3911dd409a34f61670/main.ts) (Unlicense); the rendering uses existing WebObsidian CodeMirror components.

@@ -4,11 +4,13 @@ import { useStore,resetDraftScope } from '../lib/store';
 import { api } from '../lib/api';
 import { themeClass } from '../lib/theme';
 import Icon from './Icon';
+import CodeFileViewerSettings from './CodeFileViewerSettings';
+import {defaultCodeFileViewer} from '../lib/codeFiles';
 import ToolbarSettings from './toolbar/ToolbarSettings';
 import {useIndexStatus,indexStatusMessage,refreshIndexStatus,resetIndexStatus} from '../lib/indexStatus';
 import {useVaultPreferences,getVaultPreferences,resetVaultPreferences,importMobileToolbarCommands,mobileToolbarCommandMappings} from '../lib/vaultPreferences';
 
-type Section = 'vault' | 'git' | 'api' | 'sharing' | 'plugins' | 'appearance' | 'toolbar' | 'account' | 'about';
+type Section = 'vault' | 'git' | 'api' | 'sharing' | 'plugins' | 'appearance' | 'toolbar' | 'codeFiles' | 'account' | 'about';
 
 export default function Settings() {
   const open = useStore((s) => s.settingsOpen);
@@ -27,7 +29,7 @@ export default function Settings() {
       <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
         <div className="settings-layout">
           <div className="settings-nav">
-            {(['vault', 'git', 'api', 'sharing', 'plugins', 'appearance', 'toolbar', 'account', 'about'] as Section[]).map((s) => (
+            {(['vault', 'git', 'api', 'sharing', 'plugins', 'appearance', 'toolbar', 'codeFiles', 'account', 'about'] as Section[]).map((s) => (
               <button key={s} className={section === s ? 'active' : ''} onClick={() => setSection(s)}>
                 {labels[s]}
               </button>
@@ -42,6 +44,7 @@ export default function Settings() {
             {settings && section === 'appearance' && <Appearance s={settings} />}
             {settings && section === 'toolbar' && <ToolbarSettings value={settings.ui.editingToolbar} onSaved={(editingToolbar) => setSettings((current: any) => ({...current, ui:{...current.ui, editingToolbar}}))} />}
             {section === 'account' && <AccountSettings s={settings} reload={() => api.getSettings().then(setSettings)} />}
+            {settings && section === 'codeFiles' && <CodeFileViewerSettings value={settings.ui.codeFileViewer??defaultCodeFileViewer} onSave={async next=>{await useStore.getState().applyCodeFileViewerSettings(next);setSettings(await api.getSettings());}}/>}
             {section === 'about' && <About />}
           </div>
         </div>
@@ -58,6 +61,7 @@ const labels: Record<Section, string> = {
   plugins: 'Community Plugins',
   appearance: 'Appearance',
   toolbar: 'Editing toolbar',
+  codeFiles:'Code files',
   account: 'Account',
   about: 'About',
 };

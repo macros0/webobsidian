@@ -10,7 +10,7 @@ import {treeFilePaths} from '../tree';
 import {getCachedVaultPreferences} from '../vaultPreferences';
 import {formatInternalLink,resolveNewNoteDirectory} from '../vaultLinks';
 
-export interface ToolbarContext {view:EditorView;documentId:string;doc:Text;selection:EditorSelection}
+export interface ToolbarContext {view:EditorView;documentId:string;doc:Text;selection:EditorSelection;generation?:number}
 export type CommandResult={status:'applied'|'cancelled'|'unavailable';reason?:string};
 export interface ToolbarCommand {id:string;label:string;icon:string;writesDocument:boolean;selectionPolicy:'inline'|'lines'|'single'|'explicit';getState:(ctx:ToolbarContext)=>{enabled:boolean;active:boolean|'mixed';reason?:string};run:(ctx:ToolbarContext)=>Promise<CommandResult>}
 export type DialogField={key:string;label:string;value:string};
@@ -18,10 +18,10 @@ export interface ToolbarServices {prompt:(title:string,fields:DialogField[],prev
 let services:ToolbarServices={prompt:async()=>null,attach:async()=>null,notify:()=>{}};
 export function setToolbarServices(next:Partial<ToolbarServices>){services={...services,...next};}
 const ids=new WeakMap<EditorView,string>();let nextId=0;
-const invalidated=new WeakSet<EditorView>();
-export function invalidateContext(view:EditorView){invalidated.add(view);}
-export function captureContext(view:EditorView,documentId?:string):ToolbarContext {if(!ids.has(view))ids.set(view,documentId??String(++nextId));return {view,documentId:ids.get(view)!,doc:view.state.doc,selection:view.state.selection};}
-export function isContextCurrent(c:ToolbarContext){return !invalidated.has(c.view)&&c.view.state.doc===c.doc&&ids.get(c.view)===c.documentId;}
+const generations=new WeakMap<EditorView,number>();
+export function invalidateContext(view:EditorView){generations.set(view,(generations.get(view)??0)+1);}
+export function captureContext(view:EditorView,documentId?:string):ToolbarContext {if(!ids.has(view))ids.set(view,documentId??String(++nextId));return {view,documentId:ids.get(view)!,doc:view.state.doc,selection:view.state.selection,generation:generations.get(view)??0};}
+export function isContextCurrent(c:ToolbarContext){return (c.generation??0)===(generations.get(c.view)??0)&&c.view.state.doc===c.doc&&ids.get(c.view)===c.documentId;}
 const ok:CommandResult={status:'applied'};
 const full=(id:string)=>id.startsWith('editing-toolbar:')||id.startsWith('custom:')?id:'editing-toolbar:'+id;
 export const commands:ToolbarCommand[]=[];
