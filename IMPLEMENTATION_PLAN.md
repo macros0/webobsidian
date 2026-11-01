@@ -4,7 +4,7 @@
 
 - [x] Rebase all latest viewer, tooltip, settings-button and Canvas fixes onto fork main.
 - [x] Address independent mixed-pane review: focus context generations, passive refresh navigation and safe split loading/download states; add failing-to-passing regressions.
-- [~] Final local verification and GitHub CI; merge to main only after passing.
+- [~] Final local checks passed (348 server, 470 web; typecheck/build/smoke). After fork workflows were re-enabled, Linux CI identified missing Canvas fixture viewport normalization and a layout timeout. Set/assert an explicit headless viewport, bound web-test concurrency to two, retain all assertions/timeouts and add layout diagnostics; both affected browser tests pass locally. Merge to main only after green final CI.
 
 ## Canvas group interactions — 2026-11-01
 
