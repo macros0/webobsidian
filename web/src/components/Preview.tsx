@@ -18,8 +18,8 @@ import {addNoteEmbedOpenButtons} from '../lib/noteEmbed';
 import {useVaultPreferences} from '../lib/vaultPreferences';
 import {findRenderedNoteFragment} from '../lib/noteFragments';
 
-/** Syntax-highlight a `<code class="language-x">` block with the SAME CodeMirror
- *  grammars Live Preview uses (token classes styled by the Obsidian palette). */
+/** Syntax-highlight static preview code with catalog grammars and the scoped
+ *  token palette. The editor's native stream grammars are configured separately. */
 async function highlightCodeEl(codeEl: HTMLElement): Promise<void> {
   const cls = [...codeEl.classList].find((c) => c.startsWith('language-'));
   if (!cls) return;

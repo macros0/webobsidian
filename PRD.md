@@ -88,7 +88,8 @@
 > deployment is outside this integration task.
 
 > Product Requirements Document
-> Phiên bản: 1.23 · Cập nhật: 2026-09-30 · Trạng thái: Draft
+> Phiên bản: 1.24 · Cập nhật: 2026-11-02 · Trạng thái: Draft
+> Changelog 1.24 (FR-2, FR-12): fenced JavaScript, Python and YAML use the native editor token palette in Live, Reading and Source modes. Canvas uses compact native selection controls, height-dependent text padding and an initial fit capped at 100%. The browser tab uses the official Obsidian gradient icon.
 > Changelog 1.23 (FR-23 — chọn giá trị cho thuộc tính đóng: nút `▾` + danh sách giá trị, issue #61): trên
 > trang task, `status:` là **text tự do** nên đổi trạng thái phải gõ đúng id — mà gõ sai thì không vô hại:
 > board chỉ map id canonical (`open`/`in-progress`/`blocked`/`done`) + vài alias, mọi giá trị khác thành
@@ -672,9 +673,10 @@ chúng bằng đường có mũi tên, dùng cho brainstorm, moodboard, sơ đ�
   `ceil(15/scale)` đơn vị canvas). Giữ **Alt** (⌃ trên macOS) để kéo tự do (tắt snap); giữ **Shift** để khoá trục.
 - **Format trong text card**: phím tắt như editor chính (`obsidianKeymap`) — ⌘B đậm, ⌘I nghiêng, ⌘K thêm link,
   ⌘L task, `⌘/` comment (toggle marker); menu chuột phải mở **đúng tại con trỏ** và tự dịch vào trong màn hình.
-- **Căn lề text** (mở rộng ngoài JSON Canvas spec): `TextNode.textAlign` = `left|center|right`, chọn qua nút trong
-  selection menu (khi chọn text node) hoặc submenu "Align" menu chuột phải; áp cho cả textarea lẫn nội dung render.
+- **Căn lề text** (mở rộng ngoài JSON Canvas spec): `TextNode.textAlign` = `left|center|right`, chọn qua
+  submenu "Align" menu chuột phải; áp cho cả textarea lẫn nội dung render.
   *Lưu ý: Obsidian thật bỏ qua field này khi mở lại.*
+- **Selection toolbar parity (2026-11-02)**: a single text card shows Remove, Set color, Zoom to selection and Edit in a compact native-style toolbar. Text cards use readable 16px default typography, native neutral borders and no outer paragraph margins. Vertical padding shrinks with card height using the native Canvas rule so two lines fit a 250×60 card. Opening a small board fits at up to 100%. Zoom changes viewport state only.
 - **Lưu**: autosave debounce (~900ms) như editor, ghi qua `PUT /api/files/content` (store `content`/`save`,
   `.canvas` đã nằm trong `TEXT_RE`). Không thêm endpoint mới.
 - **Tạo canvas mới**: context menu cây thư mục ("New canvas") + command palette; tên `Untitled.canvas` không

@@ -1149,7 +1149,7 @@ export default function CanvasView() {
       return;
     }
     const pad = 80;
-    const scale = Math.min(4, Math.max(0.1, Math.min((r.width - pad) / bb.width, (r.height - pad) / bb.height, 1.5)));
+    const scale = Math.max(0.1, Math.min((r.width - pad) / bb.width, (r.height - pad) / bb.height, 1));
     const tx = r.width / 2 - (bb.x + bb.width / 2) * scale;
     const ty = r.height / 2 - (bb.y + bb.height / 2) * scale;
     setView({ tx, ty, scale });
@@ -1248,10 +1248,10 @@ export default function CanvasView() {
   })();
   const onlyEdges = sel.edges.size > 0 && sel.nodes.size === 0;
   const selEdgeHasLabel = onlyEdges && data.edges.some((e) => sel.edges.has(e.id) && e.label);
-  // Text-card alignment state (only when ≥1 selected node is a text card).
-  const selTextNodes = data.nodes.filter((n) => sel.nodes.has(n.id) && n.type === 'text') as TextNode[];
-  const selHasText = selTextNodes.length > 0;
-  const curAlign: TextAlign = selTextNodes[0]?.textAlign ?? 'left';
+  // Native Edit action applies to a single selected text card.
+  const singleTextNode = sel.nodes.size === 1 && sel.edges.size === 0
+    ? data.nodes.find((n) => sel.nodes.has(n.id) && n.type === 'text')
+    : undefined;
   // Current color of the selection (first selected node/edge) → highlight its swatch.
   const selColor: string | undefined = (() => {
     const n = data.nodes.find((x) => sel.nodes.has(x.id));
@@ -1440,7 +1440,7 @@ export default function CanvasView() {
             <div
               key={n.id}
               className={`canvas-node canvas-${n.type} ${selected ? 'selected' : ''}`}
-              style={{ left: n.x, top: n.y, width: n.width, height: n.height, ...(col ? ({ '--c': col, borderColor: col } as React.CSSProperties) : {}) }}
+              style={{ left: n.x, top: n.y, width: n.width, height: n.height, '--canvas-node-height': `${n.height}px`, ...(col ? ({ '--c': col, borderColor: col } as React.CSSProperties) : {}) } as React.CSSProperties}
               onPointerDown={(e) => beginNodeDrag(e, n.id)}
               onPointerEnter={() => setHoverNode(n.id)}
               onPointerLeave={() => setHoverNode((h) => (h === n.id ? null : h))}
@@ -1481,7 +1481,7 @@ export default function CanvasView() {
                     style={{ textAlign: (n as TextNode).textAlign ?? 'left' }}
                   />
                 ) : (
-                  <div className="canvas-text-body markdown-preview" style={{ textAlign: (n as TextNode).textAlign ?? 'left' }}>
+                  <div className="canvas-text-body" style={{ textAlign: (n as TextNode).textAlign ?? 'left' }}>
                     {(n as TextNode).text.trim() ? <Preview source={(n as TextNode).text} /> : <span className="canvas-placeholder">Empty card — double-click to edit</span>}
                   </div>
                 )
@@ -1528,22 +1528,12 @@ export default function CanvasView() {
               <Icon name="palette" size={16} />
             </button>
             <button className="canvas-menu-btn" title="Zoom to selection" onClick={zoomToSelection}>
-              <Icon name="zoom-in" size={16} />
+              <Icon name="zoom-to-selection" size={16} />
             </button>
-            {selHasText && (
-              <>
-                <span className="canvas-menu-vsep" />
-                {(['left', 'center', 'right'] as const).map((a) => (
-                  <button
-                    key={a}
-                    className={`canvas-menu-btn ${curAlign === a ? 'active' : ''}`}
-                    title={`Align ${a}`}
-                    onClick={() => setTextAlign(a)}
-                  >
-                    <Icon name={`align-${a}`} size={16} />
-                  </button>
-                ))}
-              </>
+            {singleTextNode && (
+              <button className="canvas-menu-btn" title="Edit" onClick={() => activateNode(singleTextNode.id)}>
+                <Icon name="square-pen" size={16} />
+              </button>
             )}
             {onlyEdges && (
               <>

@@ -1,5 +1,37 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Native code colors, Canvas and favicon fork PR — 2026-11-02
+
+Cập nhật lần cuối: 2026-11-02.
+
+- [x] Match native fenced JavaScript, Python and YAML token boundaries and colors with lazy stream grammars. Keep Markdown, frontmatter and the standalone code viewer palettes independent. Verify both themes and Live, Reading and Source modes without source changes.
+- [x] Review all pending changes against fork main. Add a failing browser assertion for neutral Canvas borders and narrow the colored-card selector to the actual `--c:` property.
+- [x] Run fresh full tests, typecheck, workspace/desktop builds and disposable integration smoke. Prepare all pending source, tests and documentation for a PR against `macros0/webobsidian:main`.
+
+Nhật ký tiến độ — 2026-11-02. Independent review identified the Canvas height variable colliding with the existing broad colored-card selector. The correction is included in this PR and has not been deployed to CT102.
+
+Final validation — 2026-11-02. Fresh full run passed 390 server tests (10 Windows capability skips) and all 520 web tests. Typecheck, workspace build, desktop typecheck/build, disposable integration smoke and all three MCP tests passed. The earlier PDF Chrome-startup `bad port` failure passed in isolation and in the final full run. Independent review approved the selector correction with no remaining findings.
+
+## Obsidian site icon — 2026-11-02
+
+- [x] Add the official Obsidian gradient SVG as the browser favicon, verify the production HTML resolves the icon, and deploy the tested assets to CT102.
+
+Nhật ký tiến độ — 2026-11-02. Use the original asset from https://obsidian.md/images/obsidian-logo-gradient.svg. Vite fingerprints the icon URL for browser cache refresh.
+
+Verification — production build, SVG/XML and exact asset bytes passed. Deployed `favicon-a88455468a4a` with healthy container, matching served assets and unchanged settings. Backup `/opt/webobsidian/backups/favicon-a88455468a4a-20261102T162308Z`.
+
+## Compact Canvas text layout — 2026-11-02
+
+Cập nhật lần cuối: 2026-11-02.
+
+- [x] Reproduce compact two-line card clipping in a browser, remove reading-view boundary margins and verify long-card scrolling and unchanged document bytes. Match native selection controls, compact toolbar dimensions, text typography and neutral card borders. Check zoom/reset and Edit through the selection toolbar.
+
+Nhật ký tiến độ — 2026-11-02. Browser reproduction confirms a 70px card has 96px of scroll content because of paragraph margins. Scope the layout correction to Canvas text cards under FR-12.
+
+Verification — 2026-11-02. All 520 web tests passed after the text layout correction. After the native toolbar and border changes, all three focused Canvas browser tests and the production web build (including TypeScript) passed. Native toolbar dimensions and neutral border colors were checked against the installed Obsidian application resources. Plugin controls were excluded at the owner's request. Deployment records follow below.
+
+- [x] Follow-up with the actual 250×60 card dimensions. The original 300×70 fixture missed residual overflow. Use native height-dependent vertical padding, keep small boards at 100% on opening, and verify zoom without document changes. All three focused browser tests and the production build pass. Deployed `canvas-layout-332337470529` with healthy container, matching served asset hashes and unchanged settings. Backup `/opt/webobsidian/backups/canvas-layout-332337470529-20261102T120623Z`. Browser UI inspection reported page zoom at 90%. Direct screenshot capture failed in computer-use, so final visual verification in the user's Comet remains manual.
+
 
 ## Native embed parity fork PR — 2026-11-01
 
