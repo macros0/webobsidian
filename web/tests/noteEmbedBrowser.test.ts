@@ -53,7 +53,7 @@ test('embedded notes expose an accessible open button in live, reading and HTML 
       const svg=button.querySelector('svg'),icon=svg.getBoundingClientRect(),bounds=svg.getBBox(),vb=svg.viewBox.baseVal;
       check(icon.width===16&&icon.height===16&&icon.left>=rect.left&&icon.right<=rect.right&&icon.top>=rect.top&&icon.bottom<=rect.bottom,mode+': whole icon fits inside its button');
       check(bounds.x>=vb.x&&bounds.y>=vb.y&&bounds.x+bounds.width<=vb.x+vb.width&&bounds.y+bounds.height<=vb.y+vb.height,mode+': complete arrow paths fit inside SVG viewport');
-      for(const [x,y] of [[icon.left+3,icon.top+3],[icon.right-3,icon.top+3],[icon.left+3,icon.bottom-3],[icon.right-3,icon.bottom-3]])check(button.contains(document.elementFromPoint(x,y)),mode+': all icon corners stay above embed content');
+      for(const [x,y] of [[icon.left+3,icon.top+3],[icon.right-3,icon.top+3],[icon.left+3,icon.bottom-3],[icon.right-3,icon.bottom-3]])check(button.contains(document.elementFromPoint(x,y)),mode+': all icon corners stay above embed content '+JSON.stringify({x,y,hit:document.elementFromPoint(x,y)?.outerHTML,icon:icon.toJSON(),viewport:{width:innerWidth,height:innerHeight}}));
 
      }
      opened=[];buttons[1].click();await wait();
@@ -99,7 +99,7 @@ test('embedded notes expose an accessible open button in live, reading and HTML 
    };
   `},bundle:true,format:'iife',platform:'browser',tsconfigRaw:{compilerOptions:{useDefineForClassFields:false,jsx:'react-jsx'}},
    loader:{'.woff2':'file','.woff':'file','.ttf':'file'},define:{'import.meta.env.DEV':'false'},outfile:join(dir,'fixture.js'),logLevel:'silent'});
-  await writeFile(join(dir,'index.html'),'<meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><body class="theme-dark"><div id="root" style="width:600px;height:1000px"></div><script src="fixture.js"></script>');
+  await writeFile(join(dir,'index.html'),'<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><body class="theme-dark"><div id="root" style="width:600px;height:1000px"></div><script src="fixture.js"></script>');
   await writeFile(join(dir,'runner.cjs'),`
    const {app,BrowserWindow}=require('electron');
    app.setPath('userData',${JSON.stringify(join(dir,'profile'))});
@@ -107,6 +107,7 @@ test('embedded notes expose an accessible open button in live, reading and HTML 
     const win=new BrowserWindow({show:false,width:1000,height:1200,webPreferences:{backgroundThrottling:false}});
     win.webContents.on('console-message',(_e,_level,message)=>{if(message.includes('crashed'))console.error(message)});
     await win.loadFile(${JSON.stringify(join(dir,'index.html'))});
+    win.webContents.debugger.attach('1.3');await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width:1000,height:1200,deviceScaleFactor:1,mobile:false});
     win.webContents.focus();
     await win.webContents.executeJavaScript('window.run()');
     win.webContents.sendInputEvent({type:'keyDown',keyCode:'Enter'});win.webContents.sendInputEvent({type:'char',keyCode:String.fromCharCode(13)});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Enter'});
