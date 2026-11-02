@@ -1,5 +1,11 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## PR #16 hosted CI — 2026-11-02
+
+- [x] Stabilize the toolbar viewport fixture after resize before opening its overflow menu. Preserve all zoom, mobile keyboard, selection and bounds assertions. The viewport, overflow and navigation browser tests pass locally.
+
+Nhật ký tiến độ — 2026-11-02. Hosted CI passed dependency audit and Docker build. Its web suite passed 519/520 tests, with the viewport fixture clicking More during the asynchronous overflow update at a 960×600 CSS viewport. Require stable measured geometry and command inventory before the click.
+
 ## Native code colors, Canvas and favicon fork PR — 2026-11-02
 
 Cập nhật lần cuối: 2026-11-02.
