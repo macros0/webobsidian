@@ -8,7 +8,7 @@ import { editorStructure, outlineMarkdown, persistentFolding } from '../lib/edit
 import { search, searchKeymap } from '@codemirror/search';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { yamlFrontmatter } from '@codemirror/lang-yaml';
-import { languages } from '@codemirror/language-data';
+import {nativeFencedCodeLanguages,nativeFencedCodeHighlightStyle} from '../lib/nativeCodeLanguages';
 import { syntaxHighlighting } from '@codemirror/language';
 import { obsidianHighlightStyle, literalAngleColors } from '../lib/highlight';
 import { useStore, documentSessions } from '../lib/store';
@@ -220,13 +220,14 @@ export default function Editor() {
         editorStructure,
         persistentFolding(documentScope,activePath??''),
         // GFM base so Strikethrough/Table/TaskList nodes exist (Obsidian dialect);
-        // codeLanguages lazy-loads grammars for fenced blocks (Obsidian: Prism).
+        // Fence grammars follow the native editor's tokenization and palette.
         // YAML front matter (--- … ---) is parsed as YAML; the rest stays Markdown.
-        yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: languages,extensions:[outlineMarkdown] }) }),
+        yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: nativeFencedCodeLanguages,extensions:[outlineMarkdown] }) }),
         suggesterPlugin,
         // Obsidian token palette via CSS vars (works in both themes); markdown
         // structure styling is owned by the Live Preview decorations.
         syntaxHighlighting(obsidianHighlightStyle),
+        syntaxHighlighting(nativeFencedCodeHighlightStyle),
         literalAngleColors,
         EditorView.lineWrapping,
         ...(isMd ? selectionToolbar : []),

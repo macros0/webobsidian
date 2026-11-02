@@ -92,6 +92,21 @@ package/lockfile, manifests всех пяти workspaces и `server/dist`, `serv
 
 ## Проверка состояния
 
+### Установленная версия — иконка сайта, 2 ноября 2026
+
+- Build `favicon-a88455468a4a`, image ID `sha256:0ca49dacd783e37b7ec1799404e6442386538cc93e6ddf5b3feeb4e4ea80667c`.
+- Добавлена официальная SVG-иконка Obsidian во вкладке браузера. Проверены production build, Linux smoke, healthy, SPA/asset hashes и совпадение настроек с backup.
+- Резервная копия `/opt/webobsidian/backups/favicon-a88455468a4a-20261102T162308Z`, предыдущий образ `webobsidian:canvas-layout-332337470529` сохранён.
+- Локальный пакет `build/favicon-release/`.
+
+### Установленная версия — Canvas, 2 ноября 2026
+
+- Build `canvas-layout-332337470529`, image ID `sha256:6650bcfac3e895d2e37a4b9d3b269d7944823f3a55ffbcb7fab36d85509f159d`.
+- Исправлены отступы двухстрочной карточки 250×60, шрифт, рамка и штатная панель выбранной карточки. Начальный fit маленькой доски ограничен 100%.
+- Три браузерных теста Canvas, production web build и изолированный Linux smoke прошли. Healthy, build ID, отдаваемые SPA/JS/CSS и совпадение настроек с резервной копией проверены.
+- Резервная копия `/opt/webobsidian/backups/canvas-layout-332337470529-20261102T120623Z`. Предыдущий образ `webobsidian:canvas-layout-c31c06e2314e` сохранён.
+- Локальный пакет `build/canvas-layout-final-release/`. Исходники развёрнуты как снимок рабочей копии. Commit и push не выполнялись.
+
 ### Установленная версия: цвет литералов и многострочные кавычки Live — 29 октября 2026
 
 - Build: `cc8b061-worktree-a14ad1ae6b77`; source SHA256
