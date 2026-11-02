@@ -41,10 +41,10 @@ Files: update `web/src/lib/livePreview.ts`, `web/src/components/Preview.tsx`; cr
 
 ### 3. Verify and deploy
 
-- [ ] Compare the polygon flowchart and sequence diagram with installed Obsidian 1.15 in dark/light themes using owned fixtures; inspect screenshots.
-- [ ] Run targeted tests, typecheck, build, full tests, dependency checks/audit; review the complete change and address findings.
-- [ ] Prepare an image from the current server image with public client assets only after verifying no server runtime changes; smoke-test in isolation, back up and activate.
-- [ ] Verify external HTTPS release/assets and unchanged protected note/fixture hashes.
+- [x] Compare polygon flowchart and sequence geometry with installed Obsidian 1.15 using owned fixtures and screenshots; verify both themes against the native theme CSS.
+- [x] Run targeted tests, typecheck, build, full tests, dependency checks/audit; review the complete change and address findings.
+- [x] Prepare an image from the current server image with public client assets only after verifying no server runtime changes; smoke-test in isolation, back up and activate.
+- [x] Verify external HTTPS release/assets and unchanged protected note/fixture hashes.
 
 ## Execution ledger
 
@@ -55,3 +55,5 @@ Files: update `web/src/lib/livePreview.ts`, `web/src/components/Preview.tsx`; cr
 - Verification: native Obsidian and actual Chrome polygon flowcharts both render at 730 × 600 with Pele 1.8.0. Targeted browser/polygon/KaTeX checks pass; keyboard zoom/reset checked separately. npm audit (production) reports zero vulnerabilities.
 - Review fixes (RED then GREEN): preserve embedded note origin before replacing fence DOM; rehydrate identical HTML on note changes; pass displayed paths for split/Canvas file previews; disable competing Pele zoom inside Canvas. Fresh reviewer confirmed no further findings.
 - Final theme regression: defaults belong on the theme root so inherited `--mermaid-*` overrides reach diagrams. RED reproduced the override being masked; GREEN covers parent overrides in every rendering surface.
+- Completed: final typecheck/build, 390 server tests (10 Windows skips), 516 web tests, 3 MCP tests, dependency baselines, full npm audit (zero findings), and isolated production-image smoke passed.
+- Deployment: `pele-c8fe88d31202`, runtime commit `22eaa2ab067e56052239732690677c359add25f9`. External HTTPS and 12 asset hashes verified, including Pele. Protected note/fixture hashes and settings are unchanged. Backup: `/opt/webobsidian/backups/pele-c8fe88d31202-20261102T174625Z`.
