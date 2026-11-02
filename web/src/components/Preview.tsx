@@ -1,4 +1,4 @@
-import {mermaidConfig} from '../lib/mermaidConfig';
+import {mountDiagramBlocks} from '../lib/diagram';
 import {pdfFileActions} from '../lib/pdfFileActions';
 import {processPluginMarkdown,usePluginRevision} from '../lib/plugins/registry';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
@@ -54,13 +54,6 @@ async function highlightCodeEl(codeEl: HTMLElement): Promise<void> {
 let katexP: Promise<typeof import('katex')['default']> | null = null;
 const loadKatex = () =>
   (katexP ??= Promise.all([import('katex'), import('katex/dist/katex.min.css')]).then(([k]) => k.default));
-let mermaidP: Promise<typeof import('mermaid')['default']> | null = null;
-const loadMermaid = () =>
-  (mermaidP ??= import('mermaid').then((m) => {
-    m.default.initialize(mermaidConfig);
-    return m.default;
-  }));
-let mmdSeq = 0;
 
 /** Add a "Render HTML" toggle to a ```html block. Clicking swaps the source
  *  for a sandboxed iframe (scripts run but isolated — no same-origin, so the
@@ -96,12 +89,13 @@ function setupHtmlPreview(codeEl: HTMLElement): void {
   });
 }
 
-export default function Preview({ source }: { source?: string }) {
+export default function Preview({ source,sourcePath }: { source?: string;sourcePath?:string }) {
   const preferences=useVaultPreferences();
   const pluginRevision=usePluginRevision();
   const storeContent = useStore((s) => s.content);
   const content = source ?? storeContent;
-  const activePath = useStore((s) => s.activePath);
+  const workspacePath = useStore((s) => s.activePath);
+  const activePath=sourcePath??workspacePath;
   const showInlineTitle = useStore((s) => s.showInlineTitle);
   const openWikilink = useStore((s) => s.openWikilink);
   const noteNavigation=useStore(s=>s.noteNavigation);
@@ -193,30 +187,14 @@ export default function Preview({ source }: { source?: string }) {
     for (const codeEl of root.querySelectorAll<HTMLElement>('pre > code.language-html')) {
       setupHtmlPreview(codeEl);
     }
-    const mmd = root.querySelectorAll<HTMLElement>('pre > code.language-mermaid');
-    if (mmd.length) {
-      void loadMermaid().then(async (mermaid) => {
-        for (const codeEl of mmd) {
-          if (cancelled) return;
-          const pre = codeEl.parentElement!;
-          try {
-            const { svg } = await mermaid.render(`read-mmd-${++mmdSeq}`, codeEl.textContent ?? '');
-            const div = document.createElement('div');
-            div.className = 'mermaid';
-            div.innerHTML = svg;
-            pre.replaceWith(div);
-          } catch {
-            document.getElementById(`dread-mmd-${mmdSeq}`)?.remove();
-          }
-        }
-      });
-    }
+    const disposeDiagrams=mountDiagramBlocks(root,activePath??'');
     return () => {
       cancelled = true;
       disposePdfs();
       disposeCanvases();
+      disposeDiagrams();
     };
-  }, [html]);
+  }, [html,activePath]);
 
   const onClick = (e: React.MouseEvent) => {
     // Click an embedded image → full-screen zoom/pan viewer.
@@ -282,7 +260,7 @@ export default function Preview({ source }: { source?: string }) {
     <div className={`markdown-preview${preferences.values.readableLineLength?' is-readable-line-width':''}`} style={{'--font-text-size':`${preferences.values.baseFontSize??16}px`} as CSSProperties} onClick={onClick} onContextMenu={onContextMenu}>
       <div className="preview-inner">
         {showTitle && <div className="inline-title">{title}</div>}
-        <div ref={bodyRef} dangerouslySetInnerHTML={{ __html: html }} />
+        <div key={activePath} ref={bodyRef} dangerouslySetInnerHTML={{ __html: html }} />
       </div>
     </div>
   );

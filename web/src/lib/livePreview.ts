@@ -6,7 +6,7 @@ import {
   ViewUpdate,
   WidgetType,
 } from '@codemirror/view';
-import {mermaidConfig} from './mermaidConfig';
+import {mountDiagram,mountDiagramBlocks} from './diagram';
 import { frontmatterTitle } from './title';
 import {propertyIconSvg} from './propertyPresentation';
 import {createPdfViewer,destroyPdfViewer} from './pdfViewer';
@@ -669,8 +669,8 @@ class NoteEmbedWidget extends WidgetType {
     if (!this.target.includes('#')) box.append(title);
     box.append(content);
     const origin=notePath;
-    let destroyed=false,disposePdfs=()=>{},disposeCanvases=()=>{};
-    noteEmbedCleanups.set(box,()=>{destroyed=true;disposePdfs();disposeCanvases()});
+    let destroyed=false,disposePdfs=()=>{},disposeCanvases=()=>{},disposeDiagrams=()=>{};
+    noteEmbedCleanups.set(box,()=>{destroyed=true;disposePdfs();disposeCanvases();disposeDiagrams()});
     void noteEmbedProvider(this.target,this.kind).then((res) => {
       if(destroyed)return;
       if (!res) {
@@ -684,6 +684,7 @@ class NoteEmbedWidget extends WidgetType {
       addNoteEmbedOpenButtons(content,openLink);
       disposePdfs=mountPdfEmbeds(content,origin,(target,from,kind)=>{void (kind==='markdown'?useStore.getState().openWikilink(target,kind,from):useStore.getState().openAttachment(target,from))},(target,origin,kind)=>pdfFileActions(target,origin,{linkKind:kind}));
       disposeCanvases=mountCanvasEmbeds(content,origin,(target,from,kind)=>openLink(target,kind,from));
+      disposeDiagrams=mountDiagramBlocks(content,res.path??origin);
       mountImageActions(content);
       content.addEventListener('mousedown', (e) => {
         const a = (e.target as HTMLElement).closest('[data-wikilink],a[data-link-kind="markdown"]') as HTMLAnchorElement | null;
@@ -710,17 +711,7 @@ class NoteEmbedWidget extends WidgetType {
 
 /* ---------------- mermaid (lazy, like Obsidian) ---------------- */
 
-let mermaidPromise: Promise<typeof import('mermaid')['default']> | null = null;
-function ensureMermaid() {
-  if (!mermaidPromise) {
-    mermaidPromise = import('mermaid').then((m) => {
-      m.default.initialize(mermaidConfig);
-      return m.default;
-    });
-  }
-  return mermaidPromise;
-}
-let mermaidSeq = 0;
+const diagramCleanups=new WeakMap<HTMLElement,()=>void>();
 
 class MermaidWidget extends WidgetType {
   constructor(readonly code: string,readonly source:SourceRange,readonly canEditSource:boolean) {
@@ -735,20 +726,11 @@ class MermaidWidget extends WidgetType {
   toDOM(view:EditorView) {
     const div = document.createElement('div');
     div.className = 'mermaid cm-mermaid';
-    div.textContent = '…';
-    void ensureMermaid()
-      .then((mermaid) => mermaid.render(`cm-mmd-${++mermaidSeq}`, this.code))
-      .then(({ svg }) => {
-        div.innerHTML = svg;if(this.canEditSource)addBlockSourceAction(div,view,this.source);if(div.isConnected)view.requestMeasure();
-      })
-      .catch((err) => {
-        div.classList.add('mod-error');
-        div.textContent = String(err?.message ?? err);
-        // mermaid leaves an orphaned error element in <body> on parse failure
-        document.getElementById(`dcm-mmd-${mermaidSeq}`)?.remove();
-      });
+    diagramCleanups.set(div,mountDiagram(div,this.code,{sourcePath:notePath,onRender:()=>{if(div.isConnected)view.requestMeasure()}}));
+    if(this.canEditSource)addBlockSourceAction(div,view,this.source);
     return div;
   }
+  destroy(dom:HTMLElement){diagramCleanups.get(dom)?.();diagramCleanups.delete(dom)}
 }
 
 function buildMermaid(state: EditorState): DecorationSet {

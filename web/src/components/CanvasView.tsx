@@ -78,7 +78,7 @@ function FileNodeBody({ file }: { file: string }) {
         <span className="title">{name.replace(MD_RE, '')}</span>
       </div>
       <div className="canvas-file-body markdown-preview">
-        {isMd ? (md != null ? <Preview source={md} /> : <div className="canvas-loading">Loading…</div>) : (
+        {isMd ? (md != null ? <Preview source={md} sourcePath={file} /> : <div className="canvas-loading">Loading…</div>) : (
           <div className="canvas-file-generic">
             <Icon name="file" size={28} />
             <span>{name}</span>
