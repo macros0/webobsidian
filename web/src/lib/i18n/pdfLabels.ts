@@ -32,8 +32,8 @@ const keys: Record<string,string> = {
 };
 export function pdfLabel(source: string) {return getLanguageState().name && keys[source] ? t(keys[source]) : source;}
 export function bindPdfLabel(node: Node, source: string, field: string) {
- const key = keys[source] ?? Object.values(keys).find(key => t(key) === source);
- if (key) setLocalizedText(node,key,{},field,source,true);
+ const original = Object.hasOwn(keys,source) ? source : Object.keys(keys).find(label => t(keys[label]) === source);
+ if (original) setLocalizedText(node,keys[original],{},field,original,true);
  else if (field === 'textContent') node.textContent=source;
  else if (node instanceof Element) node.setAttribute(field,source);
 }

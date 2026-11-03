@@ -22,6 +22,7 @@ test('browser: language file import, template, live labels and literal user titl
       import {defaultVaultPreferences} from './src/lib/vaultPreferences';
       import {registerTemplate,getCommand} from './src/lib/toolbar/registry';
       import {loadServerLanguage,saveServerLanguage,clearServerLanguage} from './src/lib/i18n/server';
+      import {pdfLabel,bindPdfLabel} from './src/lib/i18n/pdfLabels';
       import {initializeLanguage,t,useLanguage,setLocalizedText} from './src/lib/i18n/runtime';
       import {exportLanguageTemplate} from './src/lib/i18n/pack';
       initializeLanguage();localStorage.clear();
@@ -47,7 +48,10 @@ test('browser: language file import, template, live labels and literal user titl
         let downloaded=false;HTMLAnchorElement.prototype.click=function(){downloaded=this.download==='webobsidian-language.txt'};
         [...document.querySelectorAll('button')].find(b=>b.textContent==='Download template').click();check(downloaded,'template download');
         const load=async(text)=>{const input=document.querySelector('input[type=file]');const data=new DataTransfer();data.items.add(new File([text],'custom.txt',{type:'text/plain'}));input.files=data.files;input.dispatchEvent(new Event('change',{bubbles:true}));await wait();};
-        await load('[plugins.file-explorer.action-new-folder]\\ntranslation=Custom folder\\n[interface.settings]\\ntranslation=Translated settings\\n[webobsidian.missing-file]\\ntranslation=Missing {{name}}');
+        await load('[plugins.file-explorer.action-new-folder]\\ntranslation=Custom folder\\n[interface.settings]\\ntranslation=Translated settings\\n[webobsidian.missing-file]\\ntranslation=Missing {{name}}\\n[commands.zoom-in]\\ntranslation=Custom zoom');
+        const pdfButton=document.createElement('button');
+        bindPdfLabel(pdfButton,pdfLabel('Увеличить'),'title');
+        check(pdfButton.title==='Custom zoom','PDF label uses active pack when created');
         check(document.querySelector('#folder').textContent==='Custom folder','react updates immediately');
         check(widget.firstChild.textContent==='Missing <b>note</b>'&&!widget.querySelector('b'),'existing DOM widget updates as text');
         check(widget.querySelector('a')===action,'language update preserves controls appended to translated text');
@@ -77,6 +81,7 @@ test('browser: language file import, template, live labels and literal user titl
         check(document.querySelector('#folder').textContent==='New folder','reset restores English');
         check(!localStorage.getItem('webobsidian.language.v1'),'reset deletes saved pack');
         check(serverPack===null,'reset deletes server pack');
+        check(pdfButton.title==='Увеличить','PDF reset restores the original label for widgets created under a pack');
         return 'LANGUAGE_PASS';
       };
     `},bundle:true,jsx:'automatic',format:'iife',platform:'browser',define:{'import.meta.env.DEV':'false'},outfile:join(dir,'fixture.js'),logLevel:'silent'});

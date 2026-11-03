@@ -27,6 +27,13 @@ Linux smoke and language HTTP round trip with a second session passed before
 activation. Live healthy/build, served asset hashes, unchanged settings and
 service/retry timer verified. Backup is recorded in `docs/INSTALLATION_CT102.md`.
 
+PR preparation — 2026-11-03. Added the authored Russian file to
+`translations/ru.txt` with a catalogue/placeholder coverage test. All 521 web
+tests passed locally. Final review found a PDF-label reset issue when a widget
+was created under an active language. Restore its canonical default label
+instead of retaining translated text. The regression failed before the fix and
+passed with the related language/PDF fixtures afterward.
+
 ## Canvas text flow and arrowheads — 2026-11-03
 
 - [x] Compare the three screenshot samples with an isolated Obsidian profile. Match their line breaks and vertical spacing, scope Canvas text to the measured 16px reference size, and use the native 13×10.4px stroked arrowhead. Verify normal note font preferences and document bytes.
