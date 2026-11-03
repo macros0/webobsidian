@@ -20,6 +20,8 @@ import React from 'react';
 import {createRoot} from 'react-dom/client';
 import CanvasView from './src/components/CanvasView';
 import {useStore} from './src/lib/store';
+import {defaultVaultPreferences,getVaultPreferences} from './src/lib/vaultPreferences';
+import referenceFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf';
 import './src/styles/obsidian.css';
 const check = (ok, message) => { if (!ok) throw Error(message); };
 const wait = () => new Promise(resolve => setTimeout(resolve, 50));
@@ -27,21 +29,61 @@ const nodes = [
   {id:'short',type:'text',x:0,y:0,width:250,height:60,text:'Загрузка сообщений проактива'},
   {id:'long',type:'text',x:400,y:0,width:300,height:100,text:Array(30).fill('Строка текста').join('\\n')},
   {id:'colored',type:'text',x:800,y:0,width:250,height:100,text:'Colored card',color:'4'},
+  {id:'flow',type:'text',x:0,y:200,width:250,height:140,text:'СФР проактив:\\nформирование сообщений 10010 или 32210'},
+  {id:'sap',type:'text',x:300,y:200,width:250,height:60,text:'SAP: Загрузка сообщений проактива'},
+  {id:'instruction',type:'text',x:600,y:200,width:250,height:250,text:'Проверяем наличие ранее загруженных сумм в 2010 ИТ, читаем во по годам SI* на начало года получения сообщения'},
+  {id:'empty',type:'text',x:0,y:500,width:250,height:140,text:' '},
 ];
 const original = JSON.stringify({nodes, edges:[]});
 useStore.setState({activePath:'test.canvas',content:original,dirty:false});
 window.run = async () => {
+  const referenceFont=new FontFace('CanvasReference','url('+referenceFontUrl+')');
+  await referenceFont.load();document.fonts.add(referenceFont);
+  document.body.style.setProperty('--font-text','CanvasReference');
+  window.fetch=async()=>new Response(JSON.stringify({values:{...defaultVaultPreferences,baseFontSize:19},sources:{},warnings:[],vaultPath:'/fixture'}));
+  await getVaultPreferences();
   document.body.classList.add('theme-dark');
   const host = document.createElement('div');
   host.style.cssText = 'width:1200px;height:800px';
   document.body.append(host);
   const root = createRoot(host);
   root.render(<CanvasView/>);
-  for (let i=0;i<100 && host.querySelectorAll('.canvas-text-body p').length<2;i++) await wait();
+  for (let i=0;i<100 && host.querySelectorAll('.canvas-text-body p').length<6;i++) await wait();
   await document.fonts.ready;
   const bodies = [...host.querySelectorAll('.canvas-text-body')];
   const short = bodies[0], long = bodies[1];
   check(short && long, 'both cards rendered');
+  const placeholder=host.querySelector('.canvas-placeholder');
+  check(placeholder.getBoundingClientRect().top-placeholder.closest('.canvas-node').getBoundingClientRect().top>=11, 'empty cards retain vertical spacing');
+  const arrow=host.querySelector('#cv-arrow path').getBBox();
+  check(Math.abs(arrow.width-10.4)<.01&&arrow.height===13, 'arrowhead uses native Canvas dimensions');
+  check(getComputedStyle(short.querySelector('p')).fontSize==='16px', 'Canvas keeps its native 16px text size with a 19px note preference');
+  const expectedLines = [
+    ['СФР проактив:', 'формирование сообщений', '10010 или 32210'],
+    ['SAP: Загрузка сообщений', 'проактива'],
+    ['Проверяем наличие ранее', 'загруженных сумм в 2010', 'ИТ, читаем во по годам SI*', 'на начало года получения', 'сообщения'],
+  ];
+  const wrappedLines = paragraph => {
+    const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT), lines = [];
+    let text;
+    while (text = walker.nextNode()) {
+      for (let i=0;i<text.length;i++) {
+        const range = document.createRange();range.setStart(text,i);range.setEnd(text,i+1);
+        const rect = range.getBoundingClientRect();if (!rect.width) continue;
+        let line = lines.find(line => Math.abs(line.top-rect.top)<1);
+        if (!line) {line={top:rect.top,text:''};lines.push(line);}
+        line.text += text.data[i];
+      }
+    }
+    return lines.map(line => line.text.trim());
+  };
+  for (let i=0;i<expectedLines.length;i++) {
+    const body=bodies[i+3], paragraph=body.querySelector('p');
+    check(JSON.stringify(wrappedLines(paragraph))===JSON.stringify(expectedLines[i]), 'native line wrapping '+JSON.stringify({i,actual:wrappedLines(paragraph)}));
+    const gap=paragraph.getBoundingClientRect().top-body.closest('.canvas-node').getBoundingClientRect().top;
+    check(Math.abs(gap-(i===1?6.6:17.1))<1, 'native top spacing '+JSON.stringify({i,gap}));
+    check(body.scrollHeight<=body.clientHeight+1, 'native sample has no unnecessary scrolling '+i);
+  }
   check(getComputedStyle(short.closest('.canvas-node')).borderTopWidth === '1px', 'neutral cards keep the native thin border');
   check(getComputedStyle(bodies[2].closest('.canvas-node')).borderTopWidth === '3px', 'colored cards retain their colored border');
   check(host.querySelector('.canvas-zoom-pct').textContent === '100%', 'opening a small board preserves normal scale');

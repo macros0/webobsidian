@@ -2246,9 +2246,21 @@ button.task-due:hover .task-due-caret { opacity: 1; }
 /* Native Canvas reduces vertical whitespace for short cards. */
 .canvas-text-body {
   min-height: 0; font-family: var(--font-text); font-size: var(--font-text-size);
-  padding: clamp(0px, calc(var(--canvas-node-height, 100px) * .1 - 3px), 16px) 16px;
+  padding: 0 16px;
 }
-.canvas-text-body > .markdown-preview { overflow: visible; }
+.canvas-text-body > .markdown-preview {
+  overflow: visible; min-height: 100%; display: flex; flex-direction: column;
+}
+.canvas-text-body > .markdown-preview::before,
+.canvas-text-body > .markdown-preview::after {
+  content: ''; display: block; flex: 1 1 0;
+  min-height: clamp(0px, calc(var(--canvas-node-height, 100px) * .1 - 3px), 16px);
+  max-height: 16px;
+}
+.canvas-text-body .preview-inner { flex: 1 0 0; width: 100%; }
+.canvas-text-body:has(> .canvas-placeholder) {
+  padding-block: clamp(0px, calc(var(--canvas-node-height, 100px) * .1 - 3px), 16px);
+}
 .canvas-text-body .preview-inner > div > :first-child { margin-top: 0; }
 .canvas-text-body .preview-inner > div > :last-child { margin-bottom: 0; }
 .canvas-placeholder { color: var(--text-faint); font-style: italic; }

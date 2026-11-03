@@ -1,3 +1,5 @@
+import {setLocalizedText} from "../lib/i18n/runtime";
+import {t as uiText, useLanguage} from "../lib/i18n/runtime";
 import {mountDiagramBlocks} from '../lib/diagram';
 import {pdfFileActions} from '../lib/pdfFileActions';
 import {processPluginMarkdown,usePluginRevision} from '../lib/plugins/registry';
@@ -68,7 +70,7 @@ function setupHtmlPreview(codeEl: HTMLElement): void {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'html-render-btn';
-  btn.textContent = 'Render HTML';
+  setLocalizedText(btn, "webobsidian.render-html-e2fc37", {}, "textContent");
   wrap.appendChild(btn);
   let frame: HTMLIFrameElement | null = null;
   btn.addEventListener('click', () => {
@@ -76,7 +78,7 @@ function setupHtmlPreview(codeEl: HTMLElement): void {
       frame.remove();
       frame = null;
       pre.style.display = '';
-      btn.textContent = 'Render HTML';
+      setLocalizedText(btn, "webobsidian.render-html-e2fc37", {}, "textContent");
       return;
     }
     frame = document.createElement('iframe');
@@ -85,11 +87,13 @@ function setupHtmlPreview(codeEl: HTMLElement): void {
     frame.srcdoc = codeEl.textContent ?? '';
     pre.style.display = 'none';
     wrap.appendChild(frame);
-    btn.textContent = 'Hide HTML';
+    setLocalizedText(btn, "webobsidian.hide-html-0fab51", {}, "textContent");
   });
 }
 
-export default function Preview({ source,sourcePath }: { source?: string;sourcePath?:string }) {
+export default function Preview({ source,sourcePath,fontSize }: { source?: string;sourcePath?:string;fontSize?:number }) {
+  const languageRevision = useLanguage().revision;
+
   const preferences=useVaultPreferences();
   const pluginRevision=usePluginRevision();
   const storeContent = useStore((s) => s.content);
@@ -229,12 +233,12 @@ export default function Preview({ source,sourcePath }: { source?: string;sourceP
       x: e.clientX,
       y: e.clientY,
       items: [
-        { label: 'Copy', icon: 'file-text', onClick: () => sel && navigator.clipboard.writeText(sel).catch(() => {}) },
+        { get label() {return uiText("interface.menu.copy");}, icon: 'file-text', onClick: () => sel && navigator.clipboard.writeText(sel).catch(() => {}) },
         ...(sel
-          ? [{ label: `Search for “${sel.slice(0, 24)}”`, icon: 'search', onClick: () => setLeftPanel('search') }]
+          ? [{ get label() {return uiText("webobsidian.search-for-value0-73c0eb", {value0: sel.slice(0, 24)});}, icon: 'search', onClick: () => setLeftPanel('search') }]
           : []),
         { label: '', separator: true },
-        { label: 'Select all', onClick: () => {
+        { get label() {return uiText("webobsidian.select-all-913aff");}, onClick: () => {
             const r = document.createRange();
             const el = (e.currentTarget as HTMLElement);
             r.selectNodeContents(el);
@@ -257,7 +261,7 @@ export default function Preview({ source,sourcePath }: { source?: string;sourceP
   const showTitle = showInlineTitle && !!title && !(h1 && h1[1].trim().toLowerCase() === title.trim().toLowerCase());
 
   return (
-    <div className={`markdown-preview${preferences.values.readableLineLength?' is-readable-line-width':''}`} style={{'--font-text-size':`${preferences.values.baseFontSize??16}px`} as CSSProperties} onClick={onClick} onContextMenu={onContextMenu}>
+    <div className={`markdown-preview${preferences.values.readableLineLength?' is-readable-line-width':''}`} style={{'--font-text-size':`${fontSize??preferences.values.baseFontSize??16}px`} as CSSProperties} onClick={onClick} onContextMenu={onContextMenu}>
       <div className="preview-inner">
         {showTitle && <div className="inline-title">{title}</div>}
         <div key={activePath} ref={bodyRef} dangerouslySetInnerHTML={{ __html: html }} />

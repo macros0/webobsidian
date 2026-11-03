@@ -1,5 +1,40 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Browser language packs — 2026-11-03
+
+- [x] Add an English UI catalog, compatible .txt import, blank template download,
+  Settings → Language, server persistence, browser cache and immediate UI updates. Validate
+  partial imports, template round trips, replacement, reset, invalid files,
+  literal user content and existing editor/PDF widgets.
+
+Nhật ký tiến độ — 2026-11-03. Implementation follows
+`docs/superpowers/plans/2026-11-03-language-packs.md`. One active server-level
+pack replaces its predecessor. Following the user's refinement, imported
+compatible strings are persisted in server settings and refreshed on login,
+window focus and opening Language settings. The browser retains a startup cache.
+Existing local packs migrate when the server has no saved language.
+The final upstream check imported ru.txt entirely
+in memory and matched 134 UI keys with zero parameter warnings, including a
+server round trip. The own English catalog contains 952 strings. External
+dictionaries are absent from source, test fixtures and the production bundle.
+Verification passed — 520 web tests, 391 server tests (10 existing skips),
+full typecheck, production build and integration smoke. Additional browser
+assertions cover empty-cache server loading, local-pack migration, failed saves,
+serialized save/reset, preserving literal user titles and existing widget controls.
+
+Deployment — 2026-11-03. Installed `localization-4b2213c625cb` on CT102.
+Linux smoke and language HTTP round trip with a second session passed before
+activation. Live healthy/build, served asset hashes, unchanged settings and
+service/retry timer verified. Backup is recorded in `docs/INSTALLATION_CT102.md`.
+
+## Canvas text flow and arrowheads — 2026-11-03
+
+- [x] Compare the three screenshot samples with an isolated Obsidian profile. Match their line breaks and vertical spacing, scope Canvas text to the measured 16px reference size, and use the native 13×10.4px stroked arrowhead. Verify normal note font preferences and document bytes.
+
+Cập nhật lần cuối: 2026-11-03. Native reference uses flexible before/after spacers. The existing fixed padding produced a 12px top gap instead of approximately 17px in a 250×140 card. The live vault note font preference is 19px, which the embedded Preview applied to Canvas text. Use an explicit 16px Canvas rendering override to match the supplied reference. Synthetic captures are in `build/obsidian-canvas-typography/`.
+
+Verification — all 516 web tests and production web build passed. Exact wrapping assertions use the same bundled Liberation Sans font in the web fixture and isolated native capture for portability. Independent review corrections preserve placeholder spacing. Deployed `canvas-flow-8a0c5da7bcf7`, healthy and served asset hashes verified, settings unchanged. Backup `/opt/webobsidian/backups/canvas-flow-8a0c5da7bcf7-20261103T002232Z`.
+
 ## PR #16 hosted CI — 2026-11-02
 
 - [x] Stabilize the toolbar viewport fixture after resize before opening its overflow menu. Preserve all zoom, mobile keyboard, selection and bounds assertions. The viewport, overflow and navigation browser tests pass locally.
