@@ -50,7 +50,8 @@ stack runs from a single `docker compose up`.
 
 Open **Settings → Language** to import a UTF-8 `.txt` language file or download a
 blank template. The selected translation is saved on the server and shared by
-your browsers. Missing translations use the app's English text.
+your browsers. Fresh installations and language resets use English regardless
+of browser language. Missing translations use the app's English text.
 
 This fork provides an independently authored Russian translation for manual import.
 [Download the Russian language file](translations/ru.txt).
