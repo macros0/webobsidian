@@ -92,6 +92,21 @@ package/lockfile, manifests всех пяти workspaces и `server/dist`, `serv
 
 ## Проверка состояния
 
+### Установленная версия — локализация с серверным хранением, 3 ноября 2026
+
+- Build `localization-4b2213c625cb`, image ID `sha256:ecb46d016ea367397445b4203f3bad097ce15e3e86741096be6b6ee89628e0ec`.
+- Settings → Language поддерживает пользовательский `.txt`, шаблон и сброс. Совместимые строки сохраняются на сервере и загружаются в браузерах после входа, при возвращении в окно и открытии настроек языка.
+- Linux-образ собран из локальных production-артефактов с установкой server dependencies в Linux. Изолированный HTTP-тест проверил импорт, чтение другой авторизованной сессией, запись настроек, отклонение неверной версии пакета и сброс. Общий Linux smoke прошёл.
+- Проверены healthy/build, контрольные суммы SPA и отдаваемых assets, доступность с рабочего компьютера и активность service/retry timer. Настройки и `.env` совпали с резервной копией.
+- Backup `/opt/webobsidian/backups/localization-4b2213c625cb-20261103T054824Z`, предыдущий образ `webobsidian:canvas-flow-8a0c5da7bcf7` сохранён. Локальный пакет `build/localization-release/`. Рабочая копия развёрнута снимком без Git commit/push.
+
+### Установленная версия — переносы текста и стрелки Canvas, 3 ноября 2026
+
+- Build `canvas-flow-8a0c5da7bcf7`, image ID `sha256:0610b47718db92976c5c586eb61e31ae511994e4c3c1100941c708540405e26b`.
+- Canvas использует шрифт 16px, гибкие вертикальные интервалы и наконечник с основанием 13px, длиной 10,4px и обводкой 1px.
+- Все 516 web-тестов, production web build и изолированный Linux smoke прошли. Проверены healthy, build ID, совпадение отдаваемых файлов и настроек с резервной копией.
+- Backup `/opt/webobsidian/backups/canvas-flow-8a0c5da7bcf7-20261103T002232Z`, предыдущий образ `webobsidian:pele-c8fe88d31202` сохранён. Локальный пакет `build/canvas-flow-release/`.
+
 ### Установленная версия — иконка сайта, 2 ноября 2026
 
 - Build `favicon-a88455468a4a`, image ID `sha256:0ca49dacd783e37b7ec1799404e6442386538cc93e6ddf5b3feeb4e4ea80667c`.

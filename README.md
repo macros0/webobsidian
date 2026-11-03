@@ -46,6 +46,15 @@ It is **single-user** and self-hosted: one master password protects the whole ap
 configuration lives in a plain `data/settings.json` (no database engine), and the entire
 stack runs from a single `docker compose up`.
 
+### Interface language
+
+Open **Settings → Language** to import a UTF-8 `.txt` language file or download a
+blank template. The selected translation is saved on the server and shared by
+your browsers. Missing translations use the app's English text.
+
+This fork provides an independently authored Russian translation for manual import.
+[Download the Russian language file](translations/ru.txt).
+
 > **Why?** To access and edit your knowledge base from any browser, on any device, while
 > keeping full ownership of your files — and to let AI agents read/write your vault through
 > a safe, scoped REST API.

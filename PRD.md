@@ -7,6 +7,25 @@
 
 # PRD — WebObsidian
 
+## Browser language packs — 2026-11-03
+
+The web client supports user-imported UTF-8 language files using Obsidian's
+`[key]`, `original=`, `translation=` format. Its own English catalog supplies
+fallback strings and a downloadable blank template. Users obtain external files
+themselves through the repository link in Settings → Language. One active pack
+is saved in the authenticated server settings and shared by browsers of this
+WebObsidian instance. A local cache supplies startup/offline labels. Imports validate parameters and preserve
+the current pack on failure. Compatible strings update React and existing editor
+widgets immediately. Document names, text, command IDs and saved custom labels
+retain their literal values. Existing browser-language editor messages and PDF
+defaults are supported until a pack is chosen. Public server-rendered pages,
+native Electron menus and third-party plugin strings are outside this first
+version. Users obtain official dictionaries themselves and explicitly upload
+their chosen file. Successful imports save only compatible strings on the server.
+Existing browser-local packs migrate when the server has no language setting.
+An explicit reset clears the server setting and local cache. Returning to a
+browser window or opening Language settings refreshes its active server pack.
+
 > FR-2 clarification 2026-10-29: literal angle identifiers containing underscores
 > (for example `<LS_BEN>`) must use the normal body text color, not HTML tag red.
 > Apply in Source/Live/Reading without editing the note. Earlier red-preservation
@@ -677,6 +696,7 @@ chúng bằng đường có mũi tên, dùng cho brainstorm, moodboard, sơ đ�
   submenu "Align" menu chuột phải; áp cho cả textarea lẫn nội dung render.
   *Lưu ý: Obsidian thật bỏ qua field này khi mở lại.*
 - **Selection toolbar parity (2026-11-02)**: a single text card shows Remove, Set color, Zoom to selection and Edit in a compact native-style toolbar. Text cards use readable 16px default typography, native neutral borders and no outer paragraph margins. Vertical padding shrinks with card height using the native Canvas rule so two lines fit a 250×60 card. Opening a small board fits at up to 100%. Zoom changes viewport state only.
+- **Canvas screenshot parity (2026-11-03)**: text cards use an explicit 16px render size to match the reference even when the vault note font preference differs. Flexible vertical spacers grow up to 16px and shrink with short cards. Arrowheads use a 13px base, 10.4px length and 1px rounded outline.
 - **Lưu**: autosave debounce (~900ms) như editor, ghi qua `PUT /api/files/content` (store `content`/`save`,
   `.canvas` đã nằm trong `TEXT_RE`). Không thêm endpoint mới.
 - **Tạo canvas mới**: context menu cây thư mục ("New canvas") + command palette; tên `Untitled.canvas` không
