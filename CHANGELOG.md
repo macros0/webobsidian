@@ -1,5 +1,17 @@
 # Changelog
 
+## Microsoft Office clipboard and Russian editor menus — 2026-11-09
+
+- Add Copy for Microsoft Office for selected note fragments: semantic HTML and
+  plain text, table TSV and embedded raster images.
+- Convert supported Word HTML and Excel HTML/TSV into editable Markdown, using
+  existing attachment rules, one-step undo and guards against stale insertions.
+- Normalize actual CodeMirror reading DOM before export, remove widget-buffer
+  images and preserve enclosing selection formatting and plain-text block breaks.
+- Translate editor context-menu groups and numbered headings; provide a
+  [Russian usage guide](docs/OFFICE_CLIPBOARD.md) with HTTPS requirements and
+  the remaining desktop Word/Excel interoperability limits.
+
 ## Native embed compatibility and public readers — 2026-11-01
 
 - Match explorer filtering, filename titles, ordered tasks and native checkbox/strikethrough behavior.

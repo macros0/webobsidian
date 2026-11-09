@@ -125,3 +125,9 @@ readonly-редактора: служебные `cm-widgetBuffer` ошибочн
 398 server PASS, 3 SKIP; 531 web PASS, 0 FAIL. Ревью не проверяло фактический
 результат в настольных Word/Excel; оформление Office и восстановление формул
 остаются вне обещанного объёма.
+
+Исправления установлены на CT102 как `office-clipboard-43082df05166` из commit
+`68991cde0ed48a93aa8711fc572549013b19ab4d`. Backup:
+`/opt/webobsidian/backups/office-clipboard-43082df05166-20261109T160750Z`.
+Изолированный Linux smoke, healthy/build, контрольные суммы основных отдаваемых
+файлов и неизменность settings.json и `.env` при обновлении подтверждены.

@@ -12,8 +12,10 @@
   [the Office clipboard guide](docs/OFFICE_CLIPBOARD.md).
 
 Progress — 2026-11-09. Deployment completed through SSH outside the execution
-sandbox. CT102 runs `office-clipboard-fa2a7b532790`, including Russian context-menu
-labels and the updated server language pack. Production build, typecheck, focused
+sandbox. CT102 runs `office-clipboard-43082df05166`, including Russian context-menu
+labels, the updated server language pack and reading-mode export corrections.
+Full validation passed: 398 server tests (3 skipped) and 531 web tests.
+Production build, typecheck, focused
 browser/command tests, isolated Linux smoke, health/build and live asset hashes
 were verified. Copying through HTTPS succeeded in the graphical browser; direct
 HTTP copying was refused. Desktop Office round trips remain unverified. Deployment

@@ -93,6 +93,14 @@ package/lockfile, manifests всех пяти workspaces и `server/dist`, `serv
 
 ## Проверка состояния
 
+### Установленная версия — исправления экспорта Office, 9 ноября 2026
+
+- Build `office-clipboard-43082df05166`, commit `68991cde0ed48a93aa8711fc572549013b19ab4d`, source snapshot SHA256 `43082df0516694440120ed68ec93a8680370b9607c60ac298aff218e5af1fa0c`.
+- Image ID `sha256:3e413e35f393006fb918f28dce98e02eb4dc443c1655a170b4e6f015c5fb54b7`; локальный пакет `build/office-clipboard-fix-release/`.
+- Экспорт нормализует настоящую разметку режима чтения CodeMirror в семантический HTML, удаляет служебные картинки, сохраняет обрамление частичного выделения и разделители абзацев обычного текста.
+- Backup `/opt/webobsidian/backups/office-clipboard-43082df05166-20261109T160750Z`. Прежний образ `webobsidian:office-clipboard-fa2a7b532790` сохранён.
+- Полные typecheck/build PASS; 398 server PASS, 3 SKIP и 531 web PASS. Изолированный Linux smoke, healthy/build, основные отдаваемые assets и неизменность settings.json и `.env` при переключении подтверждены.
+
 ### Установленная версия — русский перевод меню редактора, 9 ноября 2026
 
 - Build `office-clipboard-fa2a7b532790`, image ID `sha256:0a0759f9f39bfd8c18ee782ce476673f164bdd013bf5a80caccc43748814c034`. Пакет `build/menu-russian-final-release/`.
