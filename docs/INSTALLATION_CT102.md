@@ -11,6 +11,7 @@
 | Proxmox UI | `https://10.10.1.21:8006` |
 | LXC | `102`, Debian, amd64, hostname `docker` |
 | Адрес приложения | `http://10.10.1.14:8787` |
+| Пользовательский HTTPS-адрес | `https://selbst-obsidian.duckdns.org/` |
 | Каталог установки внутри LXC | `/opt/webobsidian` |
 | Compose project / контейнер | `webobsidian` / `webobsidian` |
 | Compose | `/opt/webobsidian/docker-compose.yml` и `docker-compose.override.yml` |
@@ -91,6 +92,40 @@ package/lockfile, manifests всех пяти workspaces и `server/dist`, `serv
 отдельно. Не использовать `docker compose down -v`.
 
 ## Проверка состояния
+
+### Установленная версия — исправления экспорта Office, 9 ноября 2026
+
+- Build `office-clipboard-43082df05166`, commit `68991cde0ed48a93aa8711fc572549013b19ab4d`, source snapshot SHA256 `43082df0516694440120ed68ec93a8680370b9607c60ac298aff218e5af1fa0c`.
+- Image ID `sha256:3e413e35f393006fb918f28dce98e02eb4dc443c1655a170b4e6f015c5fb54b7`; локальный пакет `build/office-clipboard-fix-release/`.
+- Экспорт нормализует настоящую разметку режима чтения CodeMirror в семантический HTML, удаляет служебные картинки, сохраняет обрамление частичного выделения и разделители абзацев обычного текста.
+- Backup `/opt/webobsidian/backups/office-clipboard-43082df05166-20261109T160750Z`. Прежний образ `webobsidian:office-clipboard-fa2a7b532790` сохранён.
+- Полные typecheck/build PASS; 398 server PASS, 3 SKIP и 531 web PASS. Изолированный Linux smoke, healthy/build, основные отдаваемые assets и неизменность settings.json и `.env` при переключении подтверждены.
+
+### Установленная версия — русский перевод меню редактора, 9 ноября 2026
+
+- Build `office-clipboard-fa2a7b532790`, image ID `sha256:0a0759f9f39bfd8c18ee782ce476673f164bdd013bf5a80caccc43748814c034`. Пакет `build/menu-russian-final-release/`.
+- Заголовки контекстного меню используют действующий перевод: «Форматирование», «Абзац», «Вставка». Подписи уровней заголовков также переведены и меняются вместе с языком.
+- Существующий серверный языковой пакет дополнен 29 недостающими строками до 981/981; все прежние 952 перевода сохранены. Исходный пакет сохранён локально в `build/menu-russian-release/language-before.json`.
+- Backup `/opt/webobsidian/backups/office-clipboard-fa2a7b532790-20261109T151945Z`. Предыдущий образ `webobsidian:office-clipboard-fcdaad3de166` сохранён.
+- Проверены production build, web typecheck, 25 тестов локализации/Office/команд редактора, изолированный Linux smoke, healthy/build, контрольные суммы SPA/assets и неизменность settings.json и `.env` при переключении. После перезагрузки HTTPS-страницы проверены русские подписи и раскрытие подменю «Абзац» с пунктами «Заголовок 1–6».
+- Разделы Format/Paragraph/Insert присутствуют с 30 октября 2026 (commit `e3ba3fd`), до Office clipboard. Это подменю команд редактора; команды изменения документа недоступны в режиме чтения.
+
+### Установленная версия — обмен с Office, 9 ноября 2026
+
+- Build `office-clipboard-72988636e4e3`, image ID `sha256:c03e5d88ed0a58cdfce86f2fc12a51aa91de393231e90a31c7a27ca912ffaf5a`.
+- Снимок frontend/переводов: `72988636e4e32d8d2c66d0002496d4b2a687bc6075b83cc776f238874175558b`, базовый commit `26dc8faa12ff95e6dfb6d75b65374fc61fdf07d6`. Локальный пакет `build/office-clipboard-release/`; серверная часть унаследована от `webobsidian:english-defaults-827418182aaf`.
+- Backup `/opt/webobsidian/backups/office-clipboard-72988636e4e3-20261109T145436Z`: согласованный архив `/data`, Compose/override, `.env`, прежняя ревизия и идентификатор образа. Старый образ сохранён для отката.
+- Проверены изолированный Linux smoke (auth, uploads, PDF/downloads, locks/CAS, SPA), healthy/build, контрольные суммы основных отдаваемых assets, неизменность settings.json и `.env`, NAS и активность service/retry timer. HTTP health подтверждён с рабочего компьютера. Локально прошли 9 профильных тестов, включая браузерный, и полный typecheck.
+- Полный тестовый запуск: 398 server PASS, 3 SKIP; 529 web PASS и один сбой public PDF/Canvas из-за отсутствующего локального `server/public`. После копирования проверенных 467 frontend-файлов установленного пакета в этот каталог повторный public PDF/Canvas-тест PASS. Таким образом, все 530 web-сценариев прошли, один — отдельным повтором; исходники тестов и приложения не изменялись.
+- При подготовке освобождены кэши apt и неиспользуемый кэш сборки Docker старше недели; после установки свободно около 1,1 ГиБ.
+- В графическом браузере приложение и заметка открываются. После входа через `https://selbst-obsidian.duckdns.org/` проверены режим чтения, выделение заголовка и команда Copy for Microsoft Office: приложение подтвердило успешное копирование. На прямом HTTP-адресе команда сообщает отказ доступа к буферу; пользоваться HTTPS-адресом. Реальный обмен с настольными Word/Excel пока не проверен.
+
+### Установленная версия — единый английский язык по умолчанию, 3 ноября 2026
+
+- Build `english-defaults-827418182aaf`, commit `26dc8faa12ff95e6dfb6d75b65374fc61fdf07d6`, image ID `sha256:3a8196a516c356091abcb7d470e6394db425e2170940df74f53119ee6a2c393c`.
+- Новая установка и сброс языка используют английские подписи PDF, меню файлов, сообщения редактора и уведомления о внешних изменениях независимо от языка браузера. Импортированный пользователем пакет продолжает определять выбранный язык.
+- Production build и изолированный Linux smoke прошли. После переключения проверены healthy/build, контрольные суммы SPA/assets, доступность с рабочего компьютера и service/retry timer. Настройки приложения и `.env` совпали с резервной копией.
+- Backup `/opt/webobsidian/backups/english-defaults-827418182aaf-20261103T070923Z`. Предыдущий образ `webobsidian:localization-4b2213c625cb` сохранён. Локальный пакет `build/english-defaults-release/`.
 
 ### Установленная версия — локализация с серверным хранением, 3 ноября 2026
 

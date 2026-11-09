@@ -51,13 +51,15 @@ import {
   setLivePreviewTagProvider,
   setNoteTitle,
 } from '../lib/livePreview';
-import { renderNoteEmbed } from '../lib/markdown';
+import { renderMarkdown, renderNoteEmbed } from '../lib/markdown';
 import { getActiveEditor, setActiveEditor } from '../lib/activeEditor';
 import { selectionToolbar } from '../lib/selectionToolbar';
 import { api } from '../lib/api';
 import { humanizeTitle } from '../lib/title';
 import { deleteEmbeddedImage } from '../lib/imageDelete';
 import {noteFragmentRange} from '../lib/noteFragments';
+import {officePaste} from '../lib/officeClipboard/editor';
+import {copyOffice,officeSelection} from '../lib/officeClipboard/export';
 
 const titleOf = (path: string | null) => (path ? humanizeTitle(path) : '');
 const subscribeDocumentScope = (listener:()=>void) => {
@@ -170,15 +172,28 @@ export default function Editor() {
   const onContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     const v=view.current;if(!v)return;
+    const notify=useStore.getState().notify;
     const ctx=captureContext(v);
+    const selected = officeSelection(v.dom);
+    const markdownSelection = v.state.sliceDoc(v.state.selection.main.from,v.state.selection.main.to);
     const group=(label:string,ids:string[])=>({label,submenu:ids.map(id=>{
       const c=toolbarCommands.find(x=>x.id==='editing-toolbar:'+id)!;
       return {label:c.label,disabled:!c.getState(ctx).enabled,onClick:()=>{void executeCommand(c.id,ctx);}};
     })});
     openContextMenu({x:e.clientX,y:e.clientY,items:[
-      group('Format',['toggle-bold','toggle-italics','toggle-strikethrough','toggle-highlight','underline','editor:toggle-code','format-eraser']),
-      group('Paragraph',['header1-text','header2-text','header3-text','header4-text','header5-text','header6-text','header0-text','toggle-bullet-list','toggle-numbered-list','editor:toggle-checklist-status','editor:toggle-blockquote']),
-      group('Insert',['editor:insert-wikilink','insert-link','editor:insert-embed','insert-callout','editor:insert-table','codeblock','hrline','editor:insert-tag','editor:attach-file']),
+      {get label(){return uiText('office.copy');},onClick:()=>{
+        if (!selected.hasChildNodes()&&!markdownSelection) return;
+        void (async()=>{
+          if ((!v.state.readOnly || !selected.hasChildNodes()) && markdownSelection) {
+            selected.innerHTML=await renderMarkdown(markdownSelection,{sourcePath:activePath??undefined,rawUrl:(p,from)=>api.rawUrl(p,from)});
+          }
+          await copyOffice(selected);
+          notify(uiText('office.copied'));
+        })().catch(()=>notify(uiText('office.copy-failed')));
+      }},
+      group(uiText('interface.formatting.label-formatting'),['toggle-bold','toggle-italics','toggle-strikethrough','toggle-highlight','underline','editor:toggle-code','format-eraser']),
+      group(uiText('interface.formatting.label-paragraph'),['header1-text','header2-text','header3-text','header4-text','header5-text','header6-text','header0-text','toggle-bullet-list','toggle-numbered-list','editor:toggle-checklist-status','editor:toggle-blockquote']),
+      group(uiText('interface.formatting.label-insert'),['editor:insert-wikilink','insert-link','editor:insert-embed','insert-callout','editor:insert-table','codeblock','hrline','editor:insert-tag','editor:attach-file']),
       ...['editor-cut','editor-copy','editor-paste'].map(id=>{const c=toolbarCommands.find(x=>x.id==='editing-toolbar:'+id)!;return {label:c.label,disabled:!c.getState(ctx).enabled,onClick:()=>{void executeCommand(c.id,ctx);}};}),
       {get label() {return uiText("webobsidian.select-all-913aff");},onClick:()=>v.dispatch({selection:{anchor:0,head:v.state.doc.length}})},
     ]});
@@ -256,6 +271,7 @@ export default function Editor() {
         mediaLoadRemeasure,
         livePreviewGeometryGuard,
         EditorView.domEventHandlers({focus:(_event,v)=>{setActiveEditor(v);}}),
+        ...(isMd ? [Prec.highest(officePaste)] : []),
         EditorView.updateListener.of((u) => {
           // Ignore doc changes we applied programmatically (external content sync)
           if (u.docChanged && !applyingExternal.current) setContent(u.state.doc.toString());

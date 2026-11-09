@@ -7,6 +7,25 @@
 
 # PRD — WebObsidian
 
+## Microsoft Office clipboard — 2026-11-09
+
+User-facing explanation, steps and limits (Russian):
+[Office clipboard guide](docs/OFFICE_CLIPBOARD.md).
+
+Reading/preview and editor context menus offer Copy for Microsoft Office for the
+selected fragment. Clipboard HTML preserves semantic headings, lists, links,
+editable tables and embedded raster images, alongside a plain-text alternative.
+Pasting structured HTML or rectangular TSV into a Markdown editor converts it
+to Markdown, preserving displayed spreadsheet values and empty cells. Images
+received as files or embedded raster data are uploaded with the existing vault
+attachment rules. Unavailable or ambiguously matched images retain a visible
+placeholder. Formula reconstruction and exact Word page styling are outside this
+feature. Plain text and paste inside code blocks follow existing editor behavior.
+An insertion is undoable as one action and cancels after a document, selection,
+active-editor or note change while uploads are pending.
+Desktop Word/Excel interoperability and offline DOCX image retention require
+manual validation before claiming compatibility with specific Office versions.
+
 ## Browser language packs — 2026-11-03
 
 The web client supports user-imported UTF-8 language files using Obsidian's

@@ -19,6 +19,7 @@ import {mountImageActions} from '../lib/embedActions';
 import {addNoteEmbedOpenButtons} from '../lib/noteEmbed';
 import {useVaultPreferences} from '../lib/vaultPreferences';
 import {findRenderedNoteFragment} from '../lib/noteFragments';
+import {copyOffice,officeSelection} from '../lib/officeClipboard/export';
 
 /** Syntax-highlight static preview code with catalog grammars and the scoped
  *  token palette. The editor's native stream grammars are configured separately. */
@@ -228,11 +229,13 @@ export default function Preview({ source,sourcePath,fontSize }: { source?: strin
 
   const onContextMenu = (e: React.MouseEvent) => {
     const sel = window.getSelection()?.toString() ?? '';
+    const selected = officeSelection(e.currentTarget as HTMLElement);
     e.preventDefault();
     openContextMenu({
       x: e.clientX,
       y: e.clientY,
       items: [
+        {get label(){return uiText('office.copy');},onClick:()=>{if(selected.hasChildNodes())void copyOffice(selected).then(()=>useStore.getState().notify(uiText('office.copied'))).catch(()=>useStore.getState().notify(uiText('office.copy-failed')));}},
         { get label() {return uiText("interface.menu.copy");}, icon: 'file-text', onClick: () => sel && navigator.clipboard.writeText(sel).catch(() => {}) },
         ...(sel
           ? [{ get label() {return uiText("webobsidian.search-for-value0-73c0eb", {value0: sel.slice(0, 24)});}, icon: 'search', onClick: () => setLeftPanel('search') }]

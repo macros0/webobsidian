@@ -341,6 +341,7 @@ export default function Workspace() {
   };
 
   const onPaste = (e: React.ClipboardEvent) => {
+    if (e.defaultPrevented || getActiveEditor()?.state.readOnly) return;
     const imgs = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'));
     if (imgs.length) {
       e.preventDefault();

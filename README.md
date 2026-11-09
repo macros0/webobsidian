@@ -172,6 +172,10 @@ scripts/merge-upstream-pr.sh <n>           # fetch refs/pull/<n>/head and merge 
 - 📝 **Editor & rendering** — CodeMirror 6 with live / source / reading views; wikilinks
   `[[note]]`, embeds `![[file]]`, tags `#tag`, callouts, task lists, KaTeX math and
   Mermaid diagrams. Diagrams require an ES2024-capable browser (Safari 17.4+).
+- 📋 **Microsoft Office clipboard** — copy a selected note fragment as HTML and
+  plain text for Word/Excel, with table structure and embedded raster images;
+  paste supported Office HTML or tab-separated ranges back as Markdown.
+  [Usage and limitations (Russian)](docs/OFFICE_CLIPBOARD.md).
 - 📕 **PDF viewer** — open a PDF from the tree or a `/note/<path>.pdf` link and it renders in the
   pane (the browser's own viewer: pages, zoom, search, print); `![[doc.pdf]]` embeds that viewer
   inline in a note.
