@@ -34,9 +34,9 @@ export async function executeCommand(id:string,ctx:ToolbarContext):Promise<Comma
  const state=cmd.getState(ctx);if(!state.enabled)return {status:'unavailable',reason:state.reason};
  try{return await cmd.run(ctx);}catch(error){const reason=error instanceof Error?error.message:String(error);services.notify(reason);return {status:'unavailable',reason};}
 }
-function add(id:string,label:string,icon:string,run:(c:ToolbarContext)=>void|CommandResult|Promise<void|CommandResult>,writesDocument=true,selectionPolicy:ToolbarCommand['selectionPolicy']='inline',localize=true){
+function add(id:string,label:string|(()=>string),icon:string,run:(c:ToolbarContext)=>void|CommandResult|Promise<void|CommandResult>,writesDocument=true,selectionPolicy:ToolbarCommand['selectionPolicy']='inline',localize=true){
  const marks:Record<string,string>={'toggle-bold':'**','toggle-italics':'*','toggle-strikethrough':'~~','toggle-highlight':'==','editor:toggle-code':'`'};
- commands.push({id:full(id),get label(){return localize?translateLabel(label):label;},icon,writesDocument,selectionPolicy,getState(c){
+ commands.push({id:full(id),get label(){return typeof label==='function'?label():localize?translateLabel(label):label;},icon,writesDocument,selectionPolicy,getState(c){
  const protectedBlock=['left','center','right','justify'].includes(id)&&c.selection.ranges.some(r=>{const skip=protectedLines(c.doc);for(let n=c.doc.lineAt(r.from).number;n<=c.doc.lineAt(r.to).number;n++)if(skip.has(n))return true;return false;});
  const enabled=!protectedBlock&&(!writesDocument||!c.view.state.readOnly)&&(selectionPolicy!=='single'||c.selection.ranges.length===1)&&(selectionPolicy!=='explicit'||!c.selection.main.empty);
  const mark=marks[id];const vals=c.selection.ranges.map(r=>mark?(c.doc.sliceString(r.from,r.to).startsWith(mark)&&c.doc.sliceString(r.from,r.to).endsWith(mark))||(c.doc.sliceString(Math.max(0,r.from-mark.length),r.from)===mark&&c.doc.sliceString(r.to,r.to+mark.length)===mark):false);
@@ -57,7 +57,7 @@ const stripList=(s:string)=>s.replace(/^(\s*)(?:[-+*]|\d+[.)])\s+(?:\[[^\]]\]\s+
 const inline:[string,string,string,string][]=[['toggle-bold','Bold','bold','**'],['toggle-italics','Italic','italic','*'],['toggle-strikethrough','Strikethrough','strikethrough','~~'],['toggle-highlight','Highlight','highlighter','=='],['editor:toggle-code','Inline code','code','`'],['toggle-inline-math','Inline math','code','$'],['editor:toggle-comments','Comment','message-square','%%']];
 for(const [id,label,icon,mark] of inline)add(id,label,icon,c=>{toggleInline(c.view,mark);});
 for(const [id,tag,label] of [['underline','u','Underline'],['superscript','sup','Superscript'],['subscript','sub','Subscript']])add(id,label,'type',c=>html(c,tag));
-for(let level=0;level<=6;level++)add('header'+level+'-text',level?'Heading '+level:'Normal paragraph','heading',c=>lines(c,s=>s.replace(/^(\s*)(?:#{1,6}\s+)?/,'$1'+(level?'#'.repeat(level)+' ':''))),true,'lines');
+for(let level=0;level<=6;level++)add('header'+level+'-text',()=>level?uiText('webobsidian.heading-value0-390a28',{value0:level}):uiText('webobsidian.normal-paragraph-8806b4'),'heading',c=>lines(c,s=>s.replace(/^(\s*)(?:#{1,6}\s+)?/,'$1'+(level?'#'.repeat(level)+' ':''))),true,'lines');
 add('editor-undo','Undo','undo',c=>{undo(c.view);});
 add('editor-redo','Redo','redo',c=>{redo(c.view);});
 add('indent-list','Indent','indent-increase',c=>{indentMore(c.view);},true,'lines');

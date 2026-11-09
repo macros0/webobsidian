@@ -1,5 +1,24 @@
 # IMPLEMENTATION PLAN — WebObsidian
 
+## Microsoft Office clipboard — 2026-11-09
+
+- [x] Implement Office export, HTML/TSV import, attachment integration and one-step
+  undo with stale-document guards. Add English strings and Russian translations.
+- [x] Verify eight focused conversion/insertion tests and project typecheck.
+- [x] Verify graphical browser conversion/insertion and live HTTPS copying.
+- [ ] Complete desktop Word/Excel round-trip and offline DOCX image acceptance.
+- [x] Deploy to CT102 and verify live assets and health.
+- [x] Document usage, clipboard representations and compatibility limits in
+  [the Office clipboard guide](docs/OFFICE_CLIPBOARD.md).
+
+Progress — 2026-11-09. Deployment completed through SSH outside the execution
+sandbox. CT102 runs `office-clipboard-fa2a7b532790`, including Russian context-menu
+labels and the updated server language pack. Production build, typecheck, focused
+browser/command tests, isolated Linux smoke, health/build and live asset hashes
+were verified. Copying through HTTPS succeeded in the graphical browser; direct
+HTTP copying was refused. Desktop Office round trips remain unverified. Deployment
+and backup details are recorded in [the CT102 guide](docs/INSTALLATION_CT102.md).
+
 ## Consistent English defaults — 2026-11-03
 
 - [x] Remove Russian PDF defaults and browser-language editor fallbacks. Localize
@@ -11,6 +30,11 @@ along with full typecheck, production build and integration smoke. Fresh/reset
 PDF controls and missing-heading notices use English in a ru-RU browser.
 Explicit Russian import updates existing controls and reset restores English.
 The authored Russian import file now covers all 975 catalogue entries.
+
+Deployment — 2026-11-03. Installed main commit `26dc8fa` as
+`english-defaults-827418182aaf` on CT102. Production build, isolated Linux smoke,
+live health/build and asset hashes passed. Existing settings and environment
+were preserved, with a consistent data backup recorded in the installation guide.
 
 ## Browser language packs — 2026-11-03
 

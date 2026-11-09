@@ -1,5 +1,11 @@
 // Own English UI strings with compatible Obsidian context identifiers.
 export const catalog: Record<string,string> = {
+  "office.copy": "Copy for Microsoft Office",
+  "office.copied": "Copied for Microsoft Office",
+  "office.copy-failed": "Copy failed. Check clipboard access and image availability.",
+  "office.paste-failed": "Office paste failed. Try pasting as plain text.",
+  "office.image-unavailable": "[Image unavailable from clipboard]",
+  "office.document-changed": "Paste cancelled because the document changed. Uploaded attachments:",
   "plugins.file-explorer.menu-opt-new-folder": "New folder",
   "plugins.file-explorer.menu-opt-new-note": "New note",
   "plugins.file-explorer.action-new-folder": "New folder",

@@ -2,6 +2,30 @@
 # Собственный перевод по каталогу приложения, 3 ноября 2026 года.
 # Импорт через Settings → Language → Import language file.
 
+[office.copy]
+original=Copy for Microsoft Office
+translation=Копировать для Microsoft Office
+
+[office.copied]
+original=Copied for Microsoft Office
+translation=Скопировано для Microsoft Office
+
+[office.copy-failed]
+original=Copy failed. Check clipboard access and image availability.
+translation=Не удалось скопировать. Проверьте доступ к буферу обмена и доступность картинок.
+
+[office.paste-failed]
+original=Office paste failed. Try pasting as plain text.
+translation=Не удалось вставить из Office. Попробуйте вставить обычным текстом.
+
+[office.image-unavailable]
+original=[Image unavailable from clipboard]
+translation=[Картинка недоступна в буфере обмена]
+
+[office.document-changed]
+original=Paste cancelled because the document changed. Uploaded attachments:
+translation=Вставка отменена, поскольку документ изменился. Загруженные вложения:
+
 [commands.open-settings]
 original=Open settings
 translation=Открыть настройки
